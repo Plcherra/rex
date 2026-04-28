@@ -158,6 +158,21 @@
       ]
     },
     {
+      "name": "web",
+      "version": "1.1.1",
+      "dependencies": []
+    },
+    {
+      "name": "http_parser",
+      "version": "4.1.2",
+      "dependencies": [
+        "collection",
+        "source_span",
+        "string_scanner",
+        "typed_data"
+      ]
+    },
+    {
       "name": "async",
       "version": "2.13.1",
       "dependencies": [
@@ -232,31 +247,16 @@
       ]
     },
     {
-      "name": "vm_service",
-      "version": "15.1.0",
-      "dependencies": []
-    },
-    {
-      "name": "web",
-      "version": "1.1.1",
-      "dependencies": []
-    },
-    {
-      "name": "http_parser",
-      "version": "4.1.2",
-      "dependencies": [
-        "collection",
-        "source_span",
-        "string_scanner",
-        "typed_data"
-      ]
-    },
-    {
       "name": "typed_data",
       "version": "1.4.0",
       "dependencies": [
         "collection"
       ]
+    },
+    {
+      "name": "vm_service",
+      "version": "15.1.0",
+      "dependencies": []
     }
   ],
   "configVersion": 1

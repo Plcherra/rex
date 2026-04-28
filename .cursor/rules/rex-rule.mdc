@@ -1,0 +1,15 @@
+---
+description: 
+alwaysApply: true
+---
+
+•  Core Philosophy: Simplicity above all. Never over-engineer.
+•  Always prefer small, focused functions over large complex ones.
+•  Never create new classes, services, or abstractions unless absolutely necessary.
+•  Use clear, descriptive names. No cryptic abbreviations.
+•  Strictly follow the existing folder structure: core/, features/chat/, features/memory/.
+•  UI code should remain clean and minimal.
+•  When the user says “keep it simple”, take it very literally.
+•  Do not put any business logic inside widgets.
+•  Do not add new packages without explicit permission.
+•  When building new features, start with the simplest possible implementation.

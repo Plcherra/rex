@@ -1,15 +1,15 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1)
-    conversation_id: Optional[int] = None
+    message: str
+    conversation_id: Optional[str] = None
     file: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
-    conversation_id: int
+    conversation_id: str
     response: str
     messages: list[dict]

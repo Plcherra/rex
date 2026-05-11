@@ -1,134 +1,317 @@
-from sqlite3 import Connection, Row
+import json
+import re
+from typing import Optional
+from urllib.parse import quote, urlencode
 
-from app.database import get_connection
+import httpx
 
-
-def init() -> None:
-    with get_connection() as connection:
-        _create_conversations_table(connection)
-        _create_messages_table(connection)
-
-
-def create_conversation() -> int:
-    with get_connection() as connection:
-        cursor = connection.execute("INSERT INTO conversations DEFAULT VALUES")
-        return int(cursor.lastrowid)
+from app.config import Settings, get_settings
+from app.services.http_client import request_with_retries
 
 
-def conversation_exists(conversation_id: int) -> bool:
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT id FROM conversations WHERE id = ?",
-            (conversation_id,),
-        ).fetchone()
-        return row is not None
+class MemoryServiceError(Exception):
+    def __init__(self, detail: str, status_code: int = 503) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
 
 
-def save_message(conversation_id: int, role: str, content: str) -> dict:
-    with get_connection() as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO messages (conversation_id, role, content)
-            VALUES (?, ?, ?)
-            """,
-            (conversation_id, role, content),
+class SupabaseMemoryService:
+    def __init__(self, settings: Optional[Settings] = None) -> None:
+        self.settings = settings or get_settings()
+
+    async def create_conversation(self) -> str:
+        row = await self.create_conversation_record()
+        conversation_id = row.get("id")
+        if not conversation_id:
+            raise MemoryServiceError("Supabase did not return a conversation id.")
+
+        return str(conversation_id)
+
+    async def create_conversation_record(self) -> dict:
+        rows = await self._request(
+            "POST",
+            self.settings.supabase_conversations_table,
+            body={},
+            query={"select": "id,title,timestamp"},
+            prefer="return=representation",
         )
-        row = connection.execute(
-            """
-            SELECT id, conversation_id, role, content, timestamp
-            FROM messages
-            WHERE id = ?
-            """,
-            (cursor.lastrowid,),
-        ).fetchone()
+        return self._conversation_with_preview(self._first_row(rows), None)
 
-    return _message_to_dict(row)
-
-
-def get_recent_messages(conversation_id: int, limit: int = 20) -> list[dict]:
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT id, conversation_id, role, content, timestamp
-            FROM messages
-            WHERE conversation_id = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (conversation_id, limit),
-        ).fetchall()
-
-    return [_message_to_dict(row) for row in reversed(rows)]
-
-
-def _create_conversations_table(connection: Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    async def list_conversations(self, limit: int = 50) -> list[dict]:
+        rows = await self._request(
+            "GET",
+            self.settings.supabase_conversations_table,
+            query={
+                "select": "id,title,timestamp",
+                "order": "timestamp.desc",
+                "limit": str(limit),
+            },
         )
-        """
-    )
 
+        conversations = []
+        for row in rows:
+            conversation_id = str(row.get("id", ""))
+            recent_messages = await self.get_recent_messages(conversation_id, limit=1)
+            last_message = recent_messages[-1] if recent_messages else None
+            conversations.append(self._conversation_with_preview(row, last_message))
 
-def _create_messages_table(connection: Connection) -> None:
-    columns = _table_columns(connection, "messages")
-    expected_columns = {"id", "conversation_id", "role", "content", "timestamp"}
+        return conversations
 
-    if not columns:
-        _create_fresh_messages_table(connection)
-        return
-
-    if not expected_columns.issubset(columns):
-        _migrate_legacy_messages_table(connection)
-
-
-def _create_fresh_messages_table(connection: Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-            content TEXT NOT NULL,
-            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations (id)
+    async def conversation_exists(self, conversation_id: str) -> bool:
+        rows = await self._request(
+            "GET",
+            self.settings.supabase_conversations_table,
+            query={
+                "id": f"eq.{conversation_id}",
+                "select": "id",
+                "limit": "1",
+            },
         )
-        """
-    )
+        return bool(rows)
 
+    async def save_message(self, conversation_id: str, role: str, content: str) -> dict:
+        rows = await self._request(
+            "POST",
+            self.settings.supabase_messages_table,
+            body={
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+            },
+            query={"select": "id,conversation_id,role,content,timestamp"},
+            prefer="return=representation",
+        )
+        return self._first_row(rows)
 
-def _migrate_legacy_messages_table(connection: Connection) -> None:
-    connection.execute("ALTER TABLE messages RENAME TO messages_legacy")
-    _create_fresh_messages_table(connection)
+    async def get_recent_messages(
+        self,
+        conversation_id: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        rows = await self._request(
+            "GET",
+            self.settings.supabase_messages_table,
+            query={
+                "conversation_id": f"eq.{conversation_id}",
+                "select": "id,conversation_id,role,content,timestamp",
+                "order": "timestamp.desc",
+                "limit": str(limit),
+            },
+        )
+        return list(reversed(rows))
 
-    cursor = connection.execute("INSERT INTO conversations DEFAULT VALUES")
-    conversation_id = int(cursor.lastrowid)
-    legacy_columns = _table_columns(connection, "messages_legacy")
+    async def get_conversation_messages(
+        self,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> Optional[list[dict]]:
+        if not await self.conversation_exists(conversation_id):
+            return None
 
-    timestamp_column = "created_at" if "created_at" in legacy_columns else "CURRENT_TIMESTAMP"
-    connection.execute(
-        f"""
-        INSERT INTO messages (id, conversation_id, role, content, timestamp)
-        SELECT id, ?, role, content, {timestamp_column}
-        FROM messages_legacy
-        """,
-        (conversation_id,),
-    )
-    connection.execute("DROP TABLE messages_legacy")
+        return await self.get_recent_messages(conversation_id, limit=limit)
 
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        if not await self.conversation_exists(conversation_id):
+            return False
 
-def _table_columns(connection: Connection, table_name: str) -> set[str]:
-    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-    return {str(row["name"]) for row in rows}
+        await self._request(
+            "DELETE",
+            self.settings.supabase_conversations_table,
+            query={"id": f"eq.{conversation_id}"},
+        )
+        return True
 
+    async def save_long_term_memory(
+        self,
+        memory_type: str,
+        content: str,
+        source_conversation_id: Optional[str] = None,
+        source_message_id: Optional[str] = None,
+        importance: int = 3,
+    ) -> dict:
+        rows = await self._request(
+            "POST",
+            self.settings.supabase_long_term_memory_table,
+            body={
+                "memory_type": memory_type,
+                "content": content,
+                "source_conversation_id": source_conversation_id,
+                "source_message_id": source_message_id,
+                "importance": importance,
+            },
+            query={
+                "select": (
+                    "id,memory_type,content,source_conversation_id,"
+                    "source_message_id,importance,active,created_at,"
+                    "updated_at,last_accessed_at"
+                )
+            },
+            prefer="return=representation",
+        )
+        return self._first_row(rows)
 
-def _message_to_dict(row: Row) -> dict:
-    return {
-        "id": row["id"],
-        "conversation_id": row["conversation_id"],
-        "role": row["role"],
-        "content": row["content"],
-        "timestamp": row["timestamp"],
-    }
+    async def save_long_term_memory_from_message(
+        self,
+        conversation_id: str,
+        message: dict,
+    ) -> Optional[dict]:
+        memory = self._memory_candidate(str(message.get("content", "")))
+        if not memory:
+            return None
+
+        return await self.save_long_term_memory(
+            memory_type=memory["memory_type"],
+            content=memory["content"],
+            source_conversation_id=conversation_id,
+            source_message_id=str(message.get("id")) if message.get("id") else None,
+            importance=memory["importance"],
+        )
+
+    async def get_long_term_memory(self, limit: int = 20) -> list[dict]:
+        return await self._request(
+            "GET",
+            self.settings.supabase_long_term_memory_table,
+            query={
+                "active": "eq.true",
+                "select": (
+                    "id,memory_type,content,source_conversation_id,"
+                    "source_message_id,importance,created_at,last_accessed_at"
+                ),
+                "order": "importance.desc,last_accessed_at.desc,created_at.desc",
+                "limit": str(limit),
+            },
+        )
+
+    async def _request(
+        self,
+        method: str,
+        table: str,
+        body: Optional[dict] = None,
+        query: Optional[dict[str, str]] = None,
+        prefer: Optional[str] = None,
+    ) -> list[dict]:
+        rest_url = self.settings.supabase_rest_url
+        service_key = self.settings.supabase_service_role_key
+        if not rest_url or not service_key:
+            raise MemoryServiceError("Supabase memory is not configured.")
+
+        url = f"{rest_url}/{quote(table)}"
+        if query:
+            url = f"{url}?{urlencode(query)}"
+
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+        }
+        json_body = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            json_body = body
+        if prefer:
+            headers["Prefer"] = prefer
+
+        try:
+            response = await request_with_retries(
+                method,
+                url,
+                headers=headers,
+                json=json_body,
+            )
+            response.raise_for_status()
+            raw_response = response.text
+        except httpx.HTTPStatusError as error:
+            raise MemoryServiceError("Supabase memory returned an error.") from error
+        except (httpx.RequestError, TimeoutError) as error:
+            raise MemoryServiceError("Cannot reach Supabase memory.") from error
+
+        if not raw_response:
+            return []
+
+        try:
+            data = json.loads(raw_response)
+        except json.JSONDecodeError as error:
+            raise MemoryServiceError(
+                "Supabase memory returned an unreadable response.",
+                status_code=500,
+            ) from error
+
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+
+        raise MemoryServiceError("Supabase memory returned an unreadable response.")
+
+    def _first_row(self, rows: list[dict]) -> dict:
+        if not rows:
+            raise MemoryServiceError("Supabase memory returned no rows.")
+
+        return rows[0]
+
+    def _conversation_with_preview(
+        self,
+        row: dict,
+        last_message: Optional[dict],
+    ) -> dict:
+        return {
+            "id": str(row.get("id", "")),
+            "title": row.get("title"),
+            "timestamp": row.get("timestamp"),
+            "last_message": last_message,
+        }
+
+    def _memory_candidate(self, message: str) -> Optional[dict]:
+        text = " ".join(message.strip().split())
+        if not text:
+            return None
+
+        lowered = text.lower()
+        if lowered.startswith(("remember that ", "remember: ")):
+            content = re.sub(r"^remember(?: that|:)\s+", "", text, flags=re.I)
+            return {
+                "memory_type": self._classify_memory(content),
+                "content": content,
+                "importance": 5,
+            }
+
+        if re.match(r"^i (prefer|like|love|hate|dislike|want|need)\b", lowered):
+            return {
+                "memory_type": "preference",
+                "content": text,
+                "importance": 4,
+            }
+
+        if re.match(r"^i (am|work|live|have|own|use)\b", lowered):
+            return {
+                "memory_type": "fact",
+                "content": text,
+                "importance": 3,
+            }
+
+        event_markers = (
+            "my birthday is",
+            "my anniversary is",
+            "i started",
+            "i moved",
+            "i graduated",
+            "i got married",
+        )
+        if any(marker in lowered for marker in event_markers):
+            return {
+                "memory_type": "event",
+                "content": text,
+                "importance": 4,
+            }
+
+        return None
+
+    def _classify_memory(self, content: str) -> str:
+        lowered = content.lower()
+        if any(word in lowered for word in ("prefer", "like", "love", "hate", "want")):
+            return "preference"
+        if any(word in lowered for word in ("birthday", "anniversary", "started")):
+            return "event"
+
+        return "fact"

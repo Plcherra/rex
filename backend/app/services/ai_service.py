@@ -1,9 +1,10 @@
 import json
 from typing import Optional
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+import httpx
 
 from app.config import Settings, get_settings
+from app.services.http_client import request_with_retries
 
 
 class AIServiceError(Exception):
@@ -28,7 +29,12 @@ Keep responses concise unless the user asks for detail.
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
 
-    def generate_response(self, messages: list[dict]) -> str:
+    async def generate_response(self, messages: list[dict]) -> str:
+        if not self.settings.grok_api_key:
+            raise AIServiceError("Grok API key is not configured.", status_code=503)
+        if not self.settings.grok_model:
+            raise AIServiceError("Grok model is not configured.", status_code=503)
+
         prompt_messages = self._build_prompt_messages(messages)
         if self._prompt_length(prompt_messages) > self.max_prompt_characters:
             raise AIServiceError(
@@ -37,34 +43,32 @@ Keep responses concise unless the user asks for detail.
             )
 
         payload = {
-            "model": self.settings.ollama_model,
+            "model": self.settings.grok_model,
             "messages": prompt_messages,
             "stream": False,
         }
 
         try:
-            request = Request(
-                self.settings.ollama_chat_url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
+            response = await request_with_retries(
+                "POST",
+                self.settings.grok_chat_url,
+                headers={
+                    "Authorization": f"Bearer {self.settings.grok_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.settings.grok_timeout_seconds,
             )
-            with urlopen(
-                request,
-                timeout=self.settings.ollama_timeout_seconds,
-            ) as response:
-                raw_response = response.read().decode("utf-8")
+            response.raise_for_status()
 
-            return self._parse_ollama_response(raw_response)
-        except HTTPError as error:
-            raise AIServiceError("Rex's brain returned an error.") from error
-        except (URLError, TimeoutError) as error:
-            raise AIServiceError(
-                "Cannot reach Rex's brain right now. Is Ollama running?"
-            ) from error
+            return self._parse_grok_response(response.text)
+        except httpx.HTTPStatusError as error:
+            raise AIServiceError("Grok API returned an error.") from error
+        except (httpx.RequestError, TimeoutError) as error:
+            raise AIServiceError("Cannot reach Grok API right now.") from error
         except json.JSONDecodeError as error:
             raise AIServiceError(
-                "Rex's brain returned an unreadable response.",
+                "Grok API returned an unreadable response.",
                 status_code=500,
             ) from error
 
@@ -80,22 +84,12 @@ Keep responses concise unless the user asks for detail.
     def _prompt_length(self, messages: list[dict]) -> int:
         return sum(len(message["content"]) for message in messages)
 
-    def _parse_ollama_response(self, raw_response: str) -> str:
-        if "\n" in raw_response.strip():
-            return self._parse_streaming_response(raw_response)
-
+    def _parse_grok_response(self, raw_response: str) -> str:
         data = json.loads(raw_response)
-        return data.get("message", {}).get("content", "").strip()
+        choices = data.get("choices", [])
+        if not choices:
+            raise AIServiceError("Grok API returned no response.", status_code=502)
 
-    def _parse_streaming_response(self, raw_response: str) -> str:
-        content_parts = []
-        for line in raw_response.splitlines():
-            if not line.strip():
-                continue
-
-            data = json.loads(line)
-            content = data.get("message", {}).get("content", "")
-            if content:
-                content_parts.append(content)
-
-        return "".join(content_parts).strip()
+        message = choices[0].get("message", {})
+        content = message.get("content", "")
+        return str(content).strip()

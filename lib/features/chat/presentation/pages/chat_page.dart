@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:rex/core/providers.dart';
+import 'package:rex/features/chat/domain/chat_message.dart';
+import 'package:rex/features/chat/presentation/pages/conversation_list_page.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_input_bar.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_message_bubble.dart';
 
-/// Main chat surface: empty thread UI + composer (no backend yet).
-class ChatPage extends StatefulWidget {
+/// Main chat surface: empty thread UI + composer.
+class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
 
   @override
-  State<ChatPage> createState() => _ChatPageState();
+  ConsumerState<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends ConsumerState<ChatPage> {
   final TextEditingController _messageController = TextEditingController();
 
   static const String _welcomeMessage =
@@ -24,23 +28,33 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _onSendTapped() {
-    // Intentionally no networking or AI — clear field for a tidy empty state.
+    final message = _messageController.text;
     _messageController.clear();
+    ref.read(chatProvider.notifier).sendMessage(message);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final chat = ref.watch(chatProvider);
+    final currentConversation = ref.watch(currentConversationProvider);
+    final hasMessages = chat.messages.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Rex'),
+        title: Text(currentConversation?.title ?? 'Rex'),
         actions: [
           IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.more_horiz_rounded),
-            tooltip: 'More',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const ConversationListPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.history_rounded),
+            tooltip: 'Conversations',
           ),
         ],
       ),
@@ -87,7 +101,31 @@ class _ChatPageState extends State<ChatPage> {
                           ),
                         ),
                       ),
-                      const ChatMessageBubble(text: _welcomeMessage),
+                      if (!hasMessages)
+                        const ChatMessageBubble(text: _welcomeMessage)
+                      else
+                        ...chat.messages.map(
+                          (message) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: ChatMessageBubble(
+                              text: message.content,
+                              isUser: message.role == ChatMessageRole.user,
+                            ),
+                          ),
+                        ),
+                      if (chat.isLoading) ...[
+                        const SizedBox(height: 4),
+                        const ChatMessageBubble(text: 'Thinking...'),
+                      ],
+                      if (chat.errorMessage != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          chat.errorMessage!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.error,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 24),
                     ]),
                   ),
@@ -101,7 +139,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           ChatInputBar(
             controller: _messageController,
-            onSend: _onSendTapped,
+            onSend: chat.isLoading ? null : _onSendTapped,
           ),
         ],
       ),

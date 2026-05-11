@@ -1,17 +1,25 @@
-# rex
+# Rex
 
-A new Flutter project.
+Rex is a Flutter app with a FastAPI backend for a personal AI advisor.
 
-## Getting Started
+## Backend Direction
 
-This project is a starting point for a Flutter application.
+The backend is prepared for:
 
-A few resources to get you started if this is your first Flutter project:
+- Grok API for chat completions
+- Supabase for conversation, message, and long-term memory
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Copy `backend/.env.example` to `backend/.env`, fill in the Grok and Supabase values, and run the SQL in `backend/supabase_schema.sql` inside Supabase.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+The Supabase schema includes:
+
+- `conversations`: top-level chat threads.
+- `messages`: user and assistant transcript entries.
+- `long_term_memory`: durable user facts, preferences, and important events.
+
+## Tests
+
+```sh
+PYTHONPATH=backend python3 -m pytest -q tests
+flutter test
+```

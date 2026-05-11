@@ -1,11 +1,14 @@
+from collections.abc import AsyncIterator
 from typing import Optional, Protocol
 
 from fastapi import UploadFile
 
 from app.services.ai_service import AIService
 from app.services.file_service import FileService
+from app.services.memory_extraction_service import MemoryExtractionService
 
 MAX_CONTEXT_CHARACTERS = 24000
+MAX_MEMORY_CONTEXT_CHARACTERS = 2000
 FILE_CONTEXT_PREFIX = "Uploaded file content:\n\n"
 LONG_TERM_MEMORY_PREFIX = "Relevant long-term memory:\n"
 
@@ -31,14 +34,17 @@ class MemoryService(Protocol):
     ) -> list[dict]:
         pass
 
-    async def save_long_term_memory_from_message(
+    async def save_long_term_memory(
         self,
-        conversation_id: str,
-        message: dict,
-    ) -> Optional[dict]:
+        memory_type: str,
+        content: str,
+        source_conversation_id: Optional[str] = None,
+        source_message_id: Optional[str] = None,
+        importance: int = 3,
+    ) -> dict:
         pass
 
-    async def get_long_term_memory(self, limit: int = 20) -> list[dict]:
+    async def get_relevant_memories(self, query: str, limit: int = 8) -> list[dict]:
         pass
 
 
@@ -48,10 +54,12 @@ class ChatService:
         ai_service: AIService,
         file_service: FileService,
         memory_service: MemoryService,
+        memory_extraction_service: Optional[MemoryExtractionService] = None,
     ) -> None:
         self.ai_service = ai_service
         self.file_service = file_service
         self.memory_service = memory_service
+        self.memory_extraction_service = memory_extraction_service
 
     async def send_message(
         self,
@@ -68,7 +76,10 @@ class ChatService:
                 conversation_id,
                 limit=20,
             )
-        long_term_memory = await self.memory_service.get_long_term_memory(limit=20)
+        long_term_memory = await self.memory_service.get_relevant_memories(
+            query=message,
+            limit=8,
+        )
 
         ai_messages = [
             *conversation_history,
@@ -81,7 +92,6 @@ class ChatService:
         )
         ai_messages = self._trim_context(ai_messages)
 
-        rex_response = await self.ai_service.generate_response(ai_messages)
         if conversation_id is None:
             conversation_id = await self.memory_service.create_conversation()
 
@@ -90,17 +100,90 @@ class ChatService:
             "user",
             message,
         )
-        await self.memory_service.save_long_term_memory_from_message(
-            conversation_id,
-            user_message,
-        )
-        await self.memory_service.save_message(
+
+        rex_response = await self.ai_service.generate_response(ai_messages)
+        assistant_message = await self.memory_service.save_message(
             conversation_id,
             "assistant",
             rex_response,
         )
 
+        await self._extract_memory_after_success(
+            conversation_id,
+            user_message,
+            assistant_message,
+        )
+
         return {
+            "conversation_id": conversation_id,
+            "response": rex_response,
+            "messages": await self.memory_service.get_recent_messages(
+                conversation_id,
+                limit=20,
+            ),
+        }
+
+    async def stream_message(
+        self,
+        message: str,
+        conversation_id: Optional[str] = None,
+        file: Optional[UploadFile] = None,
+    ) -> AsyncIterator[dict]:
+        conversation_id = await self._existing_conversation_id(conversation_id)
+        file_text = await self.file_service.read_text_file(file) if file else None
+
+        conversation_history = []
+        if conversation_id is not None:
+            conversation_history = await self.memory_service.get_recent_messages(
+                conversation_id,
+                limit=20,
+            )
+        long_term_memory = await self.memory_service.get_relevant_memories(
+            query=message,
+            limit=8,
+        )
+
+        ai_messages = [
+            *conversation_history,
+            {"role": "user", "content": message},
+        ]
+        ai_messages = self._messages_with_file_context(ai_messages, file_text)
+        ai_messages = self._messages_with_long_term_memory(
+            ai_messages,
+            long_term_memory,
+        )
+        ai_messages = self._trim_context(ai_messages)
+
+        if conversation_id is None:
+            conversation_id = await self.memory_service.create_conversation()
+
+        user_message = await self.memory_service.save_message(
+            conversation_id,
+            "user",
+            message,
+        )
+        yield {"event": "conversation", "conversation_id": conversation_id}
+
+        response_parts = []
+        async for token in self.ai_service.stream_response(ai_messages):
+            response_parts.append(token)
+            yield {"event": "token", "token": token}
+
+        rex_response = "".join(response_parts).strip()
+        assistant_message = await self.memory_service.save_message(
+            conversation_id,
+            "assistant",
+            rex_response,
+        )
+
+        await self._extract_memory_after_success(
+            conversation_id,
+            user_message,
+            assistant_message,
+        )
+
+        yield {
+            "event": "done",
             "conversation_id": conversation_id,
             "response": rex_response,
             "messages": await self.memory_service.get_recent_messages(
@@ -150,11 +233,7 @@ class ChatService:
         if not long_term_memory:
             return messages
 
-        memory_lines = [
-            f"- {memory['memory_type']}: {memory['content']}"
-            for memory in long_term_memory
-            if memory.get("memory_type") and memory.get("content")
-        ]
+        memory_lines = self._memory_lines_with_budget(long_term_memory)
         if not memory_lines:
             return messages
 
@@ -165,6 +244,28 @@ class ChatService:
             },
             *messages,
         ]
+
+    def _memory_lines_with_budget(self, long_term_memory: list[dict]) -> list[str]:
+        memory_lines = []
+        used_characters = 0
+
+        for memory in long_term_memory:
+            if not memory.get("memory_type") or not memory.get("content"):
+                continue
+
+            line = f"- {memory['memory_type']}: {memory['content']}"
+            remaining_characters = MAX_MEMORY_CONTEXT_CHARACTERS - used_characters
+            if remaining_characters <= 0:
+                break
+            if len(line) > remaining_characters:
+                if remaining_characters < 40:
+                    break
+                line = f"{line[: remaining_characters - 22].rstrip()} [truncated]"
+
+            memory_lines.append(line)
+            used_characters += len(line) + 1
+
+        return memory_lines
 
     def _trim_context(self, messages: list[dict]) -> list[dict]:
         trimmed_messages = list(messages)
@@ -227,3 +328,23 @@ class ChatService:
 
     def _has_file_context(self, message: dict) -> bool:
         return message["content"].startswith(FILE_CONTEXT_PREFIX)
+
+    async def _extract_memory_after_success(
+        self,
+        conversation_id: str,
+        user_message: dict,
+        assistant_message: dict,
+    ) -> None:
+        if self.memory_extraction_service is None:
+            return
+
+        try:
+            await self.memory_extraction_service.extract_and_save(
+                conversation_id=conversation_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+            )
+        except Exception:
+            # Memory extraction is best-effort. A failed extraction must not
+            # break a successful chat response.
+            return

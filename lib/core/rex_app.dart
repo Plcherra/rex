@@ -13,6 +13,8 @@ class RexApp extends StatelessWidget {
       title: 'Rex',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.system,
       home: const ChatPage(),
     );
   }

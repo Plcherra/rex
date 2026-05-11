@@ -368,7 +368,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 
 ## Phase 3 - Memory System Completion
 
-### 3.1 Add Backend Memory Routes
+### 3.1 Add Backend Memory Routes - Completed
 
 - Why / dependencies: Backend has memory service methods but no user-facing memory API.
 - Files to create or modify:
@@ -388,7 +388,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `PYTHONPATH=backend python3 -m pytest -q tests`
 
-### 3.2 Build Flutter Memory Screen
+### 3.2 Build Flutter Memory Screen - Completed
 
 - Why / dependencies: Memory must be visible and editable for trust.
 - Files to create or modify:
@@ -407,7 +407,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `flutter test`
 
-### 3.3 Improve Long-Term Memory Retrieval
+### 3.3 Improve Long-Term Memory Retrieval - Completed
 
 - Why / dependencies: Current retrieval is global by importance/recency, not query-relevant.
 - Files to modify:
@@ -424,7 +424,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `PYTHONPATH=backend python3 -m pytest -q tests`
 
-### 3.4 Add Grok-Powered Memory Extraction
+### 3.4 Add Grok-Powered Memory Extraction - Completed
 
 - Why / dependencies: Current extraction is regex/rule-based and will miss important life context.
 - Files to modify:
@@ -446,7 +446,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 
 ## Phase 4 - File Uploads, Polish, UX & Error States
 
-### 4.1 Add Flutter File Picker and Upload Flow
+### 4.1 Add Flutter File Picker and Upload Flow - Completed
 
 - Why / dependencies: Backend supports file uploads, but Flutter has no upload UI.
 - Files to modify or create:
@@ -465,7 +465,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `flutter test`
 
-### 4.2 Add File Validation Feedback in Flutter
+### 4.2 Add File Validation Feedback in Flutter - Completed
 
 - Why / dependencies: Backend validates files, but app should explain failures clearly.
 - Files to modify:
@@ -482,7 +482,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `flutter test`
 
-### 4.3 Improve Visual Chat Polish
+### 4.3 Improve Visual Chat Polish - Completed
 
 - Why / dependencies: The shell is clean but not production-level chat UX.
 - Files to modify:
@@ -502,7 +502,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `flutter test`
 
-### 4.4 Add Optional Streaming Response Support
+### 4.4 Add Optional Streaming Response Support - Completed
 
 - Why / dependencies: Vision includes real-time messaging ideally with streaming.
 - Files to modify:
@@ -524,7 +524,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 
 ## Phase 5 - Testing, Documentation & Production Readiness
 
-### 5.1 Add FastAPI Route Tests
+### 5.1 Add FastAPI Route Tests - Completed
 
 - Why / dependencies: Current tests focus on services with fakes, not route behavior.
 - Files to create or modify:

@@ -4,3 +4,7 @@ export 'package:rex/features/chat/application/conversation_controller.dart'
     show conversationListProvider, currentConversationProvider;
 export 'package:rex/features/chat/data/conversation_api.dart'
     show conversationApiProvider;
+export 'package:rex/features/memory/application/memory_controller.dart'
+    show memoryProvider;
+export 'package:rex/features/memory/data/memory_api.dart'
+    show memoryApiProvider;

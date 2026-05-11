@@ -1,4 +1,5 @@
 import json
+from collections.abc import AsyncIterator
 from typing import Optional
 
 import httpx
@@ -30,17 +31,7 @@ Keep responses concise unless the user asks for detail.
         self.settings = settings or get_settings()
 
     async def generate_response(self, messages: list[dict]) -> str:
-        if not self.settings.grok_api_key:
-            raise AIServiceError("Grok API key is not configured.", status_code=503)
-        if not self.settings.grok_model:
-            raise AIServiceError("Grok model is not configured.", status_code=503)
-
-        prompt_messages = self._build_prompt_messages(messages)
-        if self._prompt_length(prompt_messages) > self.max_prompt_characters:
-            raise AIServiceError(
-                "Message context is too large. Shorten the file or start a new chat.",
-                status_code=400,
-            )
+        prompt_messages = self._validated_prompt_messages(messages)
 
         payload = {
             "model": self.settings.grok_model,
@@ -72,6 +63,56 @@ Keep responses concise unless the user asks for detail.
                 status_code=500,
             ) from error
 
+    async def stream_response(self, messages: list[dict]) -> AsyncIterator[str]:
+        prompt_messages = self._validated_prompt_messages(messages)
+        payload = {
+            "model": self.settings.grok_model,
+            "messages": prompt_messages,
+            "stream": True,
+        }
+
+        try:
+            from app.services.http_client import get_http_client
+
+            client = get_http_client()
+            async with client.stream(
+                "POST",
+                self.settings.grok_chat_url,
+                headers={
+                    "Authorization": f"Bearer {self.settings.grok_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.settings.grok_timeout_seconds,
+            ) as response:
+                response.raise_for_status()
+                async for token in self._parse_grok_stream(response):
+                    yield token
+        except httpx.HTTPStatusError as error:
+            raise AIServiceError("Grok API returned an error.") from error
+        except (httpx.RequestError, TimeoutError) as error:
+            raise AIServiceError("Cannot reach Grok API right now.") from error
+        except json.JSONDecodeError as error:
+            raise AIServiceError(
+                "Grok API returned an unreadable streaming response.",
+                status_code=500,
+            ) from error
+
+    def _validated_prompt_messages(self, messages: list[dict]) -> list[dict]:
+        if not self.settings.grok_api_key:
+            raise AIServiceError("Grok API key is not configured.", status_code=503)
+        if not self.settings.grok_model:
+            raise AIServiceError("Grok model is not configured.", status_code=503)
+
+        prompt_messages = self._build_prompt_messages(messages)
+        if self._prompt_length(prompt_messages) > self.max_prompt_characters:
+            raise AIServiceError(
+                "Message context is too large. Shorten the file or start a new chat.",
+                status_code=400,
+            )
+
+        return prompt_messages
+
     def _build_prompt_messages(self, messages: list[dict]) -> list[dict]:
         return [
             {"role": "system", "content": self.system_prompt},
@@ -93,3 +134,26 @@ Keep responses concise unless the user asks for detail.
         message = choices[0].get("message", {})
         content = message.get("content", "")
         return str(content).strip()
+
+    async def _parse_grok_stream(
+        self,
+        response: httpx.Response,
+    ) -> AsyncIterator[str]:
+        async for line in response.aiter_lines():
+            line = line.strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            if line == "[DONE]":
+                break
+
+            data = json.loads(line)
+            choices = data.get("choices", [])
+            if not choices:
+                continue
+
+            delta = choices[0].get("delta", {})
+            content = delta.get("content")
+            if content:
+                yield str(content)

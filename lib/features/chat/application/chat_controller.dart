@@ -1,7 +1,9 @@
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rex/features/chat/data/conversation_api.dart';
 import 'package:rex/features/chat/data/chat_models.dart';
+import 'package:rex/features/chat/domain/chat_attachment.dart';
 import 'package:rex/features/chat/domain/chat_message.dart';
 import 'package:rex/services/chat_api.dart';
 
@@ -44,6 +46,8 @@ class ChatState {
 }
 
 class ChatController extends Notifier<ChatState> {
+  int _streamGeneration = 0;
+
   @override
   ChatState build() => const ChatState();
 
@@ -74,6 +78,7 @@ class ChatController extends Notifier<ChatState> {
   }
 
   void reset() {
+    _streamGeneration++;
     state = const ChatState();
   }
 
@@ -103,10 +108,30 @@ class ChatController extends Notifier<ChatState> {
     }
   }
 
-  Future<void> sendMessage(String content) async {
+  void cancelStreaming() {
+    _streamGeneration++;
+    state = state.copyWith(
+      isLoading: false,
+      messages: _messagesWithStreamingStopped(state.messages),
+    );
+  }
+
+  Future<bool> sendMessage(
+    String content, {
+    XFile? attachment,
+    bool stream = true,
+  }) async {
     final message = content.trim();
     if (message.isEmpty || state.isLoading) {
-      return;
+      return false;
+    }
+
+    if (attachment != null) {
+      final attachmentError = await validateChatAttachmentFile(attachment);
+      if (attachmentError != null) {
+        state = state.copyWith(errorMessage: attachmentError, isLoading: false);
+        return false;
+      }
     }
 
     final userMessage = ChatMessage(
@@ -121,11 +146,23 @@ class ChatController extends Notifier<ChatState> {
       clearError: true,
     );
 
+    if (stream) {
+      return _sendStreamingMessage(message, attachment: attachment);
+    }
+
+    return _sendNonStreamingMessage(message, attachment: attachment);
+  }
+
+  Future<bool> _sendNonStreamingMessage(
+    String message, {
+    XFile? attachment,
+  }) async {
     try {
       final api = ref.read(chatApiProvider);
       final result = await api.sendMessage(
         message,
         conversationId: state.conversationId,
+        attachment: attachment,
       );
 
       state = state.copyWith(
@@ -144,9 +181,125 @@ class ChatController extends Notifier<ChatState> {
         isLoading: false,
         clearError: true,
       );
+      return true;
+    } on ChatApiException catch (error) {
+      state = state.copyWith(isLoading: false, errorMessage: error.message);
+      return false;
     } on Object catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: error.toString());
+      return false;
     }
+  }
+
+  Future<bool> _sendStreamingMessage(
+    String message, {
+    XFile? attachment,
+  }) async {
+    final generation = ++_streamGeneration;
+    final streamedAssistantId =
+        'local-assistant-${DateTime.now().microsecondsSinceEpoch}';
+
+    try {
+      final api = ref.read(chatApiProvider);
+      await for (final event in api.streamMessage(
+        message,
+        conversationId: state.conversationId,
+        attachment: attachment,
+      )) {
+        if (generation != _streamGeneration) {
+          return false;
+        }
+
+        if (event is ChatStreamConversation) {
+          state = state.copyWith(conversationId: event.conversationId);
+        } else if (event is ChatStreamToken) {
+          if (event.token.isEmpty) {
+            continue;
+          }
+          state = state.copyWith(
+            messages: _messagesWithStreamedToken(
+              state.messages,
+              streamedAssistantId,
+              event.token,
+            ),
+          );
+        } else if (event is ChatStreamDone) {
+          final response = event.response;
+          state = state.copyWith(
+            conversationId: response.conversationId,
+            messages: response.messages.isNotEmpty
+                ? response.messages.map(_messageFromApi).toList(growable: false)
+                : _messagesWithStreamingStopped(state.messages),
+            isLoading: false,
+            clearError: true,
+          );
+          return true;
+        }
+      }
+
+      state = state.copyWith(
+        isLoading: false,
+        messages: _messagesWithStreamingStopped(state.messages),
+        clearError: true,
+      );
+      return true;
+    } on ChatApiException catch (error) {
+      if (generation == _streamGeneration) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: error.message,
+          messages: _messagesWithStreamingStopped(state.messages),
+        );
+      }
+      return false;
+    } on Object catch (error) {
+      if (generation == _streamGeneration) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: error.toString(),
+          messages: _messagesWithStreamingStopped(state.messages),
+        );
+      }
+      return false;
+    }
+  }
+
+  List<ChatMessage> _messagesWithStreamedToken(
+    List<ChatMessage> messages,
+    String assistantId,
+    String token,
+  ) {
+    if (messages.isNotEmpty &&
+        messages.last.role == ChatMessageRole.assistant &&
+        messages.last.isStreaming) {
+      return List.unmodifiable([
+        ...messages.take(messages.length - 1),
+        messages.last.copyWith(content: '${messages.last.content}$token'),
+      ]);
+    }
+
+    return List.unmodifiable([
+      ...messages,
+      ChatMessage(
+        id: assistantId,
+        role: ChatMessageRole.assistant,
+        content: token,
+        timestamp: DateTime.now(),
+        isStreaming: true,
+      ),
+    ]);
+  }
+
+  List<ChatMessage> _messagesWithStreamingStopped(List<ChatMessage> messages) {
+    return List.unmodifiable(
+      messages
+          .map(
+            (message) => message.isStreaming
+                ? message.copyWith(isStreaming: false)
+                : message,
+          )
+          .toList(growable: false),
+    );
   }
 
   ChatMessage _messageFromApi(ChatApiMessage message) => message.toDomain();

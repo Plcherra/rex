@@ -1,25 +1,41 @@
 from typing import Optional
+import json
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
+from app.dependencies import get_chat_service
 from app.models.chat import ChatRequest, ChatResponse
-from app.services.ai_service import AIService, AIServiceError
+from app.services.ai_service import AIServiceError
 from app.services.chat_service import ChatService, ConversationNotFoundError
-from app.services.file_service import FileService
-from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
+from app.services.memory_service import MemoryServiceError
 
 
 router = APIRouter()
-chat_service = ChatService(AIService(), FileService(), SupabaseMemoryService())
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: Request) -> ChatResponse:
+async def chat(
+    request: Request,
+    chat_service: ChatService = Depends(get_chat_service),
+):
     chat_request, file = await _parse_chat_request(request)
     message = chat_request.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    if chat_request.stream:
+        return StreamingResponse(
+            _stream_chat_events(
+                chat_service=chat_service,
+                message=message,
+                conversation_id=chat_request.conversation_id,
+                file=file,
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     try:
         result = await chat_service.send_message(
@@ -47,6 +63,31 @@ async def chat(request: Request) -> ChatResponse:
     )
 
 
+async def _stream_chat_events(
+    chat_service: ChatService,
+    message: str,
+    conversation_id: Optional[str],
+    file: Optional[UploadFile],
+):
+    try:
+        async for event in chat_service.stream_message(
+            message=message,
+            conversation_id=conversation_id,
+            file=file,
+        ):
+            yield _sse_event(event.pop("event"), event)
+    except ConversationNotFoundError:
+        yield _sse_event("error", {"detail": "Conversation not found."})
+    except AIServiceError as error:
+        yield _sse_event("error", {"detail": error.detail})
+    except MemoryServiceError as error:
+        yield _sse_event("error", {"detail": error.detail})
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
 async def _parse_chat_request(request: Request) -> tuple[ChatRequest, Optional[UploadFile]]:
     content_type = request.headers.get("content-type", "")
     file: Optional[UploadFile] = None
@@ -59,6 +100,7 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, Optional[U
             conversation_id = (
                 str(conversation_id_value) if conversation_id_value else None
             )
+            stream = _as_bool(form.get("stream"))
             file_value = form.get("file")
             if hasattr(file_value, "filename") and hasattr(file_value, "read"):
                 file = file_value
@@ -68,6 +110,7 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, Optional[U
                     message=message,
                     conversation_id=conversation_id,
                     file=file.filename if file else None,
+                    stream=stream,
                 ),
                 file,
             )
@@ -84,3 +127,11 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, Optional[U
         status_code=415,
         detail="Use application/json or multipart/form-data.",
     )
+
+
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

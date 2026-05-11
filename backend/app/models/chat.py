@@ -7,6 +7,7 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     file: Optional[str] = None
+    stream: bool = False
 
 
 class ChatResponse(BaseModel):

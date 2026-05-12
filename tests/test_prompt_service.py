@@ -1,10 +1,13 @@
 from app.services.prompt_service import (
+    CONVERSATION_CONTEXT_PREFIX,
     FILE_CONTEXT_PREFIX,
     LONG_TERM_MEMORY_PREFIX,
     PERSONALITY_CONTEXT_PREFIX,
     PromptService,
     REX_PERSONALITY_PROMPT,
+    TIME_CONTEXT_PREFIX,
 )
+from app.services.time_context_service import TimeContextService
 
 
 def test_prompt_service_always_includes_rex_personality():
@@ -63,7 +66,7 @@ def test_prompt_service_sanitizes_recent_message_history():
 
 
 def test_prompt_service_injects_time_conversation_memory_and_file_context():
-    service = PromptService()
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
 
     messages = service.build_messages(
         user_message="Read this and help me decide.",
@@ -74,6 +77,7 @@ def test_prompt_service_injects_time_conversation_memory_and_file_context():
             {
                 "memory_type": "preference",
                 "content": "I prefer direct concise answers.",
+                "created_at": "2026-04-30T15:30:00-04:00",
                 "relevance_reason": "Included high-priority user preference.",
             },
         ],
@@ -106,6 +110,7 @@ def test_prompt_service_injects_time_conversation_memory_and_file_context():
     assert "- Conversation ID: conversation-1" in system_content
     assert LONG_TERM_MEMORY_PREFIX in system_content
     assert "- preference: I prefer direct concise answers." in system_content
+    assert "saved 12 days ago" in system_content
     assert "why recalled: Included high-priority user preference." in system_content
     assert messages[-3] == {"role": "assistant", "content": "What happened?"}
     assert messages[-2] == {
@@ -115,6 +120,111 @@ def test_prompt_service_injects_time_conversation_memory_and_file_context():
     assert messages[-1] == {
         "role": "user",
         "content": "Read this and help me decide.",
+    }
+
+
+def test_prompt_shape_contains_required_time_aware_founder_context():
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
+
+    messages = service.build_messages(
+        user_message="I ordered DoorDash again. Be honest with me.",
+        recent_messages=[
+            {
+                "role": "user",
+                "content": "Last time I said I would cut delivery.",
+                "timestamp": "2026-05-10T22:15:00-04:00",
+            },
+            {
+                "role": "assistant",
+                "content": "You need to stop the pattern this week.",
+                "timestamp": "2026-05-10T22:16:00-04:00",
+            },
+        ],
+        relevant_memories=[
+            {
+                "memory_type": "preference",
+                "content": "I want direct accountability about food delivery.",
+                "created_at": "2026-04-30T15:30:00-04:00",
+                "relevance_reason": "Matched current message terms: delivery",
+            },
+            {
+                "memory_type": "event",
+                "content": "I committed to stop ordering DoorDash in May.",
+                "updated_at": "2026-05-05T15:30:00-04:00",
+                "relevance_reason": "Matched current message terms: doordash",
+            },
+        ],
+        file_context="Budget CSV summary: DoorDash spending is over the weekly cap.",
+        conversation_metadata={
+            "id": "conversation-budget",
+            "title": "Budget accountability",
+            "timestamp": "2026-05-10T22:15:00-04:00",
+            "last_message_timestamp": "2026-05-10T22:16:00-04:00",
+        },
+        time_context={
+            "clock_context": "Tuesday afternoon (15:30 America/New_York (EDT))",
+            "iso_timestamp": "2026-05-12T15:30:00-04:00",
+            "date": "2026-05-12",
+            "weekday": "Tuesday",
+            "time": "15:30",
+            "timezone": "America/New_York (EDT)",
+            "previous_timestamp_delta": "2 days ago",
+        },
+    )
+
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "user",
+    ]
+
+    system_content = messages[0]["content"]
+    assert system_content.index(PERSONALITY_CONTEXT_PREFIX) < system_content.index(
+        TIME_CONTEXT_PREFIX
+    )
+    assert system_content.index(TIME_CONTEXT_PREFIX) < system_content.index(
+        CONVERSATION_CONTEXT_PREFIX
+    )
+    assert system_content.index(CONVERSATION_CONTEXT_PREFIX) < system_content.index(
+        LONG_TERM_MEMORY_PREFIX
+    )
+
+    assert "uncensored, voice-first, time-aware" in system_content
+    assert "fake positivity, vague disclaimers, or motivational fluff" in system_content
+    assert "holds the user accountable" in system_content
+    assert "- Clock: Tuesday afternoon (15:30 America/New_York (EDT))" in (
+        system_content
+    )
+    assert "- ISO timestamp: 2026-05-12T15:30:00-04:00" in system_content
+    assert "- Date: 2026-05-12" in system_content
+    assert "- Weekday: Tuesday" in system_content
+    assert "- Previous message delta: 2 days ago" in system_content
+    assert "- Conversation ID: conversation-budget" in system_content
+    assert "- Title: Budget accountability" in system_content
+    assert "- Last message timestamp: 2026-05-10T22:16:00-04:00" in system_content
+    assert (
+        "- preference: I want direct accountability about food delivery. "
+        "(saved 12 days ago) "
+        "(why recalled: Matched current message terms: delivery)"
+    ) in system_content
+    assert (
+        "- event: I committed to stop ordering DoorDash in May. "
+        "(saved 7 days ago) "
+        "(why recalled: Matched current message terms: doordash)"
+    ) in system_content
+
+    assert messages[-2] == {
+        "role": "user",
+        "content": (
+            f"{FILE_CONTEXT_PREFIX}"
+            "Budget CSV summary: DoorDash spending is over the weekly cap."
+        ),
+    }
+    assert messages[-1] == {
+        "role": "user",
+        "content": "I ordered DoorDash again. Be honest with me.",
     }
 
 
@@ -135,6 +245,55 @@ def test_prompt_service_limits_injected_memory_context():
     memory_section = messages[0]["content"].split(LONG_TERM_MEMORY_PREFIX, 1)[1]
     assert len(memory_section) < 2200
     assert "[truncated]" in messages[0]["content"]
+
+
+def test_prompt_service_uses_updated_at_before_created_at_for_memory_age():
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
+
+    messages = service.build_messages(
+        user_message="What should I remember?",
+        relevant_memories=[
+            {
+                "memory_type": "fact",
+                "content": "I am working on budget discipline.",
+                "created_at": "2026-03-12T15:30:00-04:00",
+                "updated_at": "2026-05-11T15:30:00-04:00",
+            },
+        ],
+        time_context={
+            "iso_timestamp": "2026-05-12T15:30:00-04:00",
+        },
+    )
+
+    assert "saved 1 day ago" in messages[0]["content"]
+    assert "about 2 months ago" not in messages[0]["content"]
+
+
+def test_prompt_service_omits_memory_age_for_missing_or_invalid_timestamps():
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
+
+    messages = service.build_messages(
+        user_message="What should I remember?",
+        relevant_memories=[
+            {
+                "memory_type": "fact",
+                "content": "I prefer direct advice.",
+                "created_at": "not-a-timestamp",
+            },
+            {
+                "memory_type": "event",
+                "content": "I started a new plan.",
+            },
+        ],
+        time_context={
+            "iso_timestamp": "2026-05-12T15:30:00-04:00",
+        },
+    )
+
+    system_content = messages[0]["content"]
+    assert "- fact: I prefer direct advice." in system_content
+    assert "- event: I started a new plan." in system_content
+    assert "saved " not in system_content
 
 
 def test_prompt_service_trims_large_context_to_recent_messages():

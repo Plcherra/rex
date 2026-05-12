@@ -6,11 +6,8 @@ from fastapi import UploadFile
 from app.services.ai_service import AIService
 from app.services.file_service import FileService
 from app.services.memory_extraction_service import MemoryExtractionService
-
-MAX_CONTEXT_CHARACTERS = 24000
-MAX_MEMORY_CONTEXT_CHARACTERS = 2000
-FILE_CONTEXT_PREFIX = "Uploaded file content:\n\n"
-LONG_TERM_MEMORY_PREFIX = "Relevant long-term memory:\n"
+from app.services.prompt_service import PromptService
+from app.services.time_context_service import TimeContextService
 
 
 class ConversationNotFoundError(Exception):
@@ -55,11 +52,15 @@ class ChatService:
         file_service: FileService,
         memory_service: MemoryService,
         memory_extraction_service: Optional[MemoryExtractionService] = None,
+        prompt_service: Optional[PromptService] = None,
+        time_context_service: Optional[TimeContextService] = None,
     ) -> None:
         self.ai_service = ai_service
         self.file_service = file_service
         self.memory_service = memory_service
         self.memory_extraction_service = memory_extraction_service
+        self.prompt_service = prompt_service or PromptService()
+        self.time_context_service = time_context_service or TimeContextService()
 
     async def send_message(
         self,
@@ -81,19 +82,16 @@ class ChatService:
             limit=8,
         )
 
-        ai_messages = [
-            *conversation_history,
-            {"role": "user", "content": message},
-        ]
-        ai_messages = self._messages_with_file_context(ai_messages, file_text)
-        ai_messages = self._messages_with_long_term_memory(
-            ai_messages,
-            long_term_memory,
-        )
-        ai_messages = self._trim_context(ai_messages)
-
         if conversation_id is None:
             conversation_id = await self.memory_service.create_conversation()
+
+        ai_messages = self._build_prompt_messages(
+            message=message,
+            conversation_id=conversation_id,
+            conversation_history=conversation_history,
+            long_term_memory=long_term_memory,
+            file_text=file_text,
+        )
 
         user_message = await self.memory_service.save_message(
             conversation_id,
@@ -143,19 +141,16 @@ class ChatService:
             limit=8,
         )
 
-        ai_messages = [
-            *conversation_history,
-            {"role": "user", "content": message},
-        ]
-        ai_messages = self._messages_with_file_context(ai_messages, file_text)
-        ai_messages = self._messages_with_long_term_memory(
-            ai_messages,
-            long_term_memory,
-        )
-        ai_messages = self._trim_context(ai_messages)
-
         if conversation_id is None:
             conversation_id = await self.memory_service.create_conversation()
+
+        ai_messages = self._build_prompt_messages(
+            message=message,
+            conversation_id=conversation_id,
+            conversation_history=conversation_history,
+            long_term_memory=long_term_memory,
+            file_text=file_text,
+        )
 
         user_message = await self.memory_service.save_message(
             conversation_id,
@@ -204,130 +199,41 @@ class ChatService:
 
         return conversation_id
 
-    def _messages_with_file_context(
+    def _build_prompt_messages(
         self,
-        messages: list[dict],
+        message: str,
+        conversation_id: str,
+        conversation_history: list[dict],
+        long_term_memory: list[dict],
         file_text: Optional[str],
     ) -> list[dict]:
-        if not file_text:
-            return messages
-
-        file_message = {
-            "role": "user",
-            "content": f"{FILE_CONTEXT_PREFIX}{file_text}",
-        }
-        if not messages:
-            return [file_message]
-
-        return [
-            *messages[:-1],
-            file_message,
-            messages[-1],
-        ]
-
-    def _messages_with_long_term_memory(
-        self,
-        messages: list[dict],
-        long_term_memory: list[dict],
-    ) -> list[dict]:
-        if not long_term_memory:
-            return messages
-
-        memory_lines = self._memory_lines_with_budget(long_term_memory)
-        if not memory_lines:
-            return messages
-
-        return [
-            {
-                "role": "system",
-                "content": f"{LONG_TERM_MEMORY_PREFIX}{chr(10).join(memory_lines)}",
+        last_message_timestamp = self._last_message_timestamp(conversation_history)
+        return self.prompt_service.build_messages(
+            user_message=message,
+            recent_messages=conversation_history,
+            relevant_memories=long_term_memory,
+            file_context=file_text,
+            conversation_metadata={
+                "id": conversation_id,
+                "timestamp": self._conversation_timestamp(conversation_history),
+                "last_message_timestamp": last_message_timestamp,
             },
-            *messages,
-        ]
-
-    def _memory_lines_with_budget(self, long_term_memory: list[dict]) -> list[str]:
-        memory_lines = []
-        used_characters = 0
-
-        for memory in long_term_memory:
-            if not memory.get("memory_type") or not memory.get("content"):
-                continue
-
-            line = f"- {memory['memory_type']}: {memory['content']}"
-            remaining_characters = MAX_MEMORY_CONTEXT_CHARACTERS - used_characters
-            if remaining_characters <= 0:
-                break
-            if len(line) > remaining_characters:
-                if remaining_characters < 40:
-                    break
-                line = f"{line[: remaining_characters - 22].rstrip()} [truncated]"
-
-            memory_lines.append(line)
-            used_characters += len(line) + 1
-
-        return memory_lines
-
-    def _trim_context(self, messages: list[dict]) -> list[dict]:
-        trimmed_messages = list(messages)
-        while (
-            len(trimmed_messages) > 1
-            and self._context_length(trimmed_messages) > MAX_CONTEXT_CHARACTERS
-        ):
-            if len(trimmed_messages) == 2 and self._has_file_context(
-                trimmed_messages[0]
-            ):
-                break
-
-            trimmed_messages = trimmed_messages[1:]
-
-        trimmed_messages = self._trim_file_context(trimmed_messages)
-        if self._context_length(trimmed_messages) > MAX_CONTEXT_CHARACTERS:
-            last_message = trimmed_messages[-1]
-            return [
-                {
-                    **last_message,
-                    "content": last_message["content"][-MAX_CONTEXT_CHARACTERS:],
-                }
-            ]
-
-        return trimmed_messages
-
-    def _context_length(self, messages: list[dict]) -> int:
-        return sum(len(message["content"]) for message in messages)
-
-    def _trim_file_context(self, messages: list[dict]) -> list[dict]:
-        if len(messages) < 2 or not self._has_file_context(messages[0]):
-            return messages
-
-        latest_message = messages[-1]
-        truncation_note = "\n\n[File truncated]"
-        available_file_characters = (
-            MAX_CONTEXT_CHARACTERS
-            - len(latest_message["content"])
-            - len(FILE_CONTEXT_PREFIX)
-            - len(truncation_note)
+            time_context=self.time_context_service.current_context(
+                previous_timestamp=last_message_timestamp,
+            ),
         )
-        if available_file_characters <= 0:
-            return [latest_message]
 
-        file_message = messages[0]
-        file_text = file_message["content"][len(FILE_CONTEXT_PREFIX) :]
-        if len(file_text) <= available_file_characters:
-            return messages
+    def _last_message_timestamp(self, conversation_history: list[dict]) -> Optional[str]:
+        if not conversation_history:
+            return None
+        timestamp = conversation_history[-1].get("timestamp")
+        return str(timestamp) if timestamp else None
 
-        return [
-            {
-                **file_message,
-                "content": (
-                    f"{FILE_CONTEXT_PREFIX}"
-                    f"{file_text[:available_file_characters]}{truncation_note}"
-                ),
-            },
-            latest_message,
-        ]
-
-    def _has_file_context(self, message: dict) -> bool:
-        return message["content"].startswith(FILE_CONTEXT_PREFIX)
+    def _conversation_timestamp(self, conversation_history: list[dict]) -> Optional[str]:
+        if not conversation_history:
+            return None
+        timestamp = conversation_history[0].get("timestamp")
+        return str(timestamp) if timestamp else None
 
     async def _extract_memory_after_success(
         self,

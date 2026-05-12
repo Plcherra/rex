@@ -1,5 +1,7 @@
 from typing import Optional
 
+from app.services.time_context_service import TimeContextService
+
 MAX_CONTEXT_CHARACTERS = 24000
 MAX_MEMORY_CONTEXT_CHARACTERS = 2000
 REX_PERSONALITY_PROMPT = """
@@ -28,6 +30,12 @@ LONG_TERM_MEMORY_PREFIX = "Relevant long-term memory:\n"
 
 
 class PromptService:
+    def __init__(
+        self,
+        time_context_service: Optional[TimeContextService] = None,
+    ) -> None:
+        self.time_context_service = time_context_service or TimeContextService()
+
     def build_messages(
         self,
         user_message: str,
@@ -84,7 +92,10 @@ class PromptService:
         if conversation_section:
             sections.append(conversation_section)
 
-        memory_section = self._long_term_memory_section(relevant_memories)
+        memory_section = self._long_term_memory_section(
+            relevant_memories,
+            time_context,
+        )
         if memory_section:
             sections.append(memory_section)
 
@@ -139,13 +150,18 @@ class PromptService:
     def _long_term_memory_section(
         self,
         relevant_memories: list[dict],
+        time_context: Optional[dict],
     ) -> Optional[str]:
-        memory_lines = self._memory_lines_with_budget(relevant_memories)
+        memory_lines = self._memory_lines_with_budget(relevant_memories, time_context)
         if not memory_lines:
             return None
         return f"{LONG_TERM_MEMORY_PREFIX}{chr(10).join(memory_lines)}"
 
-    def _memory_lines_with_budget(self, relevant_memories: list[dict]) -> list[str]:
+    def _memory_lines_with_budget(
+        self,
+        relevant_memories: list[dict],
+        time_context: Optional[dict],
+    ) -> list[str]:
         memory_lines = []
         used_characters = 0
 
@@ -156,6 +172,9 @@ class PromptService:
                 continue
 
             line = f"- {memory_type}: {content}"
+            age_label = self._memory_age_label(memory, time_context)
+            if age_label:
+                line = f"{line} ({age_label})"
             relevance_reason = memory.get("relevance_reason")
             if relevance_reason:
                 line = f"{line} (why recalled: {relevance_reason})"
@@ -172,6 +191,26 @@ class PromptService:
             used_characters += len(line) + 1
 
         return memory_lines
+
+    def _memory_age_label(
+        self,
+        memory: dict,
+        time_context: Optional[dict],
+    ) -> Optional[str]:
+        timestamp = memory.get("updated_at") or memory.get("created_at")
+        if not timestamp:
+            return None
+
+        now = None
+        if time_context:
+            now = self.time_context_service.parse_timestamp(
+                time_context.get("iso_timestamp"),
+            )
+        delta = self.time_context_service.delta_from(timestamp, now=now)
+        if not delta:
+            return None
+
+        return f"saved {delta}"
 
     def _messages_with_file_context(
         self,

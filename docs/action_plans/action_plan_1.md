@@ -103,12 +103,12 @@ Existing chat service, message timestamps in Supabase, and memory retrieval logi
     - Rough time estimate: 1-2 hours
 
 ## Plan Completion Checklist
-- [ ] All 10 checklist items completed
-- [ ] All new/updated tests passing
-- [ ] `PYTHONPATH=backend python3 -m pytest -q tests` returns all tests passing
-- [ ] Manual test: send a message after a simulated time gap and verify time awareness appears in the response
-- [ ] Code style and type checks pass
-- [ ] Ready for Action Plan 2
+- [x] All 10 checklist items completed
+- [x] All new/updated tests passing
+- [x] `PYTHONPATH=backend python3 -m pytest -q tests` returns all tests passing
+- [x] Manual test: send a message after a simulated time gap and verify time awareness appears in the response
+- [x] Code style and type checks pass
+- [x] Ready for Action Plan 2
 
 ## Revision History
 - 2026-05-12 - Action Plan 1 created from Alignment Plan and updated REX_VISION.md

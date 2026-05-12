@@ -1,10 +1,15 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.services.chat_service import ChatService, FILE_CONTEXT_PREFIX
+from app.services.chat_service import ChatService
 from app.services.file_service import FileService
 from app.services.memory_service import SupabaseMemoryService, MemoryServiceError
+from app.services.prompt_service import FILE_CONTEXT_PREFIX, LONG_TERM_MEMORY_PREFIX
+from app.services.time_context_service import TimeContextService
 
 
 class FakeAIService:
@@ -194,6 +199,116 @@ async def test_chat_service_streams_tokens_and_persists_final_response():
 
 
 @pytest.mark.asyncio
+async def test_chat_service_injects_current_time_for_new_conversation():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    time_context_service = TimeContextService(
+        timezone_name="America/New_York",
+        now_provider=lambda: datetime(
+            2026,
+            5,
+            12,
+            15,
+            30,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        time_context_service=time_context_service,
+    )
+
+    await chat_service.send_message("Hello Rex")
+
+    system_content = ai_service.messages[0]["content"]
+    assert "Current time context:" in system_content
+    assert "- Clock: Tuesday afternoon (15:30 America/New_York (EDT))" in (
+        system_content
+    )
+    assert "- Date: 2026-05-12" in system_content
+    assert "- Weekday: Tuesday" in system_content
+    assert "- Time: 15:30" in system_content
+    assert "- Timezone: America/New_York (EDT)" in system_content
+    assert "Conversation context:" in system_content
+    assert "- Conversation ID: conversation-1" in system_content
+
+
+@pytest.mark.asyncio
+async def test_chat_service_injects_session_gap_for_existing_conversation():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.conversations.add("conversation-existing")
+    memory_service.messages.append(
+        {
+            "id": "message-existing",
+            "conversation_id": "conversation-existing",
+            "role": "assistant",
+            "content": "Previous response",
+            "timestamp": "2026-05-10T15:30:00-04:00",
+        }
+    )
+    time_context_service = TimeContextService(
+        timezone_name="America/New_York",
+        now_provider=lambda: datetime(
+            2026,
+            5,
+            12,
+            15,
+            30,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        time_context_service=time_context_service,
+    )
+
+    await chat_service.send_message("What changed?", "conversation-existing")
+
+    system_content = ai_service.messages[0]["content"]
+    assert "- Previous message delta: 2 days ago" in system_content
+    assert "- Conversation ID: conversation-existing" in system_content
+    assert "- Conversation timestamp: 2026-05-10T15:30:00-04:00" in system_content
+    assert "- Last message timestamp: 2026-05-10T15:30:00-04:00" in system_content
+
+
+@pytest.mark.asyncio
+async def test_chat_service_injects_time_context_for_streaming_chat():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    time_context_service = TimeContextService(
+        timezone_name="America/New_York",
+        now_provider=lambda: datetime(
+            2026,
+            5,
+            12,
+            23,
+            10,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        time_context_service=time_context_service,
+    )
+
+    events = [
+        event async for event in chat_service.stream_message("Hello Rex", file=None)
+    ]
+
+    assert events[-1]["event"] == "done"
+    system_content = ai_service.messages[0]["content"]
+    assert "Current time context:" in system_content
+    assert "- Clock: Tuesday night (23:10 America/New_York (EDT))" in system_content
+
+
+@pytest.mark.asyncio
 async def test_chat_service_handles_file_upload():
     ai_service = FakeAIService()
     memory_service = FakeMemoryService()
@@ -249,7 +364,11 @@ async def test_chat_service_limits_injected_memory_context():
 
     await chat_service.send_message("I need advice about work.")
 
-    assert len(ai_service.messages[0]["content"]) < 2200
+    memory_section = ai_service.messages[0]["content"].split(
+        LONG_TERM_MEMORY_PREFIX,
+        1,
+    )[1]
+    assert len(memory_section) < 2200
     assert "[truncated]" in ai_service.messages[0]["content"]
 
 

@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.config import Settings
 from app.services.chat_service import ChatService, FILE_CONTEXT_PREFIX
 from app.services.file_service import FileService
 from app.services.memory_service import SupabaseMemoryService, MemoryServiceError
@@ -316,7 +317,12 @@ async def test_chat_service_does_not_extract_memory_when_ai_fails():
 
 @pytest.mark.asyncio
 async def test_supabase_memory_requires_configuration():
-    memory_service = SupabaseMemoryService()
+    memory_service = SupabaseMemoryService(
+        Settings(
+            supabase_url=None,
+            supabase_service_role_key=None,
+        )
+    )
 
     with pytest.raises(MemoryServiceError) as error:
         await memory_service.create_conversation()

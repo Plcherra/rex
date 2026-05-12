@@ -541,7 +541,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `PYTHONPATH=backend python3 -m pytest -q tests`
 
-### 5.2 Add Flutter Widget Tests for Real Chat States
+### 5.2 Add Flutter Widget Tests for Real Chat States - Completed
 
 - Why / dependencies: Current Flutter test only checks the shell exists.
 - Files to modify:
@@ -557,7 +557,7 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `flutter test`
 
-### 5.3 Add Environment and Run Documentation
+### 5.3 Add Environment and Run Documentation - Completed
 
 - Why / dependencies: The app needs clear setup for Grok, Supabase, backend, and Flutter.
 - Files to modify:
@@ -576,12 +576,12 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
 - Suggested testing command:
   - `PYTHONPATH=backend python3 -m pytest -q tests && flutter test`
 
-### 5.4 Prepare Deployment Path
+### 5.4 Prepare Deployment Path - Completed
 
 - Why / dependencies: Production readiness requires stable deployment and environment handling.
 - Files to create or modify:
   - backend deployment docs/config
-  - optional Dockerfile
+  - VPS `systemd` deployment guidance
   - CI workflow later
 - Definition of Done:
   - Backend can be deployed with env vars.
@@ -591,6 +591,22 @@ One-sentence insight: Rex has the right backend direction, but the app is not ye
   - CORS setup for mobile/dev clients.
   - HTTPS required for production mobile reliability.
 - Effort: Large
+- Suggested testing command:
+  - `PYTHONPATH=backend python3 -m pytest -q tests && flutter test`
+
+### 5.5 Docker Cleanup - Completed
+
+- Why / dependencies: The initial deployment path is a single VPS with Python virtualenv, `systemd`, and Nginx/Caddy. Keeping an optional Docker path adds confusion without solving a current deployment problem.
+- Files modified:
+  - Removed `backend/Dockerfile`
+  - Removed `.dockerignore`
+  - Updated `docs/deployment.md`
+  - Updated `REX_VISION.md`
+- Definition of Done:
+  - Deployment docs recommend one clear VPS path.
+  - No Dockerfile remains in the project.
+  - Docker references are removed from active docs.
+- Effort: Small
 - Suggested testing command:
   - `PYTHONPATH=backend python3 -m pytest -q tests && flutter test`
 

@@ -5,6 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    app_environment: str = "development"
+    cors_allowed_origins: str = ""
+
     grok_api_key: Optional[str] = None
     grok_base_url: str = "https://api.x.ai/v1"
     grok_model: Optional[str] = None
@@ -28,6 +31,14 @@ class Settings(BaseSettings):
             return None
 
         return f"{self.supabase_url.rstrip('/')}/rest/v1"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache

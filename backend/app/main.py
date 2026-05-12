@@ -1,21 +1,35 @@
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import get_settings
 from app.routes.chat import router as chat_router
 from app.routes.conversations import router as conversations_router
 from app.routes.memory import router as memory_router
 from app.services.http_client import shutdown_http_client, startup_http_client
 
-app = FastAPI(title="Rex Backend")
 
-
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     await startup_http_client()
+    try:
+        yield
+    finally:
+        await shutdown_http_client()
 
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    await shutdown_http_client()
+app = FastAPI(title="Rex Backend", lifespan=lifespan)
+settings = get_settings()
+
+if settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.get("/")

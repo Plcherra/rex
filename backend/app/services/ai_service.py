@@ -17,15 +17,6 @@ class AIServiceError(Exception):
 
 class AIService:
     max_prompt_characters = 30000
-    system_prompt = """
-You are Rex, a personal AI advisor.
-Be direct, straightforward, and honest.
-Do not use fluff, filler, fake enthusiasm, or vague motivation.
-Give practical answers.
-If something is unclear, ask a simple clarifying question.
-If the user is wrong, say so respectfully and explain why.
-Keep responses concise unless the user asks for detail.
-""".strip()
 
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
@@ -104,7 +95,7 @@ Keep responses concise unless the user asks for detail.
         if not self.settings.grok_model:
             raise AIServiceError("Grok model is not configured.", status_code=503)
 
-        prompt_messages = self._build_prompt_messages(messages)
+        prompt_messages = self._prompt_messages(messages)
         if self._prompt_length(prompt_messages) > self.max_prompt_characters:
             raise AIServiceError(
                 "Message context is too large. Shorten the file or start a new chat.",
@@ -113,13 +104,10 @@ Keep responses concise unless the user asks for detail.
 
         return prompt_messages
 
-    def _build_prompt_messages(self, messages: list[dict]) -> list[dict]:
+    def _prompt_messages(self, messages: list[dict]) -> list[dict]:
         return [
-            {"role": "system", "content": self.system_prompt},
-            *[
-                {"role": message["role"], "content": message["content"]}
-                for message in messages
-            ],
+            {"role": message["role"], "content": message["content"]}
+            for message in messages
         ]
 
     def _prompt_length(self, messages: list[dict]) -> int:

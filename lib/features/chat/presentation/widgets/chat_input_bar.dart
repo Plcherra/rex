@@ -10,6 +10,7 @@ class ChatInputBar extends StatelessWidget {
     this.onSend,
     this.onPickAttachment,
     this.onRemoveAttachment,
+    this.onStartVoice,
     this.attachmentName,
     this.attachmentSize,
     this.attachmentError,
@@ -20,6 +21,7 @@ class ChatInputBar extends StatelessWidget {
   final VoidCallback? onSend;
   final VoidCallback? onPickAttachment;
   final VoidCallback? onRemoveAttachment;
+  final VoidCallback? onStartVoice;
   final String? attachmentName;
   final int? attachmentSize;
   final String? attachmentError;
@@ -75,6 +77,14 @@ class ChatInputBar extends StatelessWidget {
                           onPressed: isLoading ? null : onPickAttachment,
                           icon: const Icon(Icons.attach_file_rounded),
                           tooltip: 'Attach file',
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: IconButton(
+                          onPressed: isLoading ? null : onStartVoice,
+                          icon: const Icon(Icons.mic_none_rounded),
+                          tooltip: 'Talk to Rex',
                         ),
                       ),
                       Expanded(

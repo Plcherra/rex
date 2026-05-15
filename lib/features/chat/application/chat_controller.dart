@@ -121,16 +121,29 @@ class ChatController extends Notifier<ChatState> {
     XFile? attachment,
     bool stream = true,
   }) async {
+    final response = await sendMessageForAssistantResponse(
+      content,
+      attachment: attachment,
+      stream: stream,
+    );
+    return response != null;
+  }
+
+  Future<String?> sendMessageForAssistantResponse(
+    String content, {
+    XFile? attachment,
+    bool stream = true,
+  }) async {
     final message = content.trim();
     if (message.isEmpty || state.isLoading) {
-      return false;
+      return null;
     }
 
     if (attachment != null) {
       final attachmentError = await validateChatAttachmentFile(attachment);
       if (attachmentError != null) {
         state = state.copyWith(errorMessage: attachmentError, isLoading: false);
-        return false;
+        return null;
       }
     }
 
@@ -150,10 +163,10 @@ class ChatController extends Notifier<ChatState> {
       return _sendStreamingMessage(message, attachment: attachment);
     }
 
-    return _sendNonStreamingMessage(message, attachment: attachment);
+    return _sendNonStreamingMessageForResponse(message, attachment: attachment);
   }
 
-  Future<bool> _sendNonStreamingMessage(
+  Future<String?> _sendNonStreamingMessageForResponse(
     String message, {
     XFile? attachment,
   }) async {
@@ -181,17 +194,17 @@ class ChatController extends Notifier<ChatState> {
         isLoading: false,
         clearError: true,
       );
-      return true;
+      return _assistantTextFromApiResponse(result) ?? _latestAssistantContent();
     } on ChatApiException catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: error.message);
-      return false;
+      return null;
     } on Object catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: error.toString());
-      return false;
+      return null;
     }
   }
 
-  Future<bool> _sendStreamingMessage(
+  Future<String?> _sendStreamingMessage(
     String message, {
     XFile? attachment,
   }) async {
@@ -207,7 +220,7 @@ class ChatController extends Notifier<ChatState> {
         attachment: attachment,
       )) {
         if (generation != _streamGeneration) {
-          return false;
+          return null;
         }
 
         if (event is ChatStreamConversation) {
@@ -233,7 +246,8 @@ class ChatController extends Notifier<ChatState> {
             isLoading: false,
             clearError: true,
           );
-          return true;
+          return _assistantTextFromApiResponse(response) ??
+              _latestAssistantContent();
         }
       }
 
@@ -242,7 +256,7 @@ class ChatController extends Notifier<ChatState> {
         messages: _messagesWithStreamingStopped(state.messages),
         clearError: true,
       );
-      return true;
+      return _latestAssistantContent();
     } on ChatApiException catch (error) {
       if (generation == _streamGeneration) {
         state = state.copyWith(
@@ -251,7 +265,7 @@ class ChatController extends Notifier<ChatState> {
           messages: _messagesWithStreamingStopped(state.messages),
         );
       }
-      return false;
+      return null;
     } on Object catch (error) {
       if (generation == _streamGeneration) {
         state = state.copyWith(
@@ -260,7 +274,7 @@ class ChatController extends Notifier<ChatState> {
           messages: _messagesWithStreamingStopped(state.messages),
         );
       }
-      return false;
+      return null;
     }
   }
 
@@ -303,4 +317,28 @@ class ChatController extends Notifier<ChatState> {
   }
 
   ChatMessage _messageFromApi(ChatApiMessage message) => message.toDomain();
+
+  String? _assistantTextFromApiResponse(ChatApiResponse response) {
+    if (response.messages.isEmpty) {
+      final responseText = response.response.trim();
+      return responseText.isEmpty ? null : responseText;
+    }
+
+    for (final message in response.messages.reversed) {
+      if (message.role == 'assistant' && message.content.trim().isNotEmpty) {
+        return message.content;
+      }
+    }
+    return null;
+  }
+
+  String? _latestAssistantContent() {
+    for (final message in state.messages.reversed) {
+      if (message.role == ChatMessageRole.assistant &&
+          message.content.trim().isNotEmpty) {
+        return message.content;
+      }
+    }
+    return null;
+  }
 }

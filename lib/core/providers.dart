@@ -8,3 +8,9 @@ export 'package:rex/features/memory/application/memory_controller.dart'
     show memoryProvider;
 export 'package:rex/features/memory/data/memory_api.dart'
     show memoryApiProvider;
+export 'package:rex/features/voice/application/voice_controller.dart'
+    show
+        microphonePermissionProvider,
+        speechToTextServiceProvider,
+        textToSpeechServiceProvider,
+        voiceProvider;

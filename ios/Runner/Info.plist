@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Rex uses the microphone so you can talk to your AI assistant by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Rex uses speech recognition to turn your voice into chat messages.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

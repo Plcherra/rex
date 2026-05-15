@@ -97,12 +97,12 @@ data: {"conversation_id":"conversation-1","response":"Rex stream","messages":[]}
       );
       addTearDown(container.dispose);
 
-      final sent = await container
+      final responseText = await container
           .read(chatProvider.notifier)
-          .sendMessage('Hello Rex');
+          .sendMessageForAssistantResponse('Hello Rex');
 
       final state = container.read(chatProvider);
-      expect(sent, true);
+      expect(responseText, 'Rex stream');
       expect(state.conversationId, 'conversation-1');
       expect(state.isLoading, false);
       expect(state.errorMessage, isNull);

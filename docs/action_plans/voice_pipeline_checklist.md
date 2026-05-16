@@ -259,11 +259,11 @@ It should not be treated as the final street/pocket architecture.
 
 ## Phase 6 - End-to-End Acceptance
 
-31. [ ] **Run backend cloud voice smoke tests**
+31. [x] **Run backend cloud voice smoke tests**
     - Command: `PYTHONPATH=backend python3 -m pytest -q tests/test_voice_routes.py tests/test_deepgram_service.py tests/test_google_tts_service.py`
     - Success criteria: Mocked tests pass, and optional real-vendor smoke tests pass only when explicitly enabled.
 
-32. [ ] **Run full regression**
+32. [x] **Run full regression**
     - Command: `PYTHONPATH=backend python3 -m pytest -q tests && flutter analyze && flutter test`
     - Success criteria: Existing chat, memory, file upload, local voice fallback, and cloud voice tests all pass.
 
@@ -271,7 +271,7 @@ It should not be treated as the final street/pocket architecture.
     - Test flow: lock screen/pocket simulation, wired headphones, AirPods/Bluetooth, noisy street, walking pace, long monologue, interruption, second turn.
     - Success criteria: Rex can capture speech, answer with Grok, and play Google TTS response reliably enough for daily walking use.
 
-34. [ ] **Update master docs**
+34. [x] **Update master docs**
     - Files to update: `REX_VISION.md`, `docs/alignment_plan.md`, `docs/action_plans/action_plan_2.md`, `docs/action_plans/action_plan_5.md`, `docs/deployment.md`
     - What to implement: Replace local voice MVP assumptions with the chosen cloud voice pipeline.
     - Success criteria: Documentation and code agree on the production voice architecture.

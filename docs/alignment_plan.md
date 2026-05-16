@@ -2,27 +2,27 @@
 
 ## 1. Executive Summary
 
-Rex is roughly **4/10 aligned** with the updated founder vision overall, and closer to **2/10 aligned** with the new voice-first daily-driver requirement specifically. The strongest foundation is already in place: Flutter chat UI, FastAPI backend, Grok API integration, streaming responses, Supabase-backed conversations/messages/long-term memory, memory UI, file upload support, tests, and VPS deployment docs. The biggest risks are that the updated vision now depends on capabilities that do not exist yet: voice-first interaction, locked-screen/pocket workflow, current-time injection, time-delta reasoning, entity tracking, durable personal rules, plan tracking, and accountability logic. The project is no longer blocked by basic chat plumbing; it is now blocked by missing memory intelligence and missing voice infrastructure.
+Rex is roughly **7/10 aligned** with the updated founder vision overall, and closer to **7/10 aligned** with the voice-first daily-driver requirement at the code level. The strongest foundation is now in place: Flutter chat UI, FastAPI backend, Grok API integration, streaming responses, Supabase-backed conversations/messages/long-term memory, memory UI, file upload support, cloud voice with Deepgram + Google TTS, background audio/foreground-service scaffolding, tests, and VPS deployment docs. The biggest remaining risks are physical street/pocket validation, structured entity/rule/plan memory, deeper accountability logic, production monitoring, and real-device platform constraints. The project is no longer blocked by missing voice infrastructure; it is now blocked by physical device validation and deeper memory intelligence.
 
 ## 2. Vision vs Reality Matrix
 
 | Vision Section / Requirement | Current Implementation Status (Fully Done / Partially Done / Not Started / Needs Refactor) | Key Files / Code Involved | Gap Description & Technical Reason | Effort Estimate (Small / Medium / Large / Unknown) | Priority (P0 / P1 / P2) |
 |---|---|---|---|---|---|
 | Founder-first personal daily driver | Partially Done | `REX_VISION.md`, `README.md`, `docs/deployment.md` | Project direction and docs now say founder-first, but product behavior still mostly behaves like a generic chat app with memory. No founder-specific rules, plans, entities, or accountability layer exists. | Medium | P0 |
-| Voice-first primary interface | Not Started | No `lib/features/voice/` implementation exists | Flutter app is text-first. There is no STT, TTS, recorder UI, audio state machine, voice service, voice permissions, or voice route. | Large | P0 |
-| Pocket / locked-screen / background voice workflow | Not Started | No background audio, native platform config, or voice service files | This requires platform-specific iOS/Android capability decisions, background audio mode, permissions, and realistic OS-limit handling. Current Flutter app only works as foreground text chat. | Large / Unknown | P0 |
-| Flutter speech-to-text pipeline | Not Started | No STT dependencies in `pubspec.yaml`; no `speech_to_text_service.dart` | No speech recognition package, permission flow, transcript state, partial transcript UI, or on-device/offline mode strategy exists. | Medium | P0 |
-| Flutter text-to-speech playback | Not Started | No TTS dependency/service | Grok responses are streamed as text only. No TTS queue, interruption handling, playback state, audio route, or speaker/headphones behavior exists. | Medium | P0 |
-| Streaming text chat | Fully Done | `lib/services/chat_api.dart`, `lib/features/chat/application/chat_controller.dart`, `backend/app/routes/chat.py`, `backend/app/services/ai_service.py`, `backend/app/services/chat_service.py` | SSE streaming exists and Flutter progressively renders assistant tokens. This is a strong base for TTS, but TTS does not consume the stream yet. | Small for polish | P0 |
+| Voice-first primary interface | Partially Done | `lib/features/voice/`, `lib/features/chat/presentation/widgets/chat_input_bar.dart`, `backend/app/routes/voice.py` | Push-to-talk voice UI, controller state machine, cloud transcription, cloud synthesis, and playback exist. It still needs real iPhone/Android street validation and UX tuning from physical use. | Medium | P0 |
+| Pocket / locked-screen / background voice workflow | Partially Done | `ios/Runner/Info.plist`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/kotlin/com/rex/rex/RexVoiceForegroundService.kt`, `lib/features/voice/data/audio_session_service.dart`, `docs/background_voice_constraints.md` | iOS background audio mode, Android foreground service, audio session handling, and interruption handling are implemented. Actual reliability is still unknown until physical device testing because OS rules decide final behavior. | Medium / Unknown | P0 |
+| Flutter speech-to-text pipeline | Fully Done | `lib/features/voice/data/audio_recording_service.dart`, `lib/features/voice/data/cloud_voice_api.dart`, `backend/app/services/deepgram_service.py`, `backend/app/routes/voice.py` | Production STT is cloud-based through Deepgram. Local `speech_to_text_service.dart` remains fallback/dev tooling only. | Small for tuning | P0 |
+| Flutter text-to-speech playback | Fully Done | `lib/features/voice/data/audio_playback_service.dart`, `lib/features/voice/data/cloud_voice_api.dart`, `backend/app/services/google_tts_service.py`, `backend/app/routes/voice.py` | Production TTS uses Google Cloud TTS through FastAPI and plays returned audio in Flutter. Local `text_to_speech_service.dart` remains fallback/dev tooling only. | Small for tuning | P0 |
+| Streaming text chat | Fully Done | `lib/services/chat_api.dart`, `lib/features/chat/application/chat_controller.dart`, `backend/app/routes/chat.py`, `backend/app/services/ai_service.py`, `backend/app/services/chat_service.py` | SSE streaming exists, Flutter progressively renders assistant tokens, and voice uses the same chat pipeline before Google TTS synthesis. | Small for polish | P0 |
 | Text chat fallback | Fully Done | `lib/features/chat/presentation/pages/chat_page.dart`, `lib/features/chat/presentation/widgets/chat_input_bar.dart`, `lib/services/chat_api.dart` | Text chat is functional, supports loading/error states, streaming, conversations, and file attachments. | Small | P1 |
 | Conversation management | Fully Done | `backend/app/routes/conversations.py`, `lib/features/chat/presentation/pages/conversation_list_page.dart`, `lib/features/chat/application/conversation_controller.dart` | List/create/switch/delete are implemented with tests. Needs future UX polish but meets current requirement. | Small | P1 |
 | Long-term memory across months | Partially Done | `backend/supabase_schema.sql`, `backend/app/services/memory_service.py`, `backend/app/services/memory_extraction_service.py`, `lib/features/memory/` | `long_term_memory` stores durable memories with timestamps and active flag. Retrieval is basic keyword/concept scoring, not true month-scale semantic memory with summaries, plans, or entities. | Large | P0 |
 | Memory UI for review/edit/deactivate | Partially Done | `lib/features/memory/presentation/pages/memory_page.dart`, `backend/app/routes/memory.py` | User can list/edit/deactivate facts/preferences/events. No search, grouping, entity view, plan view, personal rules view, or “why recalled” UI. | Medium | P1 |
 | Grok-powered memory extraction | Partially Done | `backend/app/services/memory_extraction_service.py` | Extraction exists for `fact`, `preference`, `event`. Prompt does not yet extract entities, rules, plans, deadlines, commitments, or relationship-specific context into structured tables. | Medium | P0 |
 | Query-aware memory retrieval | Partially Done | `backend/app/services/memory_service.py` | Keyword + concept overlap + importance + recency exists. No embeddings, vector search, entity joins, plan retrieval, personal-rule boosting, or time-delta-aware scoring. | Large | P0 |
-| Time awareness: current server time in every prompt | Not Started | `backend/app/services/chat_service.py`, missing `time_context_service.py`, missing `prompt_service.py` | `chat_service` sends conversation history and memory to Grok but does not inject current server time, timezone, day of week, or clock context. | Medium | P0 |
-| Time deltas since messages/events/commitments | Not Started | `backend/app/services/chat_service.py`, `backend/app/services/memory_service.py`, missing `time_context_service.py` | Timestamps exist in Supabase, but no code calculates “2 days ago”, “31 days since budget commitment”, deadline deltas, or session gaps for prompt injection. | Medium | P0 |
-| Prompt assembly as explicit service | Not Started | Missing `backend/app/services/prompt_service.py` | Prompt construction is embedded in `ChatService` and `AIService.system_prompt`. This will not scale to time, entities, personal rules, plans, voice metadata, and file context. Needs extraction into a dedicated service. | Medium | P0 |
+| Time awareness: current server time in every prompt | Fully Done | `backend/app/services/time_context_service.py`, `backend/app/services/prompt_service.py`, `backend/app/services/chat_service.py`, `tests/test_time_context_service.py`, `tests/test_prompt_service.py` | Every Grok call receives explicit server time, timezone, weekday, conversation timestamp metadata, and session-gap context through `PromptService`. | Small for tuning | P0 |
+| Time deltas since messages/events/commitments | Partially Done | `backend/app/services/time_context_service.py`, `backend/app/services/prompt_service.py`, `backend/app/services/memory_service.py` | Session gaps and memory ages are injected. Commitment/deadline deltas still need structured commitments/plans before they can be reliable. | Medium | P0 |
+| Prompt assembly as explicit service | Fully Done | `backend/app/services/prompt_service.py`, `backend/app/services/chat_service.py`, `backend/app/services/ai_service.py` | Prompt composition, Rex personality, time context, memory context, file context, and conversation metadata are centralized in `PromptService`. | Small for tuning | P0 |
 | Entity tracking: people like Clara/Melissa, jobs, plans | Not Started | Missing `entity_service.py`, `entity_repository.py`, Supabase entity tables | Current memory is unstructured text with `fact/preference/event`. No entity table, alias handling, relationship context, timeline per person, or retrieval by entity mention exists. | Large | P0 |
 | Personal rules: no Uber, Bom Dough only, budget caps | Not Started | Missing personal rules schema/service/UI | Rules may be saved as generic memories if Grok extracts them, but there is no durable rule type, enforcement/retrieval priority, violation detection, or accountability logic. | Large | P0 |
 | Accountability and pattern recognition | Not Started | Missing accountability service, plan/rule models, finance pattern logic | Rex cannot detect “you promised this last month” except if a generic memory happens to be retrieved. Needs commitments, rules, event timelines, and behavior comparisons. | Large | P0 |
@@ -31,14 +31,14 @@ Rex is roughly **4/10 aligned** with the updated founder vision overall, and clo
 | Sensitive real-life advice topics | Partially Done | `backend/app/services/ai_service.py`, `backend/app/services/memory_extraction_service.py` | Current prompt allows practical direct advice, and memory extraction mentions legal/financial/relationship context. But no specific founder domains are modeled: dating context, immigration strategy, money patterns, or personal constraints. | Medium | P0 |
 | Supabase schema for conversations/messages/memory | Fully Done | `backend/supabase_schema.sql` | Core chat and generic memory schema exists and is usable. | Small | P1 |
 | Supabase schema for entities/rules/plans | Not Started | `backend/supabase_schema.sql` | No `entities`, `entity_events`, `personal_rules`, `plans`, `plan_milestones`, or `commitments` tables exist. | Medium / Large | P0 |
-| Voice metadata storage | Not Started | `backend/supabase_schema.sql`, no voice models | Schema does not store transcript source, audio duration, audio session, device state, or TTS playback metadata. | Medium | P1 |
+| Voice metadata storage | Partially Done | `backend/supabase_schema.sql`, `backend/app/models/voice.py`, `backend/app/routes/voice.py`, `backend/app/services/chat_service.py` | `voice_turns` storage and voice request/response models exist. More device-state metadata and playback quality data can be added after physical tests. | Small / Medium | P1 |
 | CSV/file upload, including Clarity finance CSV | Partially Done | `backend/app/services/file_service.py`, `lib/features/chat/domain/chat_attachment.dart`, `lib/features/chat/presentation/pages/chat_page.dart` | `.csv` upload is supported as text context. No Clarity-specific parser, finance insight service, recurring merchant detection, or budget review pipeline. | Medium | P1 |
 | Space awareness later | Not Started | No code | Correctly future-only. No action needed for MVP. | Unknown | P2 |
 | Privacy: secrets not in app | Fully Done | `lib/core/config/app_config.dart`, `backend/app/config.py`, `.gitignore`, docs | Flutter uses backend URL only. Grok/Supabase service keys stay backend-side. `.env` is ignored. | Small | P0 |
 | Deployment readiness | Partially Done | `docs/deployment.md`, `backend/app/main.py`, `backend/app/config.py`, `README.md` | VPS deployment docs, lifespan handler, CORS, and env handling exist. Still missing actual systemd file, production logging, monitoring, health checks beyond `/`, and CI. | Medium | P1 |
-| Test coverage | Partially Done | `tests/`, `test/` | Good service/route/widget coverage: backend 44 tests, Flutter 38 tests. No real Grok/Supabase integration test mode, voice tests, time-context tests, entity tests, or plan/rule tests. | Medium | P1 |
+| Test coverage | Partially Done | `tests/`, `test/` | Good service/route/widget coverage: backend 116 tests, Flutter 68 tests. Voice route/service/controller/widget tests exist. Still missing real-vendor smoke tests, physical-device voice acceptance logs, entity tests, and plan/rule tests. | Medium | P1 |
 | Backend async reliability | Fully Done | `backend/app/services/http_client.py`, `backend/app/services/ai_service.py`, `backend/app/services/memory_service.py` | Grok and Supabase use async `httpx`. Shared HTTP lifecycle exists. | Small | P1 |
-| Mobile UX polish for current chat | Partially Done | `lib/features/chat/presentation/pages/chat_page.dart`, `lib/features/chat/presentation/widgets/chat_message_bubble.dart` | Current text chat is polished enough for continued development. It is not voice-first and has no pocket mode. | Medium | P1 |
+| Mobile UX polish for current chat | Partially Done | `lib/features/chat/presentation/pages/chat_page.dart`, `lib/features/chat/presentation/widgets/chat_message_bubble.dart`, `lib/features/voice/presentation/widgets/voice_recorder_sheet.dart` | Text chat and voice sheet are polished enough for continued development. Real street/pocket UX still needs device testing and tuning. | Medium | P1 |
 
 ## 3. What’s Already Strong / Done Well
 
@@ -51,20 +51,22 @@ Rex is roughly **4/10 aligned** with the updated founder vision overall, and clo
 - Grok-powered memory extraction exists and saves useful `fact/preference/event` memories after successful chat turns.
 - Memory UI exists for listing, filtering, editing, and deactivating memories.
 - File upload support exists for `.txt`, `.md`, and `.csv`.
+- Production cloud voice exists: Flutter recording, Deepgram transcription, Grok chat, Google TTS synthesis, and Flutter audio playback.
+- Background/pocket scaffolding exists: iOS background audio mode, Android foreground service, audio session handling, and interruption recovery.
 - Deployment path is clean for VPS: virtualenv, `systemd`, Nginx/Caddy, env vars, CORS, and HTTPS guidance.
 - Test coverage is strong for the current scope: backend route/service tests and Flutter API/controller/widget tests are in place.
 
 ## 4. Critical Gaps & Why They Exist
 
-The largest gap is that Rex is still a text-first chat application, while the updated vision is voice-first. There is no `lib/features/voice/` implementation, no STT/TTS dependency, no recorder state machine, no platform permissions, no audio session handling, and no background/locked-screen strategy. This is a product-level blocker because the founder’s target workflow is walking with the phone in a pocket, not typing into a chat box.
+The largest remaining voice gap is physical street/pocket validation. The cloud voice pipeline exists, but iOS and Android background behavior must be tested on real devices with screen lock, app switching, Bluetooth/headphones, noisy street conditions, and interruptions. Simulators and unit tests cannot prove the final founder workflow.
 
-The second critical gap is time awareness. The backend stores timestamps, but it does not inject current server time, user timezone, session gaps, event ages, or deadline deltas into prompts. This means Rex can still accidentally treat old context like it is current. `ChatService` directly assembles messages and memory context, and there is no `prompt_service.py` or `time_context_service.py` to enforce time context as a required prompt invariant.
+The second critical gap is structured memory depth, not basic time awareness. Current server time, session gaps, and memory ages are now injected through `PromptService` and `TimeContextService`, but Rex still lacks first-class entities, personal rules, commitments, and plans. Without those records, time deltas for “you promised this last month” or “this deadline is 31 days away” remain unreliable.
 
 The third critical gap is the lack of structured entity, rule, and plan storage. `long_term_memory` can hold generic facts, preferences, and events, but the updated vision requires Rex to remember specific people, recurring relationship context, personal rules, commitments, deadlines, and multi-month plans. Those need first-class schema and services, not just text memories. Without this, accountability will be unreliable and retrieval will be too dependent on keyword overlap.
 
 The fourth critical gap is accountability logic. Rex currently retrieves memories and sends them to Grok, but it does not detect rule violations, compare current behavior to past commitments, run budget pattern checks, or surface missed plan milestones. The project needs explicit `personal_rules`, `commitments`, and `plans` models plus retrieval/violation logic before Rex can say, accurately, “you said you would stop doing this last month.”
 
-The fifth gap is personality specialization. `AIService.system_prompt` is direct and low-fluff, which is good, but it is generic. It does not yet encode the founder-specific Rex personality from the updated vision: truth-seeking, no-BS, real-life sensitive topics, budget accountability, dating context, immigration stress, and voice-friendly conversational style. This should move into a prompt service so personality, time, memory, entities, rules, and plans are assembled consistently.
+The fifth gap is deeper personality grounding against structured facts. `PromptService` now owns the founder-first personality and direct/no-fluff behavior, but the personality will only become truly accountable once entities, rules, commitments, and plans are first-class memory records.
 
 The sixth gap is finance intelligence. CSV upload exists, including `.csv`, but it is treated as raw file context. There is no Clarity parser, merchant/category extraction, recurring-spend detection, budget cap comparison, or monthly review logic. This is not required before the voice MVP, but it is central to the accountability vision.
 
@@ -87,17 +89,16 @@ The final gap is production hardening beyond “deployable.” The VPS path is d
 
 ### Phase 7 - Minimal Voice-First Personal Rex
 
-- Goal: Make Rex usable as a voice-first personal assistant in foreground mode first.
+- Goal: Keep Rex usable as a voice-first personal assistant in foreground mode using the production cloud voice path.
 - Key deliverables:
-  - Add Flutter STT dependency and permission flow.
-  - Add Flutter TTS dependency and playback service.
-  - Create `lib/features/voice/` with `voice_service.dart`, `speech_to_text_service.dart`, `text_to_speech_service.dart`, and `voice_recorder_sheet.dart`.
-  - Add push-to-talk button and voice state UI: idle, listening, transcribing, thinking, speaking, failed.
-  - Send transcript through existing `/chat` streaming pipeline.
-  - Speak streamed/final assistant response.
-  - Add widget/controller tests for voice state transitions where practical.
-- Estimated time (solo founder pace): 4-7 days for a usable foreground MVP.
-- Dependencies: Phase 6 strongly recommended first so voice uses the correct prompt intelligence.
+  - Flutter records microphone audio and uploads it to FastAPI.
+  - FastAPI transcribes through Deepgram.
+  - Transcript enters the existing `/chat` streaming pipeline with Grok.
+  - FastAPI synthesizes the final response through Google Cloud TTS.
+  - Flutter plays returned audio and exposes recording/uploading/transcribing/thinking/generating/speaking states.
+  - Local STT/TTS stays available only as fallback/dev tooling.
+- Estimated time (solo founder pace): implemented; continue tuning from physical tests.
+- Dependencies: Phase 6 prompt foundation and backend cloud voice routes.
 
 ### Phase 8 - Entity, Rule, and Plan Memory Schema
 
@@ -128,12 +129,12 @@ The final gap is production hardening beyond “deployable.” The VPS path is d
 - **Goal**: Enable voice conversations to continue naturally when the user minimizes the app, switches to other apps, or locks/turns off the screen — similar to how Grok or ChatGPT voice mode behaves.
 - **Key deliverables**:
   - Research and implement feasible background audio handling on iOS and Android within platform limits.
-  - Configure proper audio session categories and background modes.
+  - Configure proper audio session categories, iOS background audio, and Android foreground service behavior.
   - Handle interruptions (incoming calls, notifications, headphones, screen lock).
-  - Ensure the voice flow (listening → thinking → speaking) survives app backgrounding and screen off where possible.
+  - Ensure the production cloud voice flow (recording → Deepgram transcription → Grok thinking → Google TTS speaking) survives app backgrounding and screen off where possible.
   - Add clear UX feedback when background continuation is limited by the OS.
   - Document realistic platform constraints.
-- **Estimated time (solo founder pace)**: 1-3 weeks depending on platform constraints.
+- **Estimated time (solo founder pace)**: implementation scaffold complete; physical validation and tuning still required.
 - **Dependencies**: Phase 7 voice MVP.
 
 ### Phase 11 - General File Upload & Contextual Memory
@@ -163,30 +164,26 @@ The final gap is production hardening beyond “deployable.” The VPS path is d
 
 ## 6. Immediate Next Actions (Next 48-72 hours)
 
-1. Create `backend/app/services/time_context_service.py`.
-   - Add functions to return current server time, timezone label, day of week, ISO timestamp, and human-readable deltas.
-   - Add tests in `tests/test_time_context_service.py`.
+1. Run the physical iPhone street/pocket acceptance test.
+   - Test lock screen, app switching, AirPods/Bluetooth, noisy street, long monologue, interruption, and a second turn.
+   - Record exact failures in `docs/background_voice_constraints.md` or a follow-up checklist.
 
-2. Create `backend/app/services/prompt_service.py`.
-   - Move prompt assembly out of `chat_service.py`.
-   - Include Rex personality, current time context, recent conversation history, relevant long-term memory, and file context.
-   - Add tests in `tests/test_prompt_service.py`.
+2. Run the physical Android street/pocket acceptance test.
+   - Verify foreground notification, microphone survival, audio focus, headphones, app switch, and screen lock behavior.
+   - Decide whether Android notification permission UX needs an explicit in-app prompt.
 
-3. Refactor `backend/app/services/chat_service.py`.
-   - Replace `_messages_with_long_term_memory`, `_messages_with_file_context`, and direct prompt assembly with `PromptService`.
-   - Keep streaming and non-streaming behavior unchanged.
-   - Ensure all existing backend tests still pass.
+3. Tighten any issues found during physical voice testing.
+   - Likely files: `lib/features/voice/application/voice_controller.dart`, `lib/features/voice/data/audio_session_service.dart`, `android/app/src/main/AndroidManifest.xml`, `ios/Runner/Info.plist`.
+   - Keep `flutter analyze`, `flutter test`, and backend tests green.
 
-4. Strengthen `backend/app/services/ai_service.py`.
-   - Keep the low-level Grok API responsibility.
-   - Move founder-specific personality text out of `AIService.system_prompt` or make it supplied by `PromptService`.
-   - Add explicit no-fluff, no-fake-positivity, accountability, and sensitive-life-context behavior in the prompt layer.
+4. Continue structured memory work.
+   - Add `entities`, `entity_events`, `personal_rules`, `plans`, `plan_milestones`, and `commitments`.
+   - Update extraction and retrieval to make accountability reliable.
 
-5. Draft the Phase 7 Flutter voice implementation skeleton.
-   - Create `lib/features/voice/` folders.
-   - Decide STT/TTS packages.
-   - Add a minimal `VoiceState` model and `VoiceController` plan before UI implementation.
+5. Add production hardening.
+   - CI, structured logs, real-vendor smoke test mode, backup/restore notes, and basic monitoring.
 
 ## 7. Revision History
 
 - Date: 2026-05-12 - Initial Alignment Plan created from updated REX_VISION.md
+- Date: 2026-05-16 - Updated after cloud voice implementation: Deepgram + Grok + Google TTS pipeline, background scaffolding, and current test counts.

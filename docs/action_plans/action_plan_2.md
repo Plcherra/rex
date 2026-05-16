@@ -1,18 +1,19 @@
 # Action Plan 2 - Minimal Voice-First Personal Rex
 
 ## Goal
-Make Rex usable as a voice-first personal assistant in foreground mode first.
+Make Rex usable as a voice-first personal assistant in foreground mode first, using the production cloud voice path for real street/pocket use.
 
 ## Why This Matters (Personal Context)
 This is the phase where Rex finally becomes what the founder actually needs: a true voice-first co-pilot. The founder wants to talk to Rex while walking with the phone in their pocket, get real-time responses, and hear the answer spoken back -- all without having to look at the screen or type. This transforms Rex from a text chat app into the daily hands-free companion that remembers time gaps, personal rules, dating context, immigration plans, and budget accountability.
 
 ## Key Deliverables
-- Add Flutter STT dependency and permission flow
-- Add Flutter TTS dependency and playback service
-- Create `lib/features/voice/` with `voice_service.dart`, `speech_to_text_service.dart`, `text_to_speech_service.dart`, and `voice_recorder_sheet.dart`
-- Add push-to-talk button and voice state UI: idle, listening, transcribing, thinking, speaking, failed
+- Add Flutter microphone permission flow and audio recording
+- Add FastAPI-backed Deepgram transcription client
+- Add FastAPI-backed Google TTS playback client
+- Create `lib/features/voice/` with `cloud_voice_api.dart`, `audio_recording_service.dart`, `audio_playback_service.dart`, fallback `speech_to_text_service.dart`, fallback `text_to_speech_service.dart`, and `voice_recorder_sheet.dart`
+- Add push-to-talk button and voice state UI: idle, recording, uploading, transcribing, thinking, generating speech, speaking, failed
 - Send transcript through the existing `/chat` streaming pipeline
-- Speak streamed/final assistant response
+- Speak streamed/final assistant response using Google TTS audio
 - Add widget/controller tests for voice state transitions where practical
 
 ## Estimated Time
@@ -25,7 +26,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be 100% complete first so voic
 
 1. [x] **Choose voice packages and add Flutter dependencies**
    - Exact files to create or modify: `pubspec.yaml`, `pubspec.lock`
-   - What must be implemented: Add production-ready packages for speech-to-text, text-to-speech, microphone permission handling, and audio session management. Recommended starting point: `speech_to_text`, `flutter_tts`, `permission_handler`, and `audio_session`.
+   - What must be implemented: Add production-ready packages for microphone permission, audio recording, audio playback, and audio session management. Local `speech_to_text` and `flutter_tts` can stay as fallback/dev tooling, but the production path is Deepgram + Google TTS through FastAPI.
    - Success criteria: Dependencies resolve cleanly, the app still builds, and no existing chat or memory imports break.
    - Verification / test command: `flutter pub get && flutter analyze && flutter test`
    - Suggested git commit message: `chore: add voice dependencies`
@@ -95,13 +96,14 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be 100% complete first so voic
    - Suggested git commit message: `test: cover voice controller states`
    - Rough time estimate: 4-6 hours
 
-10. [ ] **Run full validation and manual foreground voice test**
+10. [x] **Run full validation and manual foreground voice test**
     - Exact files to create or modify: No code changes expected unless validation exposes bugs
-    - What must be implemented: Run full Flutter checks, then manually test a full voice turn on a device or simulator: tap mic, speak, see transcript, send to Rex, receive streamed answer, hear spoken response, interrupt playback, and send another turn.
-    - Success criteria: `flutter analyze` and `flutter test` pass, typed chat still works, voice chat works in foreground, and failures produce clear UI instead of silent breakage.
+    - What must be implemented: Run full Flutter checks, then manually test a full foreground cloud voice turn on a device or simulator: tap mic, record audio, submit to Deepgram through FastAPI, send transcript to Rex, receive streamed Grok answer, synthesize with Google TTS, hear spoken response, interrupt playback, and send another turn.
+    - Success criteria: `flutter analyze` and `flutter test` pass, typed chat still works, cloud voice chat works in foreground, and failures produce clear UI instead of silent breakage.
     - Verification / test command: `flutter analyze && flutter test`
     - Suggested git commit message: `test: validate foreground voice mvp`
     - Rough time estimate: 2-4 hours
 
 ## Revision History
 - 2026-05-12 - Action Plan 2 created from Alignment Plan and updated REX_VISION.md
+- 2026-05-16 - Realigned Action Plan 2 around the production Deepgram + Grok + Google TTS voice pipeline; local STT/TTS retained as fallback/dev tooling.

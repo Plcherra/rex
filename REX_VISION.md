@@ -43,10 +43,15 @@ High-level flow:
 Flutter Mobile App
   |
   |  voice input, text fallback, file/context payloads
-  |  - speech-to-text when possible
+  |  - records audio locally and sends it to backend for Deepgram STT
   |  - background/pocket voice workflow where OS allows
   v
 FastAPI Backend
+  |
+  |  cloud voice pipeline:
+  |  - Deepgram transcription
+  |  - Grok chat/reasoning
+  |  - Google Cloud Text-to-Speech playback audio
   |
   |  builds prompt from:
   |  - current server time
@@ -65,7 +70,7 @@ FastAPI Backend
   +<---------------------+
   |
   |  streams response text to Flutter
-  |  triggers optional text-to-speech playback
+  |  returns Google TTS audio for playback
   v
 Supabase
   |
@@ -79,23 +84,27 @@ Supabase
 
 Core responsibilities:
 
-- Flutter owns the user experience: voice-first interaction, speech capture, text fallback, playback, chat UI, session state, app navigation, mobile polish, and pocket-friendly behavior.
+- Flutter owns the user experience: voice-first interaction, microphone recording, text fallback, playback, chat UI, session state, app navigation, mobile polish, and pocket-friendly behavior.
 - FastAPI owns orchestration: request validation, current-time injection, time-delta calculation, memory retrieval, entity/context retrieval, prompt assembly, Grok API calls, streaming, and memory writes. <!-- NEW: time-aware orchestration -->
+- Deepgram owns production speech-to-text; local Flutter STT remains fallback/dev tooling only. <!-- NEW: cloud voice pipeline -->
 - Grok API owns generation: Rex's actual reasoning and conversational response.
+- Google Cloud Text-to-Speech owns production spoken output; local Flutter TTS remains fallback/dev tooling only. <!-- NEW: cloud voice pipeline -->
 - Supabase owns durable data: conversations, messages, long-term memory, personal rules, entities, plans, and future app data.
 
-The backend should be the only place that talks directly to Grok using the API key. The Flutter app should never store Grok or Supabase service-role secrets.
+The backend should be the only place that talks directly to Grok, Deepgram, Google TTS, and Supabase service-role APIs. The Flutter app should never store Grok, Deepgram, Google, or Supabase service-role secrets.
 
 Voice pipeline target:
 
 ```text
 User speech
-  -> Flutter speech-to-text, preferably on-device where possible
-  -> FastAPI /chat or future /voice endpoint
+  -> Flutter records compressed audio
+  -> FastAPI /voice/transcribe using Deepgram
+  -> transcript enters FastAPI /chat streaming pipeline
   -> time-aware prompt + memory/entity/rule context
   -> Grok response
   -> streamed text back to Flutter
-  -> Flutter text-to-speech playback
+  -> FastAPI /voice/synthesize using Google Cloud Text-to-Speech
+  -> Flutter plays returned audio
 ```
 
 The mobile workflow must be designed around walking, phone-in-pocket use, and interrupted real life. Text chat stays valuable, but voice is the primary interface. <!-- NEW: primary interface clarification -->
@@ -297,10 +306,13 @@ lib/
           memory_filter_bar.dart
     voice/
       data/
-        voice_service.dart
-        speech_to_text_service.dart
-        text_to_speech_service.dart
-        background_audio_service.dart
+        cloud_voice_api.dart
+        audio_recording_service.dart
+        audio_playback_service.dart
+        audio_session_service.dart
+        background_voice_service.dart
+        speech_to_text_service.dart   # fallback/dev only
+        text_to_speech_service.dart   # fallback/dev only
       presentation/
         widgets/
           voice_recorder_sheet.dart
@@ -323,8 +335,9 @@ Main screens:
 Mobile behavior goals:
 
 - Voice input is primary and must feel fast.
-- Flutter should support speech-to-text, preferably on-device where possible.
-- Flutter should send transcripts to FastAPI and play Rex's answer through text-to-speech.
+- Flutter should record audio and use the FastAPI cloud voice pipeline for production speech-to-text and spoken output. <!-- NEW: production cloud voice -->
+- Local Flutter speech-to-text and text-to-speech are fallback/dev tools, not the final street/pocket path. <!-- NEW: production cloud voice -->
+- Flutter should send transcripts through FastAPI and play returned Google TTS audio.
 - Pocket-friendly workflow is non-negotiable: walking, phone in pocket, screen off/locked/backgrounded where OS rules allow. <!-- NEW: pocket workflow requirement -->
 - Push-to-talk comes first, but it must be designed toward background voice calls and locked-screen-friendly interaction.
 - Text input remains as a backup for quiet places, debugging, and precision.
@@ -425,15 +438,15 @@ Near-term backend improvements:
 
 ### Second: Phase 6 - Minimal Voice-First Personal Rex <!-- NEW: founder MVP phase -->
 
-1. Build push-to-talk voice input in Flutter.
-2. Add speech-to-text, preferably on-device where possible.
-3. Send voice transcripts through the existing FastAPI chat pipeline.
+1. Keep push-to-talk voice input in Flutter as the primary interface.
+2. Use Flutter recording plus Deepgram transcription through FastAPI for production voice input.
+3. Send transcripts through the existing FastAPI chat pipeline.
 4. Stream Grok responses back to Flutter.
-5. Add text-to-speech playback for Rex responses.
-6. Add clear listening, thinking, speaking, paused, and failed states.
+5. Use Google Cloud Text-to-Speech through FastAPI for production spoken responses.
+6. Add clear recording, uploading, transcribing, thinking, generating speech, speaking, paused, and failed states.
 7. Design the flow for walking with the phone in pocket.
-8. Explore locked-screen/background continuation within iOS and Android limits.
-9. Keep text input as backup, not the primary interface.
+8. Validate locked-screen/background continuation on physical devices within iOS and Android limits.
+9. Keep text input and local STT/TTS as backup/dev tooling, not the primary interface.
 
 ### Third: Improve Time-Aware Memory Intelligence
 
@@ -460,3 +473,4 @@ The build priority is now clear: make Rex the founder's voice-first daily driver
 ### Revision History
 
 - 2026-05-12: Updated vision to emphasize founder-first dogfooding, voice-first interaction, uncensored direct personality, time-aware prompt building, entity tracking, personal rules, accountability, and Phase 6 voice-first MVP priorities. <!-- NEW: revision marker -->
+- 2026-05-16: Updated voice architecture to make Deepgram + Grok + Google Cloud Text-to-Speech the production street/pocket pipeline, with local STT/TTS kept only as fallback/dev tooling. <!-- NEW: revision marker -->

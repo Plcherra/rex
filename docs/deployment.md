@@ -74,6 +74,7 @@ Tables:
 - `conversations`
 - `messages`
 - `long_term_memory`
+- `voice_turns`
 
 ## VPS Deployment
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -104,15 +105,24 @@ class PermissionHandlerMicrophonePermissionService
 
   @override
   Future<void> openSettings() async {
-    await openAppSettings();
+    try {
+      await openAppSettings();
+    } on MissingPluginException {
+      // permission_handler does not provide a macOS implementation. The
+      // recorder plugin and macOS app entitlements handle microphone access.
+    }
   }
 
   Future<PermissionStatus> _requestPermission(Permission permission) async {
-    final currentStatus = await permission.status;
-    if (currentStatus.isGranted) {
-      return currentStatus;
+    try {
+      final currentStatus = await permission.status;
+      if (currentStatus.isGranted) {
+        return currentStatus;
+      }
+      return permission.request();
+    } on MissingPluginException {
+      return PermissionStatus.granted;
     }
-    return permission.request();
   }
 }
 

@@ -1,5 +1,6 @@
 import pytest
 
+from app.config import Settings
 from app.services.memory_service import SupabaseMemoryService
 
 
@@ -18,6 +19,24 @@ class InMemoryRetrievalService(SupabaseMemoryService):
                 if memory["memory_type"] == memory_type
             ]
         return memories[:limit]
+
+
+class FakeVoiceTurnMemoryService(SupabaseMemoryService):
+    def __init__(self):
+        self.settings = Settings(_env_file=None)
+        self.requests = []
+
+    async def _request(self, method, table, body=None, query=None, prefer=None):
+        self.requests.append(
+            {
+                "method": method,
+                "table": table,
+                "body": body,
+                "query": query,
+                "prefer": prefer,
+            }
+        )
+        return [{"id": "voice-turn-1", **body}]
 
 
 @pytest.mark.asyncio
@@ -116,3 +135,37 @@ async def test_get_relevant_memories_keeps_high_priority_preferences_available()
     assert len(memories) == 1
     assert memories[0]["id"] == "memory-style"
     assert memories[0]["relevance_reason"] == "Included high-priority user preference."
+
+
+@pytest.mark.asyncio
+async def test_save_voice_turn_persists_safe_metadata_shape():
+    service = FakeVoiceTurnMemoryService()
+
+    result = await service.save_voice_turn(
+        conversation_id="conversation-1",
+        user_message_id="user-message-1",
+        assistant_message_id="assistant-message-1",
+        transcript_confidence=0.95,
+        audio_duration_seconds=1.2,
+        input_mime_type="audio/mp4",
+        output_audio_encoding="MP3",
+        metadata={"stt": {"request_id": "request-1"}},
+    )
+
+    assert result["id"] == "voice-turn-1"
+    request = service.requests[0]
+    assert request["method"] == "POST"
+    assert request["table"] == "voice_turns"
+    assert request["prefer"] == "return=representation"
+    assert request["body"] == {
+        "conversation_id": "conversation-1",
+        "user_message_id": "user-message-1",
+        "assistant_message_id": "assistant-message-1",
+        "transcript_confidence": 0.95,
+        "audio_duration_seconds": 1.2,
+        "input_mime_type": "audio/mp4",
+        "output_audio_encoding": "MP3",
+        "stt_vendor": "deepgram",
+        "tts_vendor": "google_tts",
+        "metadata": {"stt": {"request_id": "request-1"}},
+    }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,8 @@ import 'package:rex/features/chat/application/chat_controller.dart';
 import 'package:rex/features/chat/data/conversation_api.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_message_bubble.dart';
 import 'package:rex/features/voice/application/voice_controller.dart';
+import 'package:rex/features/voice/data/audio_session_service.dart';
+import 'package:rex/features/voice/data/background_voice_service.dart';
 import 'package:rex/features/voice/data/speech_to_text_service.dart';
 import 'package:rex/features/voice/data/text_to_speech_service.dart';
 import 'package:rex/services/chat_api.dart';
@@ -122,9 +125,16 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
           speechToTextServiceProvider.overrideWithValue(speechToTextService),
           textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
+          voiceAudioSessionServiceProvider.overrideWithValue(
+            _FakeVoiceAudioSessionService(),
+          ),
+          backgroundVoiceServiceProvider.overrideWithValue(
+            _FakeBackgroundVoiceService(),
+          ),
           chatApiProvider.overrideWithValue(api),
         ],
         child: const RexApp(),
@@ -290,7 +300,9 @@ class _FakeMicrophonePermissionService implements MicrophonePermissionService {
   var requestCount = 0;
 
   @override
-  Future<MicrophonePermissionDecision> requestMicrophonePermission() async {
+  Future<MicrophonePermissionDecision> requestMicrophonePermission({
+    bool includeSpeechRecognition = true,
+  }) async {
     requestCount++;
     return decision;
   }
@@ -358,6 +370,36 @@ class _FakeTextToSpeechService implements TextToSpeechService {
 
   @override
   Future<void> pause() async {}
+}
+
+class _FakeVoiceAudioSessionService implements VoiceAudioSessionService {
+  @override
+  Future<void> configureForVoiceTurn() async {}
+
+  @override
+  Future<void> setActive(bool active) async {}
+
+  @override
+  StreamSubscription<void> listenForNoisyAudio(
+    VoiceAudioInterruptionCallback onInterrupted,
+  ) {
+    return const Stream<void>.empty().listen((_) {});
+  }
+
+  @override
+  StreamSubscription<AudioInterruptionEvent> listenForInterruptions(
+    VoiceAudioInterruptionCallback onInterrupted,
+  ) {
+    return const Stream<AudioInterruptionEvent>.empty().listen((_) {});
+  }
+}
+
+class _FakeBackgroundVoiceService implements BackgroundVoiceService {
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
 }
 
 http.Response _streamingResponse() {

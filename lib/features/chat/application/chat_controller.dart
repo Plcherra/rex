@@ -86,6 +86,36 @@ class ChatController extends Notifier<ChatState> {
     state = ChatState(conversationId: conversationId);
   }
 
+  void applyBackendMessages({
+    required String conversationId,
+    required List<ChatApiMessage> messages,
+    String? fallbackAssistantResponse,
+  }) {
+    final nextMessages = messages.isNotEmpty
+        ? messages.map(_messageFromApi).toList(growable: false)
+        : state.messages;
+
+    state = state.copyWith(
+      conversationId: conversationId,
+      messages: nextMessages,
+      isLoading: false,
+      clearError: true,
+    );
+
+    if (messages.isEmpty &&
+        fallbackAssistantResponse != null &&
+        fallbackAssistantResponse.trim().isNotEmpty) {
+      addMessage(
+        ChatMessage(
+          id: 'local-assistant-${DateTime.now().microsecondsSinceEpoch}',
+          role: ChatMessageRole.assistant,
+          content: fallbackAssistantResponse.trim(),
+          timestamp: DateTime.now(),
+        ),
+      );
+    }
+  }
+
   Future<void> loadConversation(String conversationId) async {
     state = state.copyWith(
       conversationId: conversationId,

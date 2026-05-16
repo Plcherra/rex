@@ -35,12 +35,33 @@ SUPABASE_ANON_KEY=
 SUPABASE_CONVERSATIONS_TABLE=conversations
 SUPABASE_MESSAGES_TABLE=messages
 SUPABASE_LONG_TERM_MEMORY_TABLE=long_term_memory
+SUPABASE_VOICE_TURNS_TABLE=voice_turns
+
+DEEPGRAM_API_KEY=
+DEEPGRAM_MODEL=nova-3
+DEEPGRAM_LANGUAGE=en-US
+DEEPGRAM_BASE_URL=https://api.deepgram.com/v1
+DEEPGRAM_TIMEOUT_SECONDS=60
+
+GOOGLE_TTS_PROJECT_ID=
+GOOGLE_TTS_CREDENTIALS_JSON=
+GOOGLE_APPLICATION_CREDENTIALS=
+GOOGLE_TTS_BASE_URL=https://texttospeech.googleapis.com/v1
+GOOGLE_TTS_VOICE_NAME=en-US-Neural2-J
+GOOGLE_TTS_LANGUAGE_CODE=en-US
+GOOGLE_TTS_AUDIO_ENCODING=MP3
+GOOGLE_TTS_SPEAKING_RATE=1.0
+GOOGLE_TTS_PITCH=0.0
+GOOGLE_TTS_TIMEOUT_SECONDS=60
 ```
 
 Notes:
 
 - `SUPABASE_SERVICE_ROLE_KEY` is used by the FastAPI backend and must never be shipped in Flutter.
 - `SUPABASE_ANON_KEY` is documented for future client-side Supabase use, but the current backend does not require it.
+- `DEEPGRAM_API_KEY` and Google TTS credentials are used by the FastAPI backend and must never be shipped in Flutter.
+- Prefer `GOOGLE_APPLICATION_CREDENTIALS` on the VPS when using a service-account JSON file. Use `GOOGLE_TTS_CREDENTIALS_JSON` only when environment-managed JSON is operationally simpler.
+- Google TTS setup details are in `docs/google_tts_setup.md`.
 - Native mobile apps do not rely on browser CORS, but CORS matters for Flutter Web and browser-based testing.
 - In production, set `CORS_ALLOWED_ORIGINS` to exact HTTPS origins if you expose a web client. Do not use `*` with credentials.
 
@@ -158,6 +179,12 @@ Backend health:
 curl https://api.your-domain.com/
 ```
 
+Backend readiness:
+
+```sh
+curl https://api.your-domain.com/ready
+```
+
 Non-streaming chat:
 
 ```sh
@@ -178,6 +205,7 @@ curl -N -X POST https://api.your-domain.com/chat \
 
 - `.env` exists on the server and is not committed.
 - `GROK_API_KEY`, `GROK_MODEL`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` are set.
+- `DEEPGRAM_API_KEY`, `GOOGLE_TTS_PROJECT_ID`, and one Google credential method are set before enabling cloud voice.
 - Supabase SQL schema has been applied.
 - Backend service starts through `systemd`.
 - Reverse proxy has HTTPS enabled.

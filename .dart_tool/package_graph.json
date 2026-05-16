@@ -8,6 +8,7 @@
       "version": "1.0.0+1",
       "dependencies": [
         "audio_session",
+        "audioplayers",
         "cross_file",
         "cupertino_icons",
         "file_picker",
@@ -19,6 +20,7 @@
         "json_annotation",
         "path",
         "permission_handler",
+        "record",
         "speech_to_text"
       ],
       "devDependencies": [
@@ -125,6 +127,40 @@
       ]
     },
     {
+      "name": "audioplayers",
+      "version": "6.6.0",
+      "dependencies": [
+        "audioplayers_android",
+        "audioplayers_darwin",
+        "audioplayers_linux",
+        "audioplayers_platform_interface",
+        "audioplayers_web",
+        "audioplayers_windows",
+        "file",
+        "flutter",
+        "http",
+        "meta",
+        "path_provider",
+        "synchronized",
+        "uuid"
+      ]
+    },
+    {
+      "name": "record",
+      "version": "6.2.0",
+      "dependencies": [
+        "flutter",
+        "record_android",
+        "record_ios",
+        "record_linux",
+        "record_macos",
+        "record_platform_interface",
+        "record_web",
+        "record_windows",
+        "uuid"
+      ]
+    },
+    {
       "name": "audio_session",
       "version": "0.2.3",
       "dependencies": [
@@ -153,6 +189,21 @@
       "dependencies": [
         "flutter",
         "flutter_web_plugins"
+      ]
+    },
+    {
+      "name": "speech_to_text",
+      "version": "7.3.0",
+      "dependencies": [
+        "clock",
+        "flutter",
+        "flutter_web_plugins",
+        "json_annotation",
+        "meta",
+        "pedantic",
+        "speech_to_text_platform_interface",
+        "speech_to_text_windows",
+        "web"
       ]
     },
     {
@@ -591,18 +642,109 @@
       ]
     },
     {
-      "name": "flutter_web_plugins",
-      "version": "0.0.0",
+      "name": "file",
+      "version": "7.0.1",
       "dependencies": [
+        "meta",
+        "path"
+      ]
+    },
+    {
+      "name": "audioplayers_windows",
+      "version": "4.3.0",
+      "dependencies": [
+        "audioplayers_platform_interface",
         "flutter"
       ]
     },
     {
-      "name": "permission_handler_windows",
-      "version": "0.2.1",
+      "name": "audioplayers_web",
+      "version": "5.2.0",
+      "dependencies": [
+        "audioplayers_platform_interface",
+        "flutter",
+        "flutter_web_plugins",
+        "web"
+      ]
+    },
+    {
+      "name": "audioplayers_platform_interface",
+      "version": "7.1.1",
+      "dependencies": [
+        "collection",
+        "flutter",
+        "meta",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "audioplayers_linux",
+      "version": "4.2.1",
+      "dependencies": [
+        "audioplayers_platform_interface",
+        "flutter"
+      ]
+    },
+    {
+      "name": "audioplayers_darwin",
+      "version": "6.4.0",
+      "dependencies": [
+        "audioplayers_platform_interface",
+        "flutter"
+      ]
+    },
+    {
+      "name": "audioplayers_android",
+      "version": "5.2.1",
+      "dependencies": [
+        "audioplayers_platform_interface",
+        "flutter"
+      ]
+    },
+    {
+      "name": "record_windows",
+      "version": "1.0.7",
       "dependencies": [
         "flutter",
-        "permission_handler_platform_interface"
+        "record_platform_interface"
+      ]
+    },
+    {
+      "name": "record_web",
+      "version": "1.3.0",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "record_platform_interface",
+        "web"
+      ]
+    },
+    {
+      "name": "record_platform_interface",
+      "version": "1.5.0",
+      "dependencies": [
+        "flutter",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "record_ios",
+      "version": "1.2.0",
+      "dependencies": [
+        "flutter",
+        "record_platform_interface"
+      ]
+    },
+    {
+      "name": "rxdart",
+      "version": "0.28.0",
+      "dependencies": []
+    },
+    {
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "dependencies": [
+        "flutter"
       ]
     },
     {
@@ -615,9 +757,65 @@
       ]
     },
     {
+      "name": "permission_handler_windows",
+      "version": "0.2.1",
+      "dependencies": [
+        "flutter",
+        "permission_handler_platform_interface"
+      ]
+    },
+    {
+      "name": "permission_handler_html",
+      "version": "0.1.3+5",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "permission_handler_platform_interface",
+        "web"
+      ]
+    },
+    {
+      "name": "permission_handler_apple",
+      "version": "9.4.7",
+      "dependencies": [
+        "flutter",
+        "permission_handler_platform_interface"
+      ]
+    },
+    {
+      "name": "permission_handler_android",
+      "version": "13.0.1",
+      "dependencies": [
+        "flutter",
+        "permission_handler_platform_interface"
+      ]
+    },
+    {
+      "name": "speech_to_text_windows",
+      "version": "1.0.0+beta.8",
+      "dependencies": [
+        "flutter",
+        "speech_to_text_platform_interface"
+      ]
+    },
+    {
       "name": "web",
       "version": "1.1.1",
       "dependencies": []
+    },
+    {
+      "name": "pedantic",
+      "version": "1.11.1",
+      "dependencies": []
+    },
+    {
+      "name": "speech_to_text_platform_interface",
+      "version": "2.3.0",
+      "dependencies": [
+        "flutter",
+        "meta",
+        "plugin_platform_interface"
+      ]
     },
     {
       "name": "win32",
@@ -729,14 +927,6 @@
       "version": "1.0.1",
       "dependencies": [
         "web"
-      ]
-    },
-    {
-      "name": "file",
-      "version": "7.0.1",
-      "dependencies": [
-        "meta",
-        "path"
       ]
     },
     {
@@ -929,72 +1119,192 @@
       ]
     },
     {
-      "name": "permission_handler_apple",
-      "version": "9.4.7",
+      "name": "record_macos",
+      "version": "1.2.1",
       "dependencies": [
         "flutter",
-        "permission_handler_platform_interface"
+        "record_platform_interface"
       ]
     },
     {
-      "name": "permission_handler_android",
-      "version": "13.0.1",
+      "name": "record_linux",
+      "version": "1.3.0",
       "dependencies": [
         "flutter",
-        "permission_handler_platform_interface"
+        "record_platform_interface"
       ]
     },
     {
-      "name": "speech_to_text",
-      "version": "7.3.0",
+      "name": "record_android",
+      "version": "1.5.1",
       "dependencies": [
-        "clock",
         "flutter",
-        "flutter_web_plugins",
-        "json_annotation",
-        "meta",
-        "pedantic",
-        "speech_to_text_platform_interface",
-        "speech_to_text_windows",
-        "web"
+        "record_platform_interface"
       ]
     },
     {
-      "name": "speech_to_text_platform_interface",
+      "name": "path_provider",
+      "version": "2.1.5",
+      "dependencies": [
+        "flutter",
+        "path_provider_android",
+        "path_provider_foundation",
+        "path_provider_linux",
+        "path_provider_platform_interface",
+        "path_provider_windows"
+      ]
+    },
+    {
+      "name": "path_provider_linux",
+      "version": "2.2.1",
+      "dependencies": [
+        "ffi",
+        "flutter",
+        "path",
+        "path_provider_platform_interface",
+        "xdg_directories"
+      ]
+    },
+    {
+      "name": "path_provider_windows",
       "version": "2.3.0",
       "dependencies": [
+        "ffi",
         "flutter",
-        "meta",
+        "path",
+        "path_provider_platform_interface"
+      ]
+    },
+    {
+      "name": "path_provider_platform_interface",
+      "version": "2.1.2",
+      "dependencies": [
+        "flutter",
+        "platform",
         "plugin_platform_interface"
       ]
     },
     {
-      "name": "speech_to_text_windows",
-      "version": "1.0.0+beta.8",
+      "name": "path_provider_foundation",
+      "version": "2.6.0",
       "dependencies": [
+        "ffi",
         "flutter",
-        "speech_to_text_platform_interface"
+        "objective_c",
+        "path_provider_platform_interface"
       ]
     },
     {
-      "name": "permission_handler_html",
-      "version": "0.1.3+5",
+      "name": "objective_c",
+      "version": "9.3.0",
       "dependencies": [
-        "flutter",
-        "flutter_web_plugins",
-        "permission_handler_platform_interface",
-        "web"
+        "code_assets",
+        "collection",
+        "ffi",
+        "hooks",
+        "logging",
+        "native_toolchain_c",
+        "pub_semver"
       ]
     },
     {
-      "name": "pedantic",
-      "version": "1.11.1",
+      "name": "code_assets",
+      "version": "1.0.0",
+      "dependencies": [
+        "collection",
+        "hooks"
+      ]
+    },
+    {
+      "name": "native_toolchain_c",
+      "version": "0.17.6",
+      "dependencies": [
+        "code_assets",
+        "glob",
+        "hooks",
+        "logging",
+        "meta",
+        "pub_semver"
+      ]
+    },
+    {
+      "name": "hooks",
+      "version": "1.0.3",
+      "dependencies": [
+        "collection",
+        "crypto",
+        "logging",
+        "meta",
+        "pub_semver",
+        "record_use",
+        "yaml"
+      ]
+    },
+    {
+      "name": "record_use",
+      "version": "0.6.0",
+      "dependencies": [
+        "collection",
+        "meta",
+        "pub_semver"
+      ]
+    },
+    {
+      "name": "platform",
+      "version": "3.1.6",
       "dependencies": []
     },
     {
-      "name": "rxdart",
-      "version": "0.28.0",
+      "name": "xdg_directories",
+      "version": "1.1.0",
+      "dependencies": [
+        "meta",
+        "path"
+      ]
+    },
+    {
+      "name": "synchronized",
+      "version": "3.4.0+1",
       "dependencies": []
+    },
+    {
+      "name": "path_provider_android",
+      "version": "2.3.1",
+      "dependencies": [
+        "flutter",
+        "jni",
+        "jni_flutter",
+        "path_provider_platform_interface"
+      ]
+    },
+    {
+      "name": "jni_flutter",
+      "version": "1.0.1",
+      "dependencies": [
+        "flutter",
+        "jni"
+      ]
+    },
+    {
+      "name": "jni",
+      "version": "1.0.0",
+      "dependencies": [
+        "args",
+        "collection",
+        "ffi",
+        "meta",
+        "package_config",
+        "path",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "uuid",
+      "version": "4.5.3",
+      "dependencies": [
+        "crypto",
+        "fixnum"
+      ]
     }
   ],
   "configVersion": 1

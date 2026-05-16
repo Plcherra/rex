@@ -1,4 +1,5 @@
 fastapi
+google-auth
 httpx
 pydantic-settings
 python-multipart

@@ -133,6 +133,18 @@ class _VoiceStatusHeader extends StatelessWidget {
         icon: Icons.mic_none_rounded,
         color: (scheme) => scheme.primary,
       ),
+      VoicePhase.recording => _VoiceStatus(
+        title: 'Recording',
+        subtitle: 'Talk naturally. Stop when you are done.',
+        icon: Icons.graphic_eq_rounded,
+        color: (scheme) => scheme.primary,
+      ),
+      VoicePhase.uploading => _VoiceStatus(
+        title: 'Uploading',
+        subtitle: 'Sending your voice to Rex.',
+        icon: Icons.cloud_upload_rounded,
+        color: (scheme) => scheme.tertiary,
+      ),
       VoicePhase.listening => _VoiceStatus(
         title: 'Listening',
         subtitle: 'Say what you need. Stop when you are done.',
@@ -150,6 +162,12 @@ class _VoiceStatusHeader extends StatelessWidget {
         subtitle: 'Rex is answering through the normal chat pipeline.',
         icon: Icons.psychology_alt_rounded,
         color: (scheme) => scheme.secondary,
+      ),
+      VoicePhase.generatingSpeech => _VoiceStatus(
+        title: 'Generating voice',
+        subtitle: 'Rex is preparing the spoken response.',
+        icon: Icons.graphic_eq_rounded,
+        color: (scheme) => scheme.tertiary,
       ),
       VoicePhase.speaking => _VoiceStatus(
         title: 'Speaking',
@@ -259,7 +277,7 @@ class _VoiceActions extends StatelessWidget {
         secondaryLabel: 'Close',
         onSecondary: onClose,
       ),
-      VoicePhase.listening => _ActionRow(
+      VoicePhase.recording || VoicePhase.listening => _ActionRow(
         primaryLabel: 'Stop',
         primaryIcon: Icons.stop_rounded,
         onPrimary: onStopListening,
@@ -268,8 +286,10 @@ class _VoiceActions extends StatelessWidget {
           onCancelListening();
         },
       ),
+      VoicePhase.uploading ||
       VoicePhase.transcribing ||
-      VoicePhase.thinking => _BusyActions(onCancel: onCancelTurn),
+      VoicePhase.thinking ||
+      VoicePhase.generatingSpeech => _BusyActions(onCancel: onCancelTurn),
       VoicePhase.speaking => _ActionRow(
         primaryLabel: 'Stop playback',
         primaryIcon: Icons.stop_rounded,

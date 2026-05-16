@@ -189,6 +189,45 @@ class SupabaseMemoryService:
         )
         return True
 
+    async def save_voice_turn(
+        self,
+        conversation_id: str,
+        user_message_id: Optional[str] = None,
+        assistant_message_id: Optional[str] = None,
+        transcript_confidence: Optional[float] = None,
+        audio_duration_seconds: Optional[float] = None,
+        input_mime_type: Optional[str] = None,
+        output_audio_encoding: Optional[str] = None,
+        stt_vendor: str = "deepgram",
+        tts_vendor: str = "google_tts",
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        rows = await self._request(
+            "POST",
+            self.settings.supabase_voice_turns_table,
+            body={
+                "conversation_id": conversation_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+                "transcript_confidence": transcript_confidence,
+                "audio_duration_seconds": audio_duration_seconds,
+                "input_mime_type": input_mime_type,
+                "output_audio_encoding": output_audio_encoding,
+                "stt_vendor": stt_vendor,
+                "tts_vendor": tts_vendor,
+                "metadata": metadata or {},
+            },
+            query={
+                "select": (
+                    "id,conversation_id,user_message_id,assistant_message_id,"
+                    "transcript_confidence,audio_duration_seconds,input_mime_type,"
+                    "output_audio_encoding,stt_vendor,tts_vendor,metadata,created_at"
+                )
+            },
+            prefer="return=representation",
+        )
+        return self._first_row(rows)
+
     async def save_long_term_memory(
         self,
         memory_type: str,

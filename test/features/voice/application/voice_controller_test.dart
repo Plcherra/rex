@@ -1,11 +1,16 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:rex/features/chat/application/chat_controller.dart';
 import 'package:rex/features/voice/application/voice_controller.dart';
+import 'package:rex/features/voice/data/audio_playback_service.dart';
+import 'package:rex/features/voice/data/audio_recording_service.dart';
+import 'package:rex/features/voice/data/cloud_voice_api.dart';
 import 'package:rex/features/voice/data/speech_to_text_service.dart';
 import 'package:rex/features/voice/data/text_to_speech_service.dart';
 import 'package:rex/features/voice/domain/voice_state.dart';
@@ -19,7 +24,9 @@ class FakeMicrophonePermissionService implements MicrophonePermissionService {
   var openSettingsCount = 0;
 
   @override
-  Future<MicrophonePermissionDecision> requestMicrophonePermission() async {
+  Future<MicrophonePermissionDecision> requestMicrophonePermission({
+    bool includeSpeechRecognition = true,
+  }) async {
     requestCount++;
     return decision;
   }
@@ -132,15 +139,125 @@ class FakeTextToSpeechService implements TextToSpeechService {
   }
 }
 
+class FakeAudioRecordingService implements AudioRecordingService {
+  FakeAudioRecordingService({this.recording});
+
+  final RecordedVoiceAudio? recording;
+  var startCount = 0;
+  var stopCount = 0;
+  var cancelCount = 0;
+
+  @override
+  Future<void> startRecording() async {
+    startCount++;
+  }
+
+  @override
+  Future<RecordedVoiceAudio?> stopRecording() async {
+    stopCount++;
+    return recording;
+  }
+
+  @override
+  Future<void> cancelRecording() async {
+    cancelCount++;
+  }
+}
+
+class FakeAudioPlaybackService implements AudioPlaybackService {
+  var playCount = 0;
+  var stopCount = 0;
+  var pauseCount = 0;
+  String? playedAudioBase64;
+  String? playedContentType;
+  AudioPlaybackCompleteCallback? onComplete;
+  AudioPlaybackErrorCallback? onError;
+
+  @override
+  Future<void> playBase64Audio(
+    String audioBase64, {
+    required String contentType,
+    required AudioPlaybackCompleteCallback onComplete,
+    required AudioPlaybackErrorCallback onError,
+  }) async {
+    playCount++;
+    playedAudioBase64 = audioBase64;
+    playedContentType = contentType;
+    this.onComplete = onComplete;
+    this.onError = onError;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCount++;
+  }
+
+  @override
+  Future<void> pause() async {
+    pauseCount++;
+  }
+
+  void complete() {
+    onComplete?.call();
+  }
+}
+
+class FakeCloudVoiceApi extends CloudVoiceApi {
+  FakeCloudVoiceApi({
+    this.transcription = const CloudVoiceTranscriptionResponse(
+      transcript: 'I need direct advice',
+      confidence: 0.94,
+    ),
+    this.synthesis = const CloudVoiceSynthesisResponse(
+      audioContentType: 'audio/mpeg',
+      audioBase64: 'bXAzLWJ5dGVz',
+      audioEncoding: 'MP3',
+      voiceName: 'en-US-Neural2-J',
+      languageCode: 'en-US',
+    ),
+    this.error,
+  });
+
+  final CloudVoiceTranscriptionResponse transcription;
+  final CloudVoiceSynthesisResponse synthesis;
+  final Object? error;
+  var transcribeCount = 0;
+  var synthesizeCount = 0;
+
+  @override
+  Future<CloudVoiceTranscriptionResponse> transcribe({
+    required XFile audio,
+    required String inputMimeType,
+  }) async {
+    transcribeCount++;
+    if (error != null) {
+      throw error!;
+    }
+    return transcription;
+  }
+
+  @override
+  Future<CloudVoiceSynthesisResponse> synthesize(String text) async {
+    synthesizeCount++;
+    if (error != null) {
+      throw error!;
+    }
+    return synthesis;
+  }
+}
+
 void main() {
   test('VoiceState exposes busy and startable phases', () {
     expect(const VoiceState().isIdle, true);
     expect(const VoiceState().isBusy, false);
     expect(const VoiceState().canStartListening, true);
 
+    expect(const VoiceState(phase: VoicePhase.recording).isBusy, true);
+    expect(const VoiceState(phase: VoicePhase.uploading).isBusy, true);
     expect(const VoiceState(phase: VoicePhase.listening).isBusy, true);
     expect(const VoiceState(phase: VoicePhase.transcribing).isBusy, true);
     expect(const VoiceState(phase: VoicePhase.thinking).isBusy, true);
+    expect(const VoiceState(phase: VoicePhase.generatingSpeech).isBusy, true);
     expect(const VoiceState(phase: VoicePhase.speaking).isBusy, true);
     expect(const VoiceState(phase: VoicePhase.failed).isBusy, false);
     expect(
@@ -156,6 +273,7 @@ void main() {
     final speechToTextService = FakeSpeechToTextService();
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         microphonePermissionProvider.overrideWithValue(permissionService),
         speechToTextServiceProvider.overrideWithValue(speechToTextService),
       ],
@@ -215,6 +333,7 @@ data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
       );
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
           speechToTextServiceProvider.overrideWithValue(speechToTextService),
           textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
@@ -240,10 +359,87 @@ data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
     },
   );
 
+  test('VoiceController uses cloud transcription and cloud playback', () async {
+    final permissionService = FakeMicrophonePermissionService(
+      MicrophonePermissionDecision.granted,
+    );
+    final recordingService = FakeAudioRecordingService(
+      recording: RecordedVoiceAudio(
+        file: XFile.fromData(
+          Uint8List.fromList([1, 2, 3]),
+          name: 'voice.m4a',
+          mimeType: 'audio/mp4',
+        ),
+        inputMimeType: 'audio/mp4',
+      ),
+    );
+    final playbackService = FakeAudioPlaybackService();
+    final cloudVoiceApi = FakeCloudVoiceApi();
+    final chatApi = ChatApi(
+      baseUrl: 'http://rex.test',
+      client: MockClient((request) async {
+        expect(request.url.toString(), 'http://rex.test/chat');
+        expect(request.body, contains('"message":"I need direct advice"'));
+        return http.Response(
+          '''
+event: conversation
+data: {"conversation_id":"conversation-1"}
+
+event: token
+data: {"token":"Rex "}
+
+event: token
+data: {"token":"answer"}
+
+event: done
+data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
+
+''',
+          200,
+          headers: {'Content-Type': 'text/event-stream'},
+        );
+      }),
+    );
+    final container = ProviderContainer(
+      overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(true),
+        microphonePermissionProvider.overrideWithValue(permissionService),
+        audioRecordingServiceProvider.overrideWithValue(recordingService),
+        audioPlaybackServiceProvider.overrideWithValue(playbackService),
+        cloudVoiceApiProvider.overrideWithValue(cloudVoiceApi),
+        chatApiProvider.overrideWithValue(chatApi),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(voiceProvider.notifier);
+    final started = await controller.startListening();
+    expect(started, true);
+    expect(container.read(voiceProvider).phase, VoicePhase.recording);
+    await controller.stopAndSubmitCurrentTranscript();
+    await pumpEventQueue(times: 30);
+
+    final voiceState = container.read(voiceProvider);
+    final chatState = container.read(chatProvider);
+    expect(recordingService.startCount, 1);
+    expect(recordingService.stopCount, 1);
+    expect(cloudVoiceApi.transcribeCount, 1);
+    expect(cloudVoiceApi.synthesizeCount, 1);
+    expect(chatState.conversationId, 'conversation-1');
+    expect(chatState.messages.last.content, 'Rex answer');
+    expect(playbackService.playCount, 1);
+    expect(playbackService.playedAudioBase64, 'bXAzLWJ5dGVz');
+    expect(playbackService.playedContentType, 'audio/mpeg');
+    expect(voiceState.phase, VoicePhase.speaking);
+    expect(voiceState.finalTranscript, 'I need direct advice');
+    expect(voiceState.spokenResponseText, 'Rex answer');
+  });
+
   test('VoiceController tracks thinking and speaking state', () async {
     final textToSpeechService = FakeTextToSpeechService();
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
       ],
     );
@@ -284,6 +480,7 @@ data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
     final textToSpeechService = FakeTextToSpeechService();
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
       ],
     );
@@ -300,6 +497,7 @@ data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
     final throwingService = FakeTextToSpeechService(throwOnSpeak: true);
     final throwingContainer = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         textToSpeechServiceProvider.overrideWithValue(throwingService),
       ],
     );
@@ -326,6 +524,7 @@ data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
     );
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         microphonePermissionProvider.overrideWithValue(permissionService),
         speechToTextServiceProvider.overrideWithValue(speechToTextService),
         chatApiProvider.overrideWithValue(chatApi),
@@ -359,6 +558,7 @@ data: {"conversation_id":"conversation-1","response":"Rex answer","messages":[]}
       );
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
           chatApiProvider.overrideWithValue(chatApi),
         ],
@@ -400,6 +600,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
     final textToSpeechService = FakeTextToSpeechService();
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
       ],
     );
@@ -427,6 +628,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
       final textToSpeechService = FakeTextToSpeechService();
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
         ],
       );
@@ -455,6 +657,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
       final speechToTextService = FakeSpeechToTextService();
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
           speechToTextServiceProvider.overrideWithValue(speechToTextService),
         ],
@@ -495,6 +698,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
       final speechToTextService = FakeSpeechToTextService();
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
           speechToTextServiceProvider.overrideWithValue(speechToTextService),
         ],
@@ -528,6 +732,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
       final speechToTextService = FakeSpeechToTextService();
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
           speechToTextServiceProvider.overrideWithValue(speechToTextService),
         ],
@@ -561,6 +766,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
     );
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         microphonePermissionProvider.overrideWithValue(permissionService),
         speechToTextServiceProvider.overrideWithValue(speechToTextService),
       ],
@@ -589,6 +795,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
     final speechToTextService = FakeSpeechToTextService();
     final container = ProviderContainer(
       overrides: [
+        cloudVoiceEnabledProvider.overrideWithValue(false),
         microphonePermissionProvider.overrideWithValue(permissionService),
         speechToTextServiceProvider.overrideWithValue(speechToTextService),
       ],
@@ -615,6 +822,7 @@ data: {"conversation_id":"conversation-1","response":"Late answer","messages":[]
       final speechToTextService = FakeSpeechToTextService();
       final container = ProviderContainer(
         overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
           speechToTextServiceProvider.overrideWithValue(speechToTextService),
         ],

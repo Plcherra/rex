@@ -1,8 +1,11 @@
 enum VoicePhase {
   idle,
+  recording,
+  uploading,
   listening,
   transcribing,
   thinking,
+  generatingSpeech,
   speaking,
   failed,
   permissionDenied,
@@ -27,9 +30,12 @@ class VoiceState {
 
   bool get isBusy {
     return switch (phase) {
+      VoicePhase.recording ||
+      VoicePhase.uploading ||
       VoicePhase.listening ||
       VoicePhase.transcribing ||
       VoicePhase.thinking ||
+      VoicePhase.generatingSpeech ||
       VoicePhase.speaking => true,
       VoicePhase.idle ||
       VoicePhase.failed ||

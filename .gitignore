@@ -158,6 +158,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+secrets/
+*rex-voice-7cbc02832e2b*.json
 
 # Spyder project settings
 .spyderproject

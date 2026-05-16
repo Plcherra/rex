@@ -38,6 +38,24 @@ create index if not exists long_term_memory_active_importance_idx
 create index if not exists long_term_memory_source_conversation_idx
   on public.long_term_memory (source_conversation_id);
 
+create table if not exists public.voice_turns (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  user_message_id uuid references public.messages(id) on delete set null,
+  assistant_message_id uuid references public.messages(id) on delete set null,
+  transcript_confidence numeric,
+  audio_duration_seconds numeric,
+  input_mime_type text,
+  output_audio_encoding text,
+  stt_vendor text not null default 'deepgram',
+  tts_vendor text not null default 'google_tts',
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists voice_turns_conversation_created_idx
+  on public.voice_turns (conversation_id, created_at desc);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql

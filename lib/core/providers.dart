@@ -11,6 +11,12 @@ export 'package:rex/features/memory/data/memory_api.dart'
 export 'package:rex/features/voice/application/voice_controller.dart'
     show
         microphonePermissionProvider,
+        audioPlaybackServiceProvider,
+        audioRecordingServiceProvider,
+        backgroundVoiceServiceProvider,
+        cloudVoiceApiProvider,
+        cloudVoiceEnabledProvider,
         speechToTextServiceProvider,
         textToSpeechServiceProvider,
+        voiceAudioSessionServiceProvider,
         voiceProvider;

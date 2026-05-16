@@ -45,7 +45,7 @@ class AIService:
 
             return self._parse_grok_response(response.text)
         except httpx.HTTPStatusError as error:
-            raise AIServiceError("Grok API returned an error.") from error
+            raise self._http_status_error(error.response) from error
         except (httpx.RequestError, TimeoutError) as error:
             raise AIServiceError("Cannot reach Grok API right now.") from error
         except json.JSONDecodeError as error:
@@ -80,7 +80,7 @@ class AIService:
                 async for token in self._parse_grok_stream(response):
                     yield token
         except httpx.HTTPStatusError as error:
-            raise AIServiceError("Grok API returned an error.") from error
+            raise self._http_status_error(error.response) from error
         except (httpx.RequestError, TimeoutError) as error:
             raise AIServiceError("Cannot reach Grok API right now.") from error
         except json.JSONDecodeError as error:
@@ -145,3 +145,45 @@ class AIService:
             content = delta.get("content")
             if content:
                 yield str(content)
+
+    def _http_status_error(self, response: httpx.Response) -> AIServiceError:
+        detail = self._grok_error_detail(response)
+        if response.status_code == 429:
+            return AIServiceError(
+                detail or "Grok is at capacity right now. Try again in a few minutes.",
+                status_code=503,
+            )
+        if response.status_code == 400:
+            return AIServiceError(
+                detail or "Grok rejected the request configuration.",
+                status_code=502,
+            )
+        if response.status_code in {401, 403}:
+            return AIServiceError(
+                detail or "Grok API authentication failed. Check the API key.",
+                status_code=503,
+            )
+        return AIServiceError(
+            detail or "Grok API returned an error.",
+            status_code=503,
+        )
+
+    def _grok_error_detail(self, response: httpx.Response) -> str:
+        try:
+            data = response.json()
+        except json.JSONDecodeError:
+            return response.text.strip()
+
+        if not isinstance(data, dict):
+            return response.text.strip()
+
+        for key in ("error", "detail", "message"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, dict):
+                nested_message = value.get("message") or value.get("detail")
+                if isinstance(nested_message, str) and nested_message.strip():
+                    return nested_message.strip()
+
+        return response.text.strip()

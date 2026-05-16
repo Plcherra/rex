@@ -9,6 +9,7 @@ Current stack:
 - AI: Grok API through the backend only
 - Database: Supabase for conversations, messages, and long-term memory
 - Memory: short-term transcript memory plus long-term facts, preferences, and events
+- Production voice target: Deepgram speech-to-text and Google Text-to-Speech through the backend
 
 Rex no longer uses Ollama, local models, or SQLite.
 
@@ -19,9 +20,11 @@ Flutter app
   -> FastAPI backend
     -> Grok API for chat responses and memory extraction
     -> Supabase REST API for conversations, messages, and long-term memory
+    -> Deepgram for cloud speech-to-text
+    -> Google Text-to-Speech for spoken responses
 ```
 
-The Flutter app never stores Grok or Supabase service-role secrets. It only calls the FastAPI backend.
+The Flutter app never stores Grok, Supabase service-role, Deepgram, or Google credentials. It only calls the FastAPI backend.
 
 ## Environment
 
@@ -49,6 +52,22 @@ SUPABASE_ANON_KEY=
 SUPABASE_CONVERSATIONS_TABLE=conversations
 SUPABASE_MESSAGES_TABLE=messages
 SUPABASE_LONG_TERM_MEMORY_TABLE=long_term_memory
+
+DEEPGRAM_API_KEY=
+DEEPGRAM_MODEL=nova-3
+DEEPGRAM_LANGUAGE=en-US
+DEEPGRAM_BASE_URL=https://api.deepgram.com/v1
+DEEPGRAM_TIMEOUT_SECONDS=60
+
+GOOGLE_TTS_PROJECT_ID=
+GOOGLE_TTS_CREDENTIALS_JSON=
+GOOGLE_APPLICATION_CREDENTIALS=
+GOOGLE_TTS_VOICE_NAME=en-US-Neural2-J
+GOOGLE_TTS_LANGUAGE_CODE=en-US
+GOOGLE_TTS_AUDIO_ENCODING=MP3
+GOOGLE_TTS_SPEAKING_RATE=1.0
+GOOGLE_TTS_PITCH=0.0
+GOOGLE_TTS_TIMEOUT_SECONDS=60
 ```
 
 Flutter backend URL is passed at build/run time:
@@ -97,6 +116,12 @@ Health check:
 curl http://localhost:8000/
 ```
 
+Readiness check:
+
+```sh
+curl http://localhost:8000/ready
+```
+
 Chat request:
 
 ```sh
@@ -134,6 +159,8 @@ Main screens currently implemented:
 - Long-term memory list/edit/deactivate screen
 - File upload flow for `.txt`, `.md`, and `.csv`
 
+Current local voice support exists as a development fallback. The production voice plan is documented in [docs/action_plans/voice_pipeline_checklist.md](docs/action_plans/voice_pipeline_checklist.md), with the initial audio contract in [docs/cloud_voice_contract.md](docs/cloud_voice_contract.md) and Google TTS setup in [docs/google_tts_setup.md](docs/google_tts_setup.md).
+
 ## Tests
 
 Backend:
@@ -160,4 +187,5 @@ Current expected status after Phase 5.2:
 - Use `backend/.env.example` as the source for backend environment variable names.
 - Use `--dart-define=REX_BACKEND_URL=...` to point Flutter at the correct backend.
 - Supabase SQL must be applied before real chat memory can work.
+- Deepgram and Google TTS credentials stay backend-side only.
 - Deployment notes are in [docs/deployment.md](docs/deployment.md).

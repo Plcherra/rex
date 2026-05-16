@@ -1,7 +1,13 @@
+import 'dart:async';
+
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rex/features/voice/application/voice_controller.dart';
+import 'package:rex/features/voice/data/audio_playback_service.dart';
+import 'package:rex/features/voice/data/audio_session_service.dart';
+import 'package:rex/features/voice/data/background_voice_service.dart';
 import 'package:rex/features/voice/data/speech_to_text_service.dart';
 import 'package:rex/features/voice/data/text_to_speech_service.dart';
 import 'package:rex/features/voice/domain/voice_state.dart';
@@ -15,7 +21,9 @@ class FakeMicrophonePermissionService implements MicrophonePermissionService {
   var openSettingsCount = 0;
 
   @override
-  Future<MicrophonePermissionDecision> requestMicrophonePermission() async {
+  Future<MicrophonePermissionDecision> requestMicrophonePermission({
+    bool includeSpeechRecognition = true,
+  }) async {
     requestCount++;
     return decision;
   }
@@ -107,6 +115,56 @@ class FakeTextToSpeechService implements TextToSpeechService {
   void emitError(String message) {
     onError?.call(message);
   }
+}
+
+class FakeAudioPlaybackService implements AudioPlaybackService {
+  var stopCount = 0;
+
+  @override
+  Future<void> playBase64Audio(
+    String audioBase64, {
+    required String contentType,
+    required AudioPlaybackCompleteCallback onComplete,
+    required AudioPlaybackErrorCallback onError,
+  }) async {}
+
+  @override
+  Future<void> stop() async {
+    stopCount++;
+  }
+
+  @override
+  Future<void> pause() async {}
+}
+
+class FakeVoiceAudioSessionService implements VoiceAudioSessionService {
+  @override
+  Future<void> configureForVoiceTurn() async {}
+
+  @override
+  Future<void> setActive(bool active) async {}
+
+  @override
+  StreamSubscription<void> listenForNoisyAudio(
+    VoiceAudioInterruptionCallback onInterrupted,
+  ) {
+    return const Stream<void>.empty().listen((_) {});
+  }
+
+  @override
+  StreamSubscription<AudioInterruptionEvent> listenForInterruptions(
+    VoiceAudioInterruptionCallback onInterrupted,
+  ) {
+    return const Stream<AudioInterruptionEvent>.empty().listen((_) {});
+  }
+}
+
+class FakeBackgroundVoiceService implements BackgroundVoiceService {
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
 }
 
 void main() {
@@ -323,9 +381,11 @@ ProviderContainer _container({
   FakeMicrophonePermissionService? permissionService,
   FakeSpeechToTextService? speechToTextService,
   FakeTextToSpeechService? textToSpeechService,
+  FakeAudioPlaybackService? audioPlaybackService,
 }) {
   return ProviderContainer(
     overrides: [
+      cloudVoiceEnabledProvider.overrideWithValue(false),
       microphonePermissionProvider.overrideWithValue(
         permissionService ??
             FakeMicrophonePermissionService(
@@ -337,6 +397,15 @@ ProviderContainer _container({
       ),
       textToSpeechServiceProvider.overrideWithValue(
         textToSpeechService ?? FakeTextToSpeechService(),
+      ),
+      audioPlaybackServiceProvider.overrideWithValue(
+        audioPlaybackService ?? FakeAudioPlaybackService(),
+      ),
+      voiceAudioSessionServiceProvider.overrideWithValue(
+        FakeVoiceAudioSessionService(),
+      ),
+      backgroundVoiceServiceProvider.overrideWithValue(
+        FakeBackgroundVoiceService(),
       ),
     ],
   );

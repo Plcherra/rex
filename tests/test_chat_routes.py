@@ -170,7 +170,7 @@ def test_chat_rejects_unsupported_content_type(client):
 
     response = client.post(
         "/chat",
-        data="message=Hello",
+        content="message=Hello",
         headers={"content-type": "text/plain"},
     )
 

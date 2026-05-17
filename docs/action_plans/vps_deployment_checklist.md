@@ -214,7 +214,7 @@ EchoDesk can run on the same VPS behind a separate domain/subdomain and a differ
       ```
     - Success criteria: The app sends text chat to the VPS backend successfully.
 
-18. [ ] **Test cloud voice path**
+18. [x] **Test cloud voice path**
     - What to test: Record audio, Deepgram transcript, Grok response, Google TTS playback.
     - Success criteria: One full voice turn works from the mobile app through the VPS.
 
@@ -238,7 +238,7 @@ EchoDesk can run on the same VPS behind a separate domain/subdomain and a differ
 - [x] Public HTTPS `/ready` returns `ready`.
 - [x] Flutter app uses the VPS backend URL.
 - [x] Text chat works from the macOS app through the VPS.
-- [ ] Cloud voice works from phone.
+- [x] Cloud voice works from phone.
 - [ ] Physical street/pocket test result is documented.
 
 ## Revision History

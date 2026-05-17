@@ -12,6 +12,7 @@ import 'package:rex/features/chat/presentation/pages/conversation_list_page.dart
 import 'package:rex/features/chat/presentation/widgets/chat_input_bar.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_message_bubble.dart';
 import 'package:rex/features/memory/presentation/pages/memory_page.dart';
+import 'package:rex/features/voice/presentation/pages/voice_call_page.dart';
 import 'package:rex/features/voice/presentation/widgets/voice_recorder_sheet.dart';
 
 /// Main chat surface: empty thread UI + composer.
@@ -201,6 +202,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       appBar: AppBar(
         title: Text(currentConversation?.title ?? 'Rex'),
         actions: [
+          IconButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const VoiceCallPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.call_rounded),
+            tooltip: 'Call Rex',
+          ),
           IconButton(
             onPressed: () {
               Navigator.of(context).push(

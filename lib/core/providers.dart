@@ -20,3 +20,9 @@ export 'package:rex/features/voice/application/voice_controller.dart'
         textToSpeechServiceProvider,
         voiceAudioSessionServiceProvider,
         voiceProvider;
+export 'package:rex/features/voice/application/voice_call_controller.dart'
+    show
+        audioCaptureServiceProvider,
+        voiceCallNowProvider,
+        voiceCallProvider,
+        voiceCaptureConfigProvider;

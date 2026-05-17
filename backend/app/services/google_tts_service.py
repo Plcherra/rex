@@ -106,7 +106,7 @@ class GoogleTTSService:
             return credentials.token
         except GoogleTTSServiceError:
             raise
-        except (OSError, ValueError, json.JSONDecodeError) as error:
+        except (ImportError, OSError, ValueError, json.JSONDecodeError) as error:
             raise GoogleTTSServiceError(
                 "Google Text-to-Speech credentials are invalid.",
                 status_code=503,

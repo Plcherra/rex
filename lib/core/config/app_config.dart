@@ -1,7 +1,7 @@
 abstract final class AppConfig {
   static const String backendBaseUrl = String.fromEnvironment(
     'REX_BACKEND_URL',
-    defaultValue: 'http://localhost:8000',
+    defaultValue: 'https://api.rexpilot.com',
   );
 
   static const bool cloudVoiceEnabled = bool.fromEnvironment(

@@ -122,6 +122,11 @@ class PermissionHandlerMicrophonePermissionService
       return permission.request();
     } on MissingPluginException {
       return PermissionStatus.granted;
+    } on PlatformException catch (error) {
+      if (error.code == 'ERROR_ALREADY_REQUESTING_PERMISSIONS') {
+        return PermissionStatus.denied;
+      }
+      rethrow;
     }
   }
 }
@@ -136,6 +141,7 @@ class VoiceController extends Notifier<VoiceState> with WidgetsBindingObserver {
   BackgroundVoiceService? _activeBackgroundVoiceService;
   StreamSubscription<void>? _noisyAudioSubscription;
   StreamSubscription<AudioInterruptionEvent>? _audioInterruptionSubscription;
+  bool _isStartingListening = false;
 
   @override
   VoiceState build() {
@@ -187,15 +193,20 @@ class VoiceController extends Notifier<VoiceState> with WidgetsBindingObserver {
   }
 
   Future<bool> startListening() async {
-    if (!state.canStartListening) {
+    if (_isStartingListening || !state.canStartListening) {
       return false;
     }
 
-    if (ref.read(cloudVoiceEnabledProvider)) {
-      return _startCloudRecording();
-    }
+    _isStartingListening = true;
+    try {
+      if (ref.read(cloudVoiceEnabledProvider)) {
+        return await _startCloudRecording();
+      }
 
-    return _startLocalListening();
+      return await _startLocalListening();
+    } finally {
+      _isStartingListening = false;
+    }
   }
 
   Future<bool> _startLocalListening() async {

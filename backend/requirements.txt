@@ -3,6 +3,7 @@ google-auth
 httpx
 pydantic-settings
 python-multipart
+requests
 pytest
 pytest-asyncio
 uvicorn[standard]

@@ -17,9 +17,10 @@ import 'package:rex/features/voice/domain/voice_state.dart';
 import 'package:rex/services/chat_api.dart';
 
 class FakeMicrophonePermissionService implements MicrophonePermissionService {
-  FakeMicrophonePermissionService(this.decision);
+  FakeMicrophonePermissionService(this.decision, {this.pendingDecision});
 
   final MicrophonePermissionDecision decision;
+  final Completer<MicrophonePermissionDecision>? pendingDecision;
   var requestCount = 0;
   var openSettingsCount = 0;
 
@@ -28,6 +29,9 @@ class FakeMicrophonePermissionService implements MicrophonePermissionService {
     bool includeSpeechRecognition = true,
   }) async {
     requestCount++;
+    if (pendingDecision != null) {
+      return pendingDecision!.future;
+    }
     return decision;
   }
 
@@ -296,6 +300,37 @@ void main() {
     expect(speechToTextService.initializeCount, 1);
     expect(speechToTextService.startListeningCount, 1);
   });
+
+  test(
+    'VoiceController ignores duplicate start while permission is pending',
+    () async {
+      final permissionCompleter = Completer<MicrophonePermissionDecision>();
+      final permissionService = FakeMicrophonePermissionService(
+        MicrophonePermissionDecision.granted,
+        pendingDecision: permissionCompleter,
+      );
+      final speechToTextService = FakeSpeechToTextService();
+      final container = ProviderContainer(
+        overrides: [
+          cloudVoiceEnabledProvider.overrideWithValue(false),
+          microphonePermissionProvider.overrideWithValue(permissionService),
+          speechToTextServiceProvider.overrideWithValue(speechToTextService),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceProvider.notifier);
+      final firstStart = controller.startListening();
+      final secondStart = await controller.startListening();
+
+      expect(secondStart, false);
+      expect(permissionService.requestCount, 1);
+      permissionCompleter.complete(MicrophonePermissionDecision.granted);
+
+      expect(await firstStart, true);
+      expect(speechToTextService.startListeningCount, 1);
+    },
+  );
 
   test(
     'VoiceController sends final transcript through chat and speaks response',

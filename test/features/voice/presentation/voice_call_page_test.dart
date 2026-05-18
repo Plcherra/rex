@@ -45,7 +45,8 @@ void main() {
       ),
     );
 
-    expect(find.text('Ready to call'), findsOneWidget);
+    expect(find.text('Ready'), findsOneWidget);
+    expect(find.text('Start a call when you are ready.'), findsOneWidget);
     expect(find.text('Start call'), findsOneWidget);
 
     await tester.tap(find.text('Start call'));
@@ -67,7 +68,7 @@ void main() {
     await tester.tap(find.byTooltip('Mute mic'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Mic muted'), findsOneWidget);
+    expect(find.text('Muted'), findsOneWidget);
     expect(find.byTooltip('Unmute mic'), findsOneWidget);
   });
 
@@ -88,7 +89,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Speaking'), findsOneWidget);
+    expect(find.text('Speaking'), findsNothing);
     expect(find.text('I need direct advice.'), findsOneWidget);
     expect(find.text('Stop repeating the same pattern.'), findsOneWidget);
 
@@ -142,7 +143,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Call failed'), findsOneWidget);
+    expect(find.text('Issue'), findsOneWidget);
     expect(find.text('Network dropped.'), findsOneWidget);
     expect(find.text('Try again'), findsOneWidget);
 

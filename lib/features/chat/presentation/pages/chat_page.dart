@@ -13,7 +13,6 @@ import 'package:rex/features/chat/presentation/widgets/chat_input_bar.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_message_bubble.dart';
 import 'package:rex/features/memory/presentation/pages/memory_page.dart';
 import 'package:rex/features/voice/presentation/pages/voice_call_page.dart';
-import 'package:rex/features/voice/presentation/widgets/voice_recorder_sheet.dart';
 
 /// Main chat surface: empty thread UI + composer.
 class ChatPage extends ConsumerStatefulWidget {
@@ -163,14 +162,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _openVoiceRecorder() async {
+  void _openVoiceCall() {
     FocusScope.of(context).unfocus();
-    await showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      showDragHandle: false,
-      builder: (context) => const VoiceRecorderSheet(),
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (context) => const VoiceCallPage()),
     );
   }
 
@@ -311,7 +306,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   : _onSendTapped,
               onPickAttachment: _pickAttachment,
               onRemoveAttachment: _removeAttachment,
-              onStartVoice: _openVoiceRecorder,
+              onStartVoice: _openVoiceCall,
               attachmentName: _attachmentName,
               attachmentSize: _attachmentSize,
               attachmentError: _attachmentError,

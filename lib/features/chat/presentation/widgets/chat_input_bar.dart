@@ -83,8 +83,8 @@ class ChatInputBar extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 4),
                         child: IconButton(
                           onPressed: isLoading ? null : onStartVoice,
-                          icon: const Icon(Icons.mic_none_rounded),
-                          tooltip: 'Talk to Rex',
+                          icon: const Icon(Icons.call_rounded),
+                          tooltip: 'Start voice call',
                         ),
                       ),
                       Expanded(

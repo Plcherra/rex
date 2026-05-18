@@ -11,11 +11,14 @@ import 'package:rex/core/rex_app.dart';
 import 'package:rex/features/chat/application/chat_controller.dart';
 import 'package:rex/features/chat/data/conversation_api.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_message_bubble.dart';
+import 'package:rex/features/voice/application/voice_call_controller.dart';
 import 'package:rex/features/voice/application/voice_controller.dart';
+import 'package:rex/features/voice/data/audio_capture_service.dart';
+import 'package:rex/features/voice/data/audio_playback_service.dart';
+import 'package:rex/features/voice/data/audio_recording_service.dart';
 import 'package:rex/features/voice/data/audio_session_service.dart';
 import 'package:rex/features/voice/data/background_voice_service.dart';
-import 'package:rex/features/voice/data/speech_to_text_service.dart';
-import 'package:rex/features/voice/data/text_to_speech_service.dart';
+import 'package:rex/features/voice/data/cloud_voice_api.dart';
 import 'package:rex/services/chat_api.dart';
 
 void main() {
@@ -105,66 +108,43 @@ void main() {
     expect(find.text('Help me think through my day.'), findsNothing);
   });
 
-  testWidgets('ChatPage opens voice sheet and sends stopped transcript', (
+  testWidgets('ChatPage composer voice button opens active voice call', (
     WidgetTester tester,
   ) async {
     final permissionService = _FakeMicrophonePermissionService(
       MicrophonePermissionDecision.granted,
     );
-    final speechToTextService = _FakeSpeechToTextService();
-    final textToSpeechService = _FakeTextToSpeechService();
-    final api = ChatApi(
-      baseUrl: 'http://rex.test',
-      client: MockClient((request) async {
-        expect(request.body, contains('"message":"Need direct advice"'));
-        expect(request.body, contains('"stream":true'));
-        return _streamingResponse();
-      }),
-    );
+    final audioCaptureService = _FakeAudioCaptureService();
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          cloudVoiceEnabledProvider.overrideWithValue(false),
+          streamingVoiceEnabledProvider.overrideWithValue(false),
           microphonePermissionProvider.overrideWithValue(permissionService),
-          speechToTextServiceProvider.overrideWithValue(speechToTextService),
-          textToSpeechServiceProvider.overrideWithValue(textToSpeechService),
+          audioCaptureServiceProvider.overrideWithValue(audioCaptureService),
+          audioPlaybackServiceProvider.overrideWithValue(
+            _FakeAudioPlaybackService(),
+          ),
           voiceAudioSessionServiceProvider.overrideWithValue(
             _FakeVoiceAudioSessionService(),
           ),
           backgroundVoiceServiceProvider.overrideWithValue(
             _FakeBackgroundVoiceService(),
           ),
-          chatApiProvider.overrideWithValue(api),
+          cloudVoiceApiProvider.overrideWithValue(_FakeCloudVoiceApi()),
         ],
         child: const RexApp(),
       ),
     );
 
-    await tester.tap(find.byTooltip('Talk to Rex'));
+    await tester.tap(find.byTooltip('Start voice call'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Call Rex'), findsOneWidget);
     expect(find.text('Listening'), findsOneWidget);
     expect(permissionService.requestCount, 1);
-    expect(speechToTextService.startListeningCount, 1);
-
-    speechToTextService.emitPartialTranscript('Need direct advice');
-    await tester.pump();
-    expect(find.text('Need direct advice'), findsOneWidget);
-
-    await tester.tap(find.text('Stop'));
-    await tester.pump();
-    await tester.runAsync(() async {
-      await Future<void>.delayed(Duration.zero);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    });
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(speechToTextService.stopListeningCount, 1);
-    expect(textToSpeechService.spokenText, 'Rex response');
-    expect(find.text('Speaking'), findsOneWidget);
-    expect(find.textContaining('Rex response'), findsWidgets);
+    expect(audioCaptureService.captureCount, 1);
+    expect(find.text('Stop'), findsNothing);
   });
 
   testWidgets(
@@ -311,65 +291,36 @@ class _FakeMicrophonePermissionService implements MicrophonePermissionService {
   Future<void> openSettings() async {}
 }
 
-class _FakeSpeechToTextService implements SpeechToTextService {
-  var initializeCount = 0;
-  var startListeningCount = 0;
-  var stopListeningCount = 0;
-  SpeechTranscriptCallback? onPartialTranscript;
-  SpeechTranscriptCallback? onFinalTranscript;
-  SpeechErrorCallback? onError;
+class _FakeAudioCaptureService implements AudioCaptureService {
+  var captureCount = 0;
 
   @override
-  Future<bool> initialize({required SpeechErrorCallback onError}) async {
-    initializeCount++;
-    this.onError = onError;
-    return true;
-  }
-
-  @override
-  Future<void> startListening({
-    required SpeechTranscriptCallback onPartialTranscript,
-    required SpeechTranscriptCallback onFinalTranscript,
-    required SpeechErrorCallback onError,
-  }) async {
-    startListeningCount++;
-    this.onPartialTranscript = onPartialTranscript;
-    this.onFinalTranscript = onFinalTranscript;
-    this.onError = onError;
-  }
-
-  @override
-  Future<void> stopListening() async {
-    stopListeningCount++;
+  Future<RecordedVoiceAudio?> captureUtterance({
+    required VoiceCaptureConfig config,
+    required SpeechStartCallback onSpeechStart,
+  }) {
+    captureCount++;
+    return Completer<RecordedVoiceAudio?>().future;
   }
 
   @override
   Future<void> cancel() async {}
-
-  void emitPartialTranscript(String transcript) {
-    onPartialTranscript?.call(transcript);
-  }
 }
 
-class _FakeTextToSpeechService implements TextToSpeechService {
-  var speakCount = 0;
-  String? spokenText;
-
+class _FakeAudioPlaybackService implements AudioPlaybackService {
   @override
-  Future<void> speak(
-    String text, {
-    required TextToSpeechCompleteCallback onComplete,
-    required TextToSpeechErrorCallback onError,
-  }) async {
-    speakCount++;
-    spokenText = text;
-  }
-
-  @override
-  Future<void> stop() async {}
+  Future<void> playBase64Audio(
+    String audioBase64, {
+    required String contentType,
+    required AudioPlaybackCompleteCallback onComplete,
+    required AudioPlaybackErrorCallback onError,
+  }) async {}
 
   @override
   Future<void> pause() async {}
+
+  @override
+  Future<void> stop() async {}
 }
 
 class _FakeVoiceAudioSessionService implements VoiceAudioSessionService {
@@ -401,6 +352,8 @@ class _FakeBackgroundVoiceService implements BackgroundVoiceService {
   @override
   Future<void> stop() async {}
 }
+
+class _FakeCloudVoiceApi extends CloudVoiceApi {}
 
 http.Response _streamingResponse() {
   return http.Response(

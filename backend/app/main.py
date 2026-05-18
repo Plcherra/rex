@@ -5,8 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routes.chat import router as chat_router
+from app.routes.commitments import router as commitments_router
 from app.routes.conversations import router as conversations_router
+from app.routes.entities import router as entities_router
 from app.routes.memory import router as memory_router
+from app.routes.plans import router as plans_router
+from app.routes.rules import router as rules_router
 from app.routes.voice import router as voice_router
 from app.routes.voice_stream import router as voice_stream_router
 from app.services.http_client import shutdown_http_client, startup_http_client
@@ -79,5 +83,9 @@ def readiness_check() -> dict:
 app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(memory_router)
+app.include_router(entities_router)
+app.include_router(rules_router)
+app.include_router(plans_router)
+app.include_router(commitments_router)
 app.include_router(voice_router)
 app.include_router(voice_stream_router)

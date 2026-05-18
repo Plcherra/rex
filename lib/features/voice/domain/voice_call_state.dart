@@ -1,16 +1,4 @@
-enum VoiceCallPhase {
-  idle,
-  starting,
-  listening,
-  capturingSpeech,
-  endpointing,
-  transcribing,
-  thinking,
-  speaking,
-  interrupted,
-  failed,
-  ended,
-}
+enum VoiceCallPhase { idle, listening, thinking, speaking, failed }
 
 class VoiceCallState {
   const VoiceCallState({
@@ -37,40 +25,24 @@ class VoiceCallState {
 
   bool get isCallActive {
     return switch (phase) {
-      VoiceCallPhase.starting ||
       VoiceCallPhase.listening ||
-      VoiceCallPhase.capturingSpeech ||
-      VoiceCallPhase.endpointing ||
-      VoiceCallPhase.transcribing ||
       VoiceCallPhase.thinking ||
-      VoiceCallPhase.speaking ||
-      VoiceCallPhase.interrupted => true,
-      VoiceCallPhase.idle ||
-      VoiceCallPhase.failed ||
-      VoiceCallPhase.ended => false,
+      VoiceCallPhase.speaking => true,
+      VoiceCallPhase.idle || VoiceCallPhase.failed => false,
     };
   }
 
   bool get isBusy {
     return switch (phase) {
-      VoiceCallPhase.starting ||
-      VoiceCallPhase.endpointing ||
-      VoiceCallPhase.transcribing ||
-      VoiceCallPhase.thinking ||
-      VoiceCallPhase.speaking => true,
+      VoiceCallPhase.thinking || VoiceCallPhase.speaking => true,
       VoiceCallPhase.idle ||
       VoiceCallPhase.listening ||
-      VoiceCallPhase.capturingSpeech ||
-      VoiceCallPhase.interrupted ||
-      VoiceCallPhase.failed ||
-      VoiceCallPhase.ended => false,
+      VoiceCallPhase.failed => false,
     };
   }
 
   bool get canStartCall {
-    return phase == VoiceCallPhase.idle ||
-        phase == VoiceCallPhase.failed ||
-        phase == VoiceCallPhase.ended;
+    return phase == VoiceCallPhase.idle || phase == VoiceCallPhase.failed;
   }
 
   bool get canEndCall => isCallActive || phase == VoiceCallPhase.failed;

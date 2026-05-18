@@ -30,22 +30,10 @@ void main() {
       const VoiceCallState(phase: VoiceCallPhase.listening).isCallActive,
       true,
     );
-    expect(
-      const VoiceCallState(phase: VoiceCallPhase.capturingSpeech).isBusy,
-      false,
-    );
-    expect(
-      const VoiceCallState(phase: VoiceCallPhase.endpointing).isBusy,
-      true,
-    );
     expect(const VoiceCallState(phase: VoiceCallPhase.thinking).isBusy, true);
     expect(const VoiceCallState(phase: VoiceCallPhase.speaking).isBusy, true);
     expect(
       const VoiceCallState(phase: VoiceCallPhase.failed).canStartCall,
-      true,
-    );
-    expect(
-      const VoiceCallState(phase: VoiceCallPhase.ended).canStartCall,
       true,
     );
   });
@@ -105,7 +93,7 @@ void main() {
   });
 
   test(
-    'VoiceCallController tracks capture, endpoint, and thinking states',
+    'VoiceCallController keeps capture internal and moves straight to thinking',
     () async {
       final container = voiceCallTestContainer();
       addTearDown(container.dispose);
@@ -113,10 +101,7 @@ void main() {
       final controller = container.read(voiceCallProvider.notifier);
       await controller.startCall();
       controller.startCapturingSpeech(transcript: 'Hey Rex');
-      expect(
-        container.read(voiceCallProvider).phase,
-        VoiceCallPhase.capturingSpeech,
-      );
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.listening);
       expect(container.read(voiceCallProvider).currentTranscript, 'Hey Rex');
 
       controller.updateTranscript('Hey Rex, help me think.');
@@ -126,16 +111,10 @@ void main() {
       );
 
       controller.endpointUtterance();
-      expect(
-        container.read(voiceCallProvider).phase,
-        VoiceCallPhase.endpointing,
-      );
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
 
       controller.startTranscribing();
-      expect(
-        container.read(voiceCallProvider).phase,
-        VoiceCallPhase.transcribing,
-      );
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
 
       controller.startThinking(finalTranscript: 'Hey Rex, help me think.');
       final state = container.read(voiceCallProvider);
@@ -175,7 +154,7 @@ void main() {
     controller.interrupt(reason: 'User interrupted Rex.');
 
     var state = container.read(voiceCallProvider);
-    expect(state.phase, VoiceCallPhase.interrupted);
+    expect(state.phase, VoiceCallPhase.listening);
     expect(state.errorMessage, 'User interrupted Rex.');
 
     controller.resumeListening();
@@ -234,11 +213,6 @@ void main() {
         captureService: captureService,
         playbackService: playbackService,
         cloudVoiceApi: api,
-        overrides: [
-          voiceCallThinkingDelayProvider.overrideWithValue(
-            const Duration(milliseconds: 250),
-          ),
-        ],
       );
       addTearDown(container.dispose);
 
@@ -311,7 +285,7 @@ void main() {
     controller.endCall();
 
     state = container.read(voiceCallProvider);
-    expect(state.phase, VoiceCallPhase.ended);
+    expect(state.phase, VoiceCallPhase.idle);
     expect(state.conversationId, 'conversation-2');
     expect(state.callEndedAt, DateTime.utc(2026, 5, 17, 2, 20));
   });
@@ -352,10 +326,7 @@ void main() {
       await pumpEventQueue();
 
       captureService.triggerSpeechStart();
-      expect(
-        container.read(voiceCallProvider).phase,
-        VoiceCallPhase.capturingSpeech,
-      );
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.listening);
 
       captureService.completeWithAudio();
       await pumpEventQueue();
@@ -418,18 +389,13 @@ void main() {
   );
 
   test(
-    'VoiceCallController shows thinking while a voice turn is still pending',
+    'VoiceCallController shows thinking immediately while a voice turn is pending',
     () async {
       final captureService = FakeAudioCaptureService();
       final api = FakeCloudVoiceApi()..holdNextResponse();
       final container = voiceCallTestContainer(
         captureService: captureService,
         cloudVoiceApi: api,
-        overrides: [
-          voiceCallThinkingDelayProvider.overrideWithValue(
-            const Duration(milliseconds: 250),
-          ),
-        ],
       );
       addTearDown(container.dispose);
 
@@ -442,12 +408,6 @@ void main() {
 
       captureService.completeWithAudio();
       await pumpEventQueue();
-      expect(
-        container.read(voiceCallProvider).phase,
-        VoiceCallPhase.transcribing,
-      );
-
-      await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
 
       api.releaseHeldResponse();

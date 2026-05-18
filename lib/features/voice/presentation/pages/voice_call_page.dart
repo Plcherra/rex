@@ -135,39 +135,15 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
         icon: Icons.call_rounded,
         color: (scheme) => scheme.primary,
       ),
-      VoiceCallPhase.starting => _CallStatus(
-        title: 'Starting',
-        subtitle: 'Preparing microphone and audio session.',
-        icon: Icons.more_horiz_rounded,
-        color: (scheme) => scheme.primary,
-      ),
       VoiceCallPhase.listening => _CallStatus(
         title: 'Listening',
-        subtitle: 'Speak naturally. Rex will answer after each turn.',
+        subtitle: 'Speak naturally. Your words appear here live.',
         icon: Icons.graphic_eq_rounded,
         color: (scheme) => scheme.primary,
       ),
-      VoiceCallPhase.capturingSpeech => _CallStatus(
-        title: 'Hearing you',
-        subtitle: 'Keep talking. Rex is capturing this turn.',
-        icon: Icons.hearing_rounded,
-        color: (scheme) => scheme.primary,
-      ),
-      VoiceCallPhase.endpointing => _CallStatus(
-        title: 'Got it',
-        subtitle: 'Rex detected the end of your turn.',
-        icon: Icons.check_rounded,
-        color: (scheme) => scheme.tertiary,
-      ),
-      VoiceCallPhase.transcribing => _CallStatus(
-        title: 'Transcribing',
-        subtitle: 'Turning your voice into a message.',
-        icon: Icons.short_text_rounded,
-        color: (scheme) => scheme.tertiary,
-      ),
       VoiceCallPhase.thinking => _CallStatus(
         title: 'Thinking',
-        subtitle: 'Rex is using memory and context to answer.',
+        subtitle: 'Rex is answering.',
         icon: Icons.psychology_alt_rounded,
         color: (scheme) => scheme.secondary,
       ),
@@ -177,23 +153,11 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
         icon: Icons.volume_up_rounded,
         color: (scheme) => scheme.primary,
       ),
-      VoiceCallPhase.interrupted => _CallStatus(
-        title: 'Interrupted',
-        subtitle: 'Rex stopped speaking and is ready to listen.',
-        icon: Icons.front_hand_rounded,
-        color: (scheme) => scheme.tertiary,
-      ),
       VoiceCallPhase.failed => _CallStatus(
         title: 'Call failed',
         subtitle: call.errorMessage ?? 'Something interrupted the voice call.',
         icon: Icons.error_outline_rounded,
         color: (scheme) => scheme.error,
-      ),
-      VoiceCallPhase.ended => _CallStatus(
-        title: 'Call ended',
-        subtitle: 'Your chat history stays in the conversation.',
-        icon: Icons.call_end_rounded,
-        color: (scheme) => scheme.onSurfaceVariant,
       ),
     };
   }
@@ -210,7 +174,9 @@ class _CallTranscriptPanel extends StatelessWidget {
     final scheme = theme.colorScheme;
     final transcript = call.currentTranscript.trim();
     final response = call.lastAssistantResponse.trim();
-    final hasContent = transcript.isNotEmpty || response.isNotEmpty;
+    final isThinking = call.phase == VoiceCallPhase.thinking;
+    final hasContent =
+        transcript.isNotEmpty || response.isNotEmpty || isThinking;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -238,6 +204,8 @@ class _CallTranscriptPanel extends StatelessWidget {
                       _PanelLabel(label: 'Rex', color: scheme.secondary),
                       const SizedBox(height: 6),
                       Text(response, style: theme.textTheme.bodyLarge),
+                    ] else if (isThinking) ...[
+                      _ThinkingLabel(color: scheme.secondary),
                     ],
                   ],
                 )
@@ -269,6 +237,34 @@ class _PanelLabel extends StatelessWidget {
         color: color,
         fontWeight: FontWeight.w800,
       ),
+    );
+  }
+}
+
+class _ThinkingLabel extends StatelessWidget {
+  const _ThinkingLabel({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _PanelLabel(label: 'Rex', color: color),
+        const SizedBox(width: 10),
+        SizedBox.square(
+          dimension: 14,
+          child: CircularProgressIndicator(strokeWidth: 2, color: color),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          'thinking',
+          style: theme.textTheme.bodyMedium?.copyWith(color: color),
+        ),
+      ],
     );
   }
 }

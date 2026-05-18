@@ -38,6 +38,244 @@ create index if not exists long_term_memory_active_importance_idx
 create index if not exists long_term_memory_source_conversation_idx
   on public.long_term_memory (source_conversation_id);
 
+create table if not exists public.entities (
+  id uuid primary key default gen_random_uuid(),
+  entity_type text not null check (
+    entity_type in (
+      'person',
+      'place',
+      'organization',
+      'job',
+      'project',
+      'object',
+      'topic',
+      'other'
+    )
+  ),
+  display_name text not null,
+  normalized_name text not null,
+  aliases text[] not null default '{}'::text[],
+  relationship text,
+  summary text,
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  source_memory_id uuid references public.long_term_memory(id) on delete set null,
+  importance integer not null default 3 check (importance between 1 and 5),
+  status text not null default 'active' check (
+    status in ('active', 'inactive', 'archived')
+  ),
+  active boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists entities_active_normalized_name_idx
+  on public.entities (entity_type, normalized_name)
+  where active = true;
+
+create index if not exists entities_active_importance_idx
+  on public.entities (active, importance desc, last_seen_at desc);
+
+create index if not exists entities_source_conversation_idx
+  on public.entities (source_conversation_id);
+
+create table if not exists public.entity_events (
+  id uuid primary key default gen_random_uuid(),
+  entity_id uuid not null references public.entities(id) on delete cascade,
+  event_type text not null default 'note' check (
+    event_type in (
+      'note',
+      'interaction',
+      'relationship_update',
+      'preference',
+      'commitment',
+      'conflict',
+      'milestone',
+      'other'
+    )
+  ),
+  title text,
+  content text not null,
+  occurred_at timestamptz,
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  source_memory_id uuid references public.long_term_memory(id) on delete set null,
+  importance integer not null default 3 check (importance between 1 and 5),
+  active boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists entity_events_entity_created_idx
+  on public.entity_events (entity_id, created_at desc);
+
+create index if not exists entity_events_active_importance_idx
+  on public.entity_events (active, importance desc, created_at desc);
+
+create table if not exists public.personal_rules (
+  id uuid primary key default gen_random_uuid(),
+  rule_type text not null check (
+    rule_type in (
+      'finance',
+      'transport',
+      'food_delivery',
+      'coffee',
+      'rent',
+      'health',
+      'dating',
+      'work',
+      'immigration',
+      'personal',
+      'other'
+    )
+  ),
+  title text not null,
+  rule_text text not null,
+  trigger_keywords text[] not null default '{}'::text[],
+  enforcement_style text not null default 'gentle_direct' check (
+    enforcement_style in ('gentle_direct', 'strict', 'reminder_only')
+  ),
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  source_memory_id uuid references public.long_term_memory(id) on delete set null,
+  priority integer not null default 3 check (priority between 1 and 5),
+  status text not null default 'active' check (
+    status in ('active', 'paused', 'broken', 'archived')
+  ),
+  active boolean not null default true,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  last_checked_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists personal_rules_active_priority_idx
+  on public.personal_rules (active, priority desc, updated_at desc);
+
+create index if not exists personal_rules_rule_type_idx
+  on public.personal_rules (rule_type, active);
+
+create table if not exists public.plans (
+  id uuid primary key default gen_random_uuid(),
+  plan_type text not null check (
+    plan_type in (
+      'finance',
+      'immigration',
+      'career',
+      'health',
+      'dating',
+      'housing',
+      'creative',
+      'personal',
+      'other'
+    )
+  ),
+  title text not null,
+  description text,
+  desired_outcome text,
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  source_memory_id uuid references public.long_term_memory(id) on delete set null,
+  priority integer not null default 3 check (priority between 1 and 5),
+  status text not null default 'active' check (
+    status in ('active', 'paused', 'completed', 'abandoned', 'archived')
+  ),
+  active boolean not null default true,
+  start_date date,
+  target_date date,
+  completed_at timestamptz,
+  last_reviewed_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists plans_active_priority_idx
+  on public.plans (active, priority desc, updated_at desc);
+
+create index if not exists plans_status_target_date_idx
+  on public.plans (status, target_date);
+
+create table if not exists public.plan_milestones (
+  id uuid primary key default gen_random_uuid(),
+  plan_id uuid not null references public.plans(id) on delete cascade,
+  title text not null,
+  description text,
+  milestone_type text not null default 'checkpoint' check (
+    milestone_type in ('goal', 'deadline', 'checkpoint', 'task', 'other')
+  ),
+  target_date date,
+  completed_at timestamptz,
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  source_memory_id uuid references public.long_term_memory(id) on delete set null,
+  priority integer not null default 3 check (priority between 1 and 5),
+  status text not null default 'open' check (
+    status in ('open', 'in_progress', 'completed', 'missed', 'canceled')
+  ),
+  active boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists plan_milestones_plan_target_idx
+  on public.plan_milestones (plan_id, target_date);
+
+create index if not exists plan_milestones_active_status_idx
+  on public.plan_milestones (active, status, target_date);
+
+create table if not exists public.commitments (
+  id uuid primary key default gen_random_uuid(),
+  commitment_type text not null check (
+    commitment_type in (
+      'task',
+      'habit',
+      'promise',
+      'money',
+      'health',
+      'relationship',
+      'work',
+      'immigration',
+      'deadline',
+      'other'
+    )
+  ),
+  title text not null,
+  commitment_text text not null,
+  plan_id uuid references public.plans(id) on delete set null,
+  entity_id uuid references public.entities(id) on delete set null,
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  source_memory_id uuid references public.long_term_memory(id) on delete set null,
+  priority integer not null default 3 check (priority between 1 and 5),
+  status text not null default 'open' check (
+    status in ('open', 'in_progress', 'completed', 'missed', 'canceled', 'archived')
+  ),
+  active boolean not null default true,
+  due_at timestamptz,
+  completed_at timestamptz,
+  last_checked_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists commitments_active_due_idx
+  on public.commitments (active, status, due_at);
+
+create index if not exists commitments_plan_idx
+  on public.commitments (plan_id);
+
+create index if not exists commitments_entity_idx
+  on public.commitments (entity_id);
+
 create table if not exists public.voice_turns (
   id uuid primary key default gen_random_uuid(),
   conversation_id uuid not null references public.conversations(id) on delete cascade,
@@ -70,5 +308,47 @@ drop trigger if exists set_long_term_memory_updated_at on public.long_term_memor
 
 create trigger set_long_term_memory_updated_at
 before update on public.long_term_memory
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists set_entities_updated_at on public.entities;
+
+create trigger set_entities_updated_at
+before update on public.entities
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists set_entity_events_updated_at on public.entity_events;
+
+create trigger set_entity_events_updated_at
+before update on public.entity_events
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists set_personal_rules_updated_at on public.personal_rules;
+
+create trigger set_personal_rules_updated_at
+before update on public.personal_rules
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists set_plans_updated_at on public.plans;
+
+create trigger set_plans_updated_at
+before update on public.plans
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists set_plan_milestones_updated_at on public.plan_milestones;
+
+create trigger set_plan_milestones_updated_at
+before update on public.plan_milestones
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists set_commitments_updated_at on public.commitments;
+
+create trigger set_commitments_updated_at
+before update on public.commitments
 for each row
 execute function public.set_updated_at();

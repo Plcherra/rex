@@ -21,7 +21,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
 
 ## Checklist (10 Actionable Steps)
 
-1. [ ] **Design the structured memory schema**
+1. [x] **Design the structured memory schema**
    - Exact files to create or modify: `backend/supabase_schema.sql`, optionally `docs/memory_retrieval.md`
    - What must be implemented: Add schema definitions for `entities`, `entity_events`, `personal_rules`, `plans`, `plan_milestones`, and `commitments`. Include UUID primary keys, timestamps, active/status fields, importance/priority fields where useful, and foreign keys back to conversations, messages, or long-term memory where appropriate.
    - Success criteria: Schema is backward compatible with existing `conversations`, `messages`, and `long_term_memory`; no existing table or column is removed; all new tables can be created safely in a fresh Supabase project.
@@ -29,7 +29,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: add structured memory schema`
    - Rough time estimate: 3-5 hours
 
-2. [ ] **Create backend models for structured memory records**
+2. [x] **Create backend models for structured memory records**
    - Exact files to create or modify: `backend/app/models/entity.py`, `backend/app/models/personal_rule.py`, `backend/app/models/plan.py`, `backend/app/models/commitment.py`, optionally `backend/app/models/memory.py`
    - What must be implemented: Define Pydantic request/response models for entities, entity events, personal rules, plans, plan milestones, and commitments. Include clear enums or literal types for categories such as person, job, place, rule, finance, dating, immigration, health, goal, and deadline.
    - Success criteria: Models validate required fields, optional metadata, timestamps, statuses, and IDs consistently with the existing backend model style.
@@ -37,7 +37,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: add structured memory models`
    - Rough time estimate: 3-4 hours
 
-3. [ ] **Add repository methods for Supabase structured memory access**
+3. [x] **Add repository methods for Supabase structured memory access**
    - Exact files to create or modify: `backend/app/services/memory_service.py`, optionally new files under `backend/app/repositories/` if the project introduces a repository layer
    - What must be implemented: Add async Supabase read/write/update/deactivate helpers for entities, entity events, personal rules, plans, plan milestones, and commitments. Keep the existing `long_term_memory` methods working unchanged.
    - Success criteria: All new storage methods use the shared async HTTP client pattern, never call real Supabase in tests, and expose narrow methods that services can reuse without duplicating REST request code.
@@ -45,7 +45,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: add structured memory repositories`
    - Rough time estimate: 5-8 hours
 
-4. [ ] **Add service-level APIs for entities, rules, plans, and commitments**
+4. [x] **Add service-level APIs for entities, rules, plans, and commitments**
    - Exact files to create or modify: `backend/app/services/entity_service.py`, `backend/app/services/rule_service.py`, `backend/app/services/plan_service.py`, `backend/app/services/commitment_service.py`, `backend/app/dependencies.py`
    - What must be implemented: Create business-logic services for creating, updating, deactivating, deduplicating, and retrieving structured memory records. Services should hide Supabase details from routes and prompt assembly.
    - Success criteria: Each service has a small public API, handles not-found and validation errors cleanly, and can be dependency-injected in route tests.
@@ -53,7 +53,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: add structured memory services`
    - Rough time estimate: 6-10 hours
 
-5. [ ] **Create backend routes for structured memory management**
+5. [x] **Create backend routes for structured memory management**
    - Exact files to create or modify: `backend/app/routes/entities.py`, `backend/app/routes/rules.py`, `backend/app/routes/plans.py`, `backend/app/routes/commitments.py`, `backend/app/main.py`
    - What must be implemented: Add CRUD-style endpoints for listing, creating, updating, and deactivating entities, personal rules, plans, plan milestones, and commitments. Keep endpoints private/simple for founder dogfooding; do not add public product complexity yet.
    - Success criteria: Routes use dependency injection, normalized error handling, and response models. Existing `/memory`, `/chat`, and `/conversations` routes remain backward compatible.
@@ -61,7 +61,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: add structured memory routes`
    - Rough time estimate: 5-8 hours
 
-6. [ ] **Update Grok memory extraction for structured candidates**
+6. [x] **Update Grok memory extraction for structured candidates**
    - Exact files to create or modify: `backend/app/services/memory_extraction_service.py`, `backend/app/services/prompt_service.py`, `tests/test_memory_extraction.py`
    - What must be implemented: Extend the extraction prompt and parser so Grok can emit structured candidates for entities, entity events, personal rules, plans, plan milestones, and commitments while still supporting existing `fact`, `preference`, and `event` memories.
    - Success criteria: Extraction remains optional and non-blocking, rejects malformed JSON safely, filters low-value candidates, and does not break existing long-term memory extraction tests.

@@ -44,10 +44,6 @@ final voiceCaptureConfigProvider = Provider<VoiceCaptureConfig>(
   (ref) => const VoiceCaptureConfig(),
 );
 
-final voiceCallThinkingDelayProvider = Provider<Duration>(
-  (ref) => const Duration(milliseconds: 1200),
-);
-
 final voiceCallProvider = NotifierProvider<VoiceCallController, VoiceCallState>(
   VoiceCallController.new,
 );
@@ -115,7 +111,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
         conversationId ?? ref.read(chatProvider).conversationId;
 
     state = VoiceCallState(
-      phase: VoiceCallPhase.starting,
+      phase: VoiceCallPhase.listening,
       conversationId: activeConversationId,
       callStartedAt: startedAt,
     );
@@ -161,7 +157,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     }
 
     state = state.copyWith(
-      phase: VoiceCallPhase.capturingSpeech,
+      phase: VoiceCallPhase.listening,
       currentTranscript: transcript,
       clearError: true,
     );
@@ -173,7 +169,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     }
 
     state = state.copyWith(
-      phase: VoiceCallPhase.capturingSpeech,
+      phase: VoiceCallPhase.listening,
       currentTranscript: transcript,
       clearError: true,
     );
@@ -184,7 +180,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
 
-    state = state.copyWith(phase: VoiceCallPhase.endpointing, clearError: true);
+    state = state.copyWith(phase: VoiceCallPhase.thinking, clearError: true);
   }
 
   void startTranscribing() {
@@ -192,10 +188,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
 
-    state = state.copyWith(
-      phase: VoiceCallPhase.transcribing,
-      clearError: true,
-    );
+    state = state.copyWith(phase: VoiceCallPhase.thinking, clearError: true);
   }
 
   void startThinking({String? finalTranscript}) {
@@ -250,7 +243,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     unawaited(_playbackService.stop());
 
     state = state.copyWith(
-      phase: VoiceCallPhase.interrupted,
+      phase: VoiceCallPhase.listening,
       errorMessage: reason,
     );
   }
@@ -351,7 +344,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     unawaited(_backgroundVoiceService.stop());
     unawaited(_audioSessionService.setActive(false));
     state = state.copyWith(
-      phase: VoiceCallPhase.ended,
+      phase: VoiceCallPhase.idle,
       callEndedAt: ref.read(voiceCallNowProvider)(),
       clearError: true,
     );
@@ -478,8 +471,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
     if (recording == null) {
-      if (state.phase == VoiceCallPhase.listening ||
-          state.phase == VoiceCallPhase.capturingSpeech) {
+      if (state.phase == VoiceCallPhase.listening) {
         resumeListening();
       }
       return;
@@ -498,8 +490,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     }
 
     try {
-      startTranscribing();
-      _markThinkingIfRequestIsStillPending(generation);
+      startThinking();
       final response = await ref
           .read(cloudVoiceApiProvider)
           .sendVoiceTurn(
@@ -660,7 +651,6 @@ class VoiceCallController extends Notifier<VoiceCallState> {
                 state.isCallActive &&
                 state.phase != VoiceCallPhase.speaking &&
                 state.phase != VoiceCallPhase.listening &&
-                state.phase != VoiceCallPhase.capturingSpeech &&
                 !state.isMuted) {
               resumeListening();
             }
@@ -685,16 +675,6 @@ class VoiceCallController extends Notifier<VoiceCallState> {
         _activeStreamingSession = null;
       }
     }
-  }
-
-  void _markThinkingIfRequestIsStillPending(int generation) {
-    Future<void>.delayed(ref.read(voiceCallThinkingDelayProvider), () {
-      if (_isCurrentCall(generation) &&
-          state.isCallActive &&
-          state.phase == VoiceCallPhase.transcribing) {
-        state = state.copyWith(phase: VoiceCallPhase.thinking);
-      }
-    });
   }
 
   bool _isCurrentCall(int generation) => generation == _callGeneration;

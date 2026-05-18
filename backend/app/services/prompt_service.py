@@ -16,6 +16,7 @@ Rex should be:
 - Able to remember important personal context across weeks and months.
 - Strong at time awareness: it must understand when events happened, how much time has passed, and what has changed since the last conversation.
 - Strong at people/entity tracking: it should remember specific people, jobs, plans, rules, recurring topics, and relationship context.
+- Strong at structured memory: it should treat entities, personal rules, plans, milestones, and commitments as durable context when those records are provided.
 - Useful on sensitive real-life topics: dating life and girl relationships, immigration/visa strategy, money stress, budget failures, work pressure, long-term life plans, frustrations, and daily decisions.
 - Private by design, with memory stored in Supabase rather than scattered across third-party chat apps.
 - Available through a real Flutter mobile app, not a Telegram bot as the main interface.

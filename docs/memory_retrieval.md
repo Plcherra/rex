@@ -21,9 +21,16 @@ Current limitations:
   overlap because answer-style preferences are usually relevant across turns.
 - Recency is based on stored timestamps, but recalled memories are not yet marked as
   accessed after retrieval.
+- Structured memory tables now exist for entities, entity events, personal rules,
+  plans, plan milestones, and commitments, but retrieval still needs service logic
+  before those records are injected into prompts.
 
 Future path:
 
+- Retrieve structured memory before generic fallback memory: known people/entities,
+  active rules, active plans, upcoming milestones, and open commitments.
+- Link structured records back to source conversations, messages, and generic
+  long-term memory so Rex can explain where context came from.
 - Add embeddings for every long-term memory row.
 - Store vectors in Supabase with `pgvector`.
 - Use vector similarity plus metadata filters for semantic retrieval.

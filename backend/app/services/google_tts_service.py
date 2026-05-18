@@ -2,6 +2,7 @@ import asyncio
 import base64
 import binascii
 import json
+import time
 from typing import Any, Optional
 
 import httpx
@@ -22,6 +23,8 @@ class GoogleTTSService:
 
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
+        self._cached_access_token: Optional[str] = None
+        self._cached_access_token_expires_at = 0.0
 
     async def synthesize_speech(self, text: str) -> dict[str, Any]:
         normalized_text = text.strip()
@@ -67,9 +70,18 @@ class GoogleTTSService:
         return result
 
     async def _access_token(self) -> str:
-        return await asyncio.to_thread(self._load_access_token)
+        if (
+            self._cached_access_token
+            and time.time() < self._cached_access_token_expires_at - 60
+        ):
+            return self._cached_access_token
 
-    def _load_access_token(self) -> str:
+        token, expires_at = await asyncio.to_thread(self._load_access_token)
+        self._cached_access_token = token
+        self._cached_access_token_expires_at = expires_at or (time.time() + 3000)
+        return token
+
+    def _load_access_token(self) -> tuple[str, Optional[float]]:
         try:
             scopes = ["https://www.googleapis.com/auth/cloud-platform"]
             if self.settings.google_tts_credentials_json:
@@ -103,7 +115,8 @@ class GoogleTTSService:
                     status_code=503,
                 )
 
-            return credentials.token
+            expires_at = credentials.expiry.timestamp() if credentials.expiry else None
+            return credentials.token, expires_at
         except GoogleTTSServiceError:
             raise
         except (ImportError, OSError, ValueError, json.JSONDecodeError) as error:

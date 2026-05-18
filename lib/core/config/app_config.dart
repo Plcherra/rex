@@ -11,6 +11,6 @@ abstract final class AppConfig {
 
   static const bool streamingVoiceEnabled = bool.fromEnvironment(
     'REX_STREAMING_VOICE_ENABLED',
-    defaultValue: false,
+    defaultValue: true,
   );
 }

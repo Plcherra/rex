@@ -10,13 +10,13 @@ typedef SpeechStartCallback = void Function();
 
 class VoiceCaptureConfig {
   const VoiceCaptureConfig({
-    this.amplitudeInterval = const Duration(milliseconds: 120),
+    this.amplitudeInterval = const Duration(milliseconds: 80),
     this.speechStartThresholdDb = -42,
     this.silenceThresholdDb = -48,
-    this.silenceAfterSpeech = const Duration(milliseconds: 1100),
-    this.noSpeechTimeout = const Duration(seconds: 12),
+    this.silenceAfterSpeech = const Duration(milliseconds: 750),
+    this.noSpeechTimeout = const Duration(seconds: 8),
     this.maxUtteranceDuration = const Duration(seconds: 55),
-    this.minSpeechDuration = const Duration(milliseconds: 240),
+    this.minSpeechDuration = const Duration(milliseconds: 180),
   });
 
   final Duration amplitudeInterval;

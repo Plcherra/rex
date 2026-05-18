@@ -301,15 +301,15 @@ class VoiceStreamSession:
             return None, ""
 
         for index, character in enumerate(text):
-            if character in ".!?;\n" and index >= 80:
+            if character in ".!?;\n" and index >= 28:
                 chunk = text[: index + 1].strip()
                 rest = text[index + 1 :]
                 return chunk, rest
 
-        if len(stripped) >= 220:
-            split_at = text.rfind(" ", 0, 220)
-            if split_at < 80:
-                split_at = 220
+        if len(stripped) >= 140:
+            split_at = text.rfind(" ", 0, 140)
+            if split_at < 45:
+                split_at = 140
             return text[:split_at].strip(), text[split_at:]
 
         return None, text

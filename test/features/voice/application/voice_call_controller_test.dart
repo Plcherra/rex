@@ -466,7 +466,7 @@ void main() {
         playbackService: playbackService,
         streamingAudioCaptureService: streamingCaptureService,
         streamingVoiceApi: streamingApi,
-        overrides: [streamingVoiceEnabledProvider.overrideWithValue(true)],
+        streamingVoiceEnabled: true,
       );
       addTearDown(container.dispose);
 
@@ -502,7 +502,7 @@ void main() {
         playbackService: playbackService,
         streamingAudioCaptureService: streamingCaptureService,
         streamingVoiceApi: streamingApi,
-        overrides: [streamingVoiceEnabledProvider.overrideWithValue(true)],
+        streamingVoiceEnabled: true,
       );
       addTearDown(container.dispose);
 
@@ -576,6 +576,7 @@ ProviderContainer voiceCallTestContainer({
   FakeAudioPlaybackService? playbackService,
   FakeCloudVoiceApi? cloudVoiceApi,
   FakeStreamingVoiceApi? streamingVoiceApi,
+  bool streamingVoiceEnabled = false,
   List<Override> overrides = const [],
 }) {
   return ProviderContainer(
@@ -586,6 +587,7 @@ ProviderContainer voiceCallTestContainer({
         playbackService: playbackService,
         cloudVoiceApi: cloudVoiceApi,
         streamingVoiceApi: streamingVoiceApi,
+        streamingVoiceEnabled: streamingVoiceEnabled,
       ),
       ...overrides,
     ],
@@ -598,6 +600,7 @@ List<Override> voiceCallTestOverrides({
   FakeAudioPlaybackService? playbackService,
   FakeCloudVoiceApi? cloudVoiceApi,
   FakeStreamingVoiceApi? streamingVoiceApi,
+  bool streamingVoiceEnabled = false,
 }) {
   return [
     microphonePermissionProvider.overrideWithValue(
@@ -624,6 +627,7 @@ List<Override> voiceCallTestOverrides({
     streamingVoiceApiProvider.overrideWithValue(
       streamingVoiceApi ?? FakeStreamingVoiceApi(),
     ),
+    streamingVoiceEnabledProvider.overrideWithValue(streamingVoiceEnabled),
   ];
 }
 

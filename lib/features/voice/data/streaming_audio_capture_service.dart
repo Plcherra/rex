@@ -23,11 +23,11 @@ abstract class StreamingAudioCaptureService {
 class PackageStreamingAudioCaptureService
     implements StreamingAudioCaptureService {
   static const _minimumStreamingSilenceAfterSpeech = Duration(
-    milliseconds: 1400,
+    milliseconds: 2500,
   );
-  static const _minimumStreamingSpeechDuration = Duration(milliseconds: 400);
+  static const _minimumStreamingSpeechDuration = Duration(milliseconds: 500);
   static const _streamingSpeechStartThresholdDb = -48.0;
-  static const _streamingSilenceThresholdDb = -58.0;
+  static const _streamingSilenceThresholdDb = -60.0;
 
   PackageStreamingAudioCaptureService({
     AudioRecorder? recorder,

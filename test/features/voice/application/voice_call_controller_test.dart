@@ -526,7 +526,7 @@ void main() {
   );
 
   test(
-    'VoiceCallController keeps streaming socket active across multiple turns',
+    'VoiceCallController uses a fresh stream for each active call turn',
     () async {
       final streamingCaptureService = FakeStreamingAudioCaptureService();
       final streamingSession = FakeStreamingVoiceSession();
@@ -551,6 +551,7 @@ void main() {
       expect(streamingApi.connectCount, 1);
       expect(streamingCaptureService.captureCount, 1);
       expect(streamingSession.utteranceEndCount, 1);
+      expect(streamingSession.sessionEnded, false);
       expect(playbackService.playCount, 1);
       expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
 
@@ -558,13 +559,14 @@ void main() {
       await pumpEventQueue();
       await pumpEventQueue();
 
-      expect(streamingApi.connectCount, 1);
+      expect(streamingApi.connectCount, 2);
       expect(streamingCaptureService.captureCount, 2);
-      expect(streamingSession.utteranceEndCount, 2);
+      expect(streamingSession.sessionEnded, true);
+      expect(streamingApi.sessions[1].utteranceEndCount, 1);
       expect(playbackService.playCount, 2);
       expect(
         container.read(voiceCallProvider).lastAssistantResponse,
-        'Rex stream answer 2.',
+        'Rex stream answer.',
       );
       expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
     },
@@ -872,6 +874,7 @@ class FakeStreamingVoiceApi extends StreamingVoiceApi {
       super(connector: (_) async => FakeVoiceWebSocket());
 
   final FakeStreamingVoiceSession session;
+  final sessions = <FakeStreamingVoiceSession>[];
   var connectCount = 0;
   String? receivedConversationId;
 
@@ -884,9 +887,12 @@ class FakeStreamingVoiceApi extends StreamingVoiceApi {
     connectCount++;
     receivedConversationId = conversationId;
     if (connectCount == 1) {
+      sessions.add(session);
       return session;
     }
-    return FakeStreamingVoiceSession();
+    final nextSession = FakeStreamingVoiceSession();
+    sessions.add(nextSession);
+    return nextSession;
   }
 }
 

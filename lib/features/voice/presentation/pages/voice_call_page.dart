@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import 'package:rex/core/providers.dart';
 import 'package:rex/features/voice/domain/voice_call_state.dart';
@@ -36,6 +37,13 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final status = _statusFor(call);
+    ref.listen<VoiceCallState>(voiceCallProvider, (previous, next) {
+      if (previous?.phase != VoiceCallPhase.listening &&
+          next.phase == VoiceCallPhase.listening &&
+          !next.isMuted) {
+        SystemSound.play(SystemSoundType.click);
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(

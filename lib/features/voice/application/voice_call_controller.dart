@@ -395,7 +395,11 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
     final StreamingVoiceSession session;
     try {
-      session = await _ensureStreamingSession(generation);
+      session = await ref
+          .read(streamingVoiceApiProvider)
+          .connect(conversationId: state.conversationId);
+      _activeStreamingSession = session;
+      unawaited(_handleStreamingEvents(session, generation));
     } on StreamingVoiceApiException catch (error) {
       if (_isCurrentCall(generation)) {
         fail(error.message);
@@ -444,20 +448,6 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
     endpointUtterance();
     session.endUtterance();
-  }
-
-  Future<StreamingVoiceSession> _ensureStreamingSession(int generation) async {
-    final existingSession = _activeStreamingSession;
-    if (existingSession != null) {
-      return existingSession;
-    }
-
-    final session = await ref
-        .read(streamingVoiceApiProvider)
-        .connect(conversationId: state.conversationId);
-    _activeStreamingSession = session;
-    unawaited(_handleStreamingEvents(session, generation));
-    return session;
   }
 
   Future<void> _captureNextUtterance(int generation) async {
@@ -674,6 +664,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
                 !state.isMuted) {
               resumeListening();
             }
+            unawaited(session.endSession());
+            return;
           case 'session.ended':
             return;
           case 'session.interrupted':

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Optional
 from urllib.parse import urlencode
 
 import websockets
-from websockets.exceptions import WebSocketException
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from app.config import Settings, get_settings
 from app.services.deepgram_service import DeepgramServiceError
@@ -32,11 +33,12 @@ class DeepgramStreamingService:
             )
 
         url = self._stream_url(sample_rate=sample_rate)
-        final_transcript = ""
+        final_segments: list[str] = []
         confidence: Optional[float] = None
         duration_seconds: Optional[float] = None
         request_id: Optional[str] = None
         sent_any_audio = False
+        speech_final_received = False
 
         try:
             async with websockets.connect(
@@ -58,7 +60,24 @@ class DeepgramStreamingService:
 
                 await websocket.send(json.dumps({"type": "CloseStream"}))
 
-                async for raw_message in websocket:
+                while True:
+                    try:
+                        raw_message = await asyncio.wait_for(
+                            websocket.recv(),
+                            timeout=0.8
+                            if speech_final_received
+                            else self.settings.deepgram_timeout_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        if speech_final_received:
+                            break
+                        raise DeepgramServiceError(
+                            "Deepgram transcription timed out.",
+                            status_code=503,
+                        )
+                    except ConnectionClosed:
+                        break
+
                     event = self._parse_message(raw_message)
                     if event is None:
                         continue
@@ -74,10 +93,12 @@ class DeepgramStreamingService:
                         await on_transcript(event)
 
                     if event["event"] == "transcript.final":
-                        final_transcript = event["transcript"] or final_transcript
+                        transcript = str(event["transcript"] or "").strip()
+                        if transcript:
+                            self._append_final_segment(final_segments, transcript)
                         confidence = event.get("confidence")
                         if event.get("speech_final"):
-                            break
+                            speech_final_received = True
         except DeepgramServiceError:
             raise
         except (OSError, TimeoutError, WebSocketException) as error:
@@ -86,7 +107,7 @@ class DeepgramStreamingService:
                 status_code=503,
             ) from error
 
-        final_transcript = final_transcript.strip()
+        final_transcript = " ".join(final_segments).strip()
         if not final_transcript:
             raise DeepgramServiceError("I did not catch any audio.", status_code=422)
 
@@ -123,6 +144,19 @@ class DeepgramStreamingService:
             }
         )
         return f"{base_url}/listen?{query}"
+
+    def _append_final_segment(self, segments: list[str], transcript: str) -> None:
+        if not segments:
+            segments.append(transcript)
+            return
+
+        previous = segments[-1]
+        if transcript == previous or previous.endswith(transcript):
+            return
+        if transcript.startswith(previous):
+            segments[-1] = transcript
+            return
+        segments.append(transcript)
 
     def _parse_message(self, raw_message: str | bytes) -> Optional[dict[str, Any]]:
         if isinstance(raw_message, bytes):

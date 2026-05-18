@@ -615,6 +615,33 @@ void main() {
       expect(update.noSpeechTimedOut, true);
     },
   );
+
+  test('VoiceEndpointDetector default timing allows natural pauses', () {
+    const config = VoiceCaptureConfig();
+    final startedAt = DateTime.utc(2026, 5, 17, 2);
+    final detector = VoiceEndpointDetector(
+      config: config,
+      startedAt: startedAt,
+    );
+
+    var update = detector.addAmplitude(
+      currentDb: -40,
+      now: startedAt.add(const Duration(milliseconds: 400)),
+    );
+    expect(update.speechStarted, true);
+
+    update = detector.addAmplitude(
+      currentDb: -70,
+      now: startedAt.add(const Duration(milliseconds: 1500)),
+    );
+    expect(update.endpointReached, false);
+
+    update = detector.addAmplitude(
+      currentDb: -70,
+      now: startedAt.add(const Duration(milliseconds: 2300)),
+    );
+    expect(update.endpointReached, true);
+  });
 }
 
 ProviderContainer voiceCallTestContainer({

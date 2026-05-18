@@ -733,11 +733,13 @@ class FakeStreamingAudioCaptureService implements StreamingAudioCaptureService {
   Future<bool> streamUtterance({
     required VoiceCaptureConfig config,
     required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
     required AudioChunkCallback onAudioChunk,
   }) async {
     captureCount++;
     onSpeechStart();
     await onAudioChunk(Uint8List.fromList([1, 2, 3]));
+    onSpeechEnded();
     return true;
   }
 }

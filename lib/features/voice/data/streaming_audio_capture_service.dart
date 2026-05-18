@@ -7,11 +7,13 @@ import 'package:record/record.dart';
 import 'package:rex/features/voice/data/audio_capture_service.dart';
 
 typedef AudioChunkCallback = Future<void> Function(Uint8List chunk);
+typedef SpeechEndCallback = void Function();
 
 abstract class StreamingAudioCaptureService {
   Future<bool> streamUtterance({
     required VoiceCaptureConfig config,
     required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
     required AudioChunkCallback onAudioChunk,
   });
 
@@ -21,11 +23,11 @@ abstract class StreamingAudioCaptureService {
 class PackageStreamingAudioCaptureService
     implements StreamingAudioCaptureService {
   static const _minimumStreamingSilenceAfterSpeech = Duration(
-    milliseconds: 1900,
+    milliseconds: 1400,
   );
-  static const _minimumStreamingSpeechDuration = Duration(milliseconds: 650);
-  static const _streamingSpeechStartThresholdDb = -50.0;
-  static const _streamingSilenceThresholdDb = -64.0;
+  static const _minimumStreamingSpeechDuration = Duration(milliseconds: 400);
+  static const _streamingSpeechStartThresholdDb = -48.0;
+  static const _streamingSilenceThresholdDb = -58.0;
 
   PackageStreamingAudioCaptureService({
     AudioRecorder? recorder,
@@ -44,6 +46,7 @@ class PackageStreamingAudioCaptureService
   Future<bool> streamUtterance({
     required VoiceCaptureConfig config,
     required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
     required AudioChunkCallback onAudioChunk,
   }) async {
     await cancel();
@@ -53,6 +56,7 @@ class PackageStreamingAudioCaptureService
       startedAt: _now(),
     );
     _captureCompleter = Completer<bool>();
+    var speechEndedNotified = false;
 
     final stream = await _recorder.startStream(
       const RecordConfig(
@@ -71,6 +75,10 @@ class PackageStreamingAudioCaptureService
         );
         if (update.speechStarted) {
           onSpeechStart();
+        }
+        if (update.endpointReached && !speechEndedNotified) {
+          speechEndedNotified = true;
+          onSpeechEnded();
         }
         if (update.endpointReached || update.maxDurationReached) {
           unawaited(_complete(keepAudio: detector.hasSpeech));

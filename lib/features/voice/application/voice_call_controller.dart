@@ -415,6 +415,12 @@ class VoiceCallController extends Notifier<VoiceCallState> {
             startCapturingSpeech();
           }
         },
+        onSpeechEnded: () {
+          if (_isCurrentCall(generation) &&
+              state.phase == VoiceCallPhase.listening) {
+            endpointUtterance();
+          }
+        },
         onAudioChunk: (chunk) async {
           if (_isCurrentCall(generation)) {
             session.sendAudioChunk(chunk);

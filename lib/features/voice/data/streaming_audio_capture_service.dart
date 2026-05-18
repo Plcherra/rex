@@ -20,6 +20,13 @@ abstract class StreamingAudioCaptureService {
 
 class PackageStreamingAudioCaptureService
     implements StreamingAudioCaptureService {
+  static const _minimumStreamingSilenceAfterSpeech = Duration(
+    milliseconds: 1900,
+  );
+  static const _minimumStreamingSpeechDuration = Duration(milliseconds: 650);
+  static const _streamingSpeechStartThresholdDb = -50.0;
+  static const _streamingSilenceThresholdDb = -64.0;
+
   PackageStreamingAudioCaptureService({
     AudioRecorder? recorder,
     DateTime Function()? now,
@@ -40,7 +47,11 @@ class PackageStreamingAudioCaptureService
     required AudioChunkCallback onAudioChunk,
   }) async {
     await cancel();
-    final detector = VoiceEndpointDetector(config: config, startedAt: _now());
+    final endpointConfig = _streamingEndpointConfig(config);
+    final detector = VoiceEndpointDetector(
+      config: endpointConfig,
+      startedAt: _now(),
+    );
     _captureCompleter = Completer<bool>();
 
     final stream = await _recorder.startStream(
@@ -73,12 +84,12 @@ class PackageStreamingAudioCaptureService
       cancelOnError: true,
     );
 
-    _noSpeechTimer = Timer(config.noSpeechTimeout, () {
+    _noSpeechTimer = Timer(endpointConfig.noSpeechTimeout, () {
       if (!detector.hasSpeech) {
         unawaited(_complete(keepAudio: false));
       }
     });
-    _maxDurationTimer = Timer(config.maxUtteranceDuration, () {
+    _maxDurationTimer = Timer(endpointConfig.maxUtteranceDuration, () {
       unawaited(_complete(keepAudio: detector.hasSpeech));
     });
 
@@ -121,6 +132,36 @@ class PackageStreamingAudioCaptureService
       // Treat native stop failures as an empty capture.
     }
     completer.complete(keepAudio);
+  }
+
+  VoiceCaptureConfig _streamingEndpointConfig(VoiceCaptureConfig config) {
+    // Live PCM chunks are bursty on mobile. Keep streaming endpointing more
+    // tolerant so a short pause or soft word does not prematurely end a turn.
+    return VoiceCaptureConfig(
+      amplitudeInterval: config.amplitudeInterval,
+      speechStartThresholdDb: min(
+        config.speechStartThresholdDb,
+        _streamingSpeechStartThresholdDb,
+      ),
+      silenceThresholdDb: min(
+        config.silenceThresholdDb,
+        _streamingSilenceThresholdDb,
+      ),
+      silenceAfterSpeech: _longerDuration(
+        config.silenceAfterSpeech,
+        _minimumStreamingSilenceAfterSpeech,
+      ),
+      noSpeechTimeout: config.noSpeechTimeout,
+      maxUtteranceDuration: config.maxUtteranceDuration,
+      minSpeechDuration: _longerDuration(
+        config.minSpeechDuration,
+        _minimumStreamingSpeechDuration,
+      ),
+    );
+  }
+
+  Duration _longerDuration(Duration value, Duration minimum) {
+    return value.compareTo(minimum) >= 0 ? value : minimum;
   }
 
   double _pcm16Decibels(Uint8List chunk) {

@@ -32,7 +32,10 @@ class VoiceStreamSession:
         self._session_id = f"voice-{time.time_ns()}"
         self._audio_chunks: list[bytes] = []
         self._audio_started_at: Optional[float] = None
+        self._audio_bytes = 0
+        self._audio_chunks_received = 0
         self._active_turn_task: Optional[asyncio.Task[None]] = None
+        self._live_transcription: Optional[Any] = None
 
     async def run(self) -> None:
         await self.websocket.accept()
@@ -62,13 +65,21 @@ class VoiceStreamSession:
     async def _receive_audio_chunk(self, chunk: bytes) -> None:
         if not chunk:
             return
+        if self._active_turn_task is not None and not self._active_turn_task.done():
+            return
+        self._audio_bytes += len(chunk)
+        self._audio_chunks_received += 1
         if self._audio_started_at is None:
             self._audio_started_at = time.perf_counter()
-        self._audio_chunks.append(chunk)
+        if self._supports_live_transcription():
+            live_transcription = await self._ensure_live_transcription()
+            await live_transcription.send_audio(chunk)
+        else:
+            self._audio_chunks.append(chunk)
         await self._send_event(
             "audio.received",
-            bytes_received=sum(len(item) for item in self._audio_chunks),
-            chunk_count=len(self._audio_chunks),
+            bytes_received=self._audio_bytes_received(),
+            chunk_count=self._audio_chunk_count(),
         )
 
     async def _receive_text_event(self, text: str) -> bool:
@@ -102,18 +113,25 @@ class VoiceStreamSession:
                     code="turn_in_progress",
                 )
                 return True
-            self._active_turn_task = asyncio.create_task(self._process_utterance())
+            if self._live_transcription is not None:
+                self._active_turn_task = asyncio.create_task(
+                    self._process_live_utterance()
+                )
+            else:
+                self._active_turn_task = asyncio.create_task(self._process_utterance())
             return True
 
         if event == "user.interrupt":
             self._audio_chunks.clear()
             self._audio_started_at = None
+            await self._close_live_transcription()
             await self._cancel_active_turn()
             await self._send_event("session.interrupted", session_id=self._session_id)
             return True
 
         if event == "session.end":
             await self._cancel_active_turn()
+            await self._close_live_transcription()
             await self._send_event("session.ended", session_id=self._session_id)
             await self.websocket.close()
             return False
@@ -126,6 +144,8 @@ class VoiceStreamSession:
         self._audio_chunks = []
         audio_started_at = self._audio_started_at
         self._audio_started_at = None
+        self._audio_bytes = 0
+        self._audio_chunks_received = 0
 
         if not chunks:
             await self._send_error("I did not catch any audio.", code="empty_audio")
@@ -154,6 +174,58 @@ class VoiceStreamSession:
 
             await self._send_event("assistant.started")
             chat_started_at = time.perf_counter()
+            response_text = await self._stream_chat_and_audio(
+                transcription["transcript"],
+                transcription,
+                timings,
+            )
+            timings["turn_ms"] = self._elapsed_ms(started_at)
+            await self._send_event(
+                "assistant.done",
+                conversation_id=self.conversation_id,
+                response_text=response_text,
+                timings=timings,
+            )
+        except DeepgramServiceError as error:
+            await self._send_error(error.detail, status_code=error.status_code)
+        except ConversationNotFoundError:
+            await self._send_error("Conversation not found.", status_code=404)
+        except AIServiceError as error:
+            await self._send_error(error.detail, status_code=error.status_code)
+        except MemoryServiceError as error:
+            await self._send_error(error.detail, status_code=error.status_code)
+        except GoogleTTSServiceError as error:
+            await self._send_error(error.detail, status_code=error.status_code)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self._send_error("Voice stream failed.", status_code=500)
+        finally:
+            current_task = asyncio.current_task()
+            if self._active_turn_task is current_task:
+                self._active_turn_task = None
+
+    async def _process_live_utterance(self) -> None:
+        live_transcription = self._live_transcription
+        self._live_transcription = None
+        audio_started_at = self._audio_started_at
+        self._audio_started_at = None
+        self._audio_bytes = 0
+        self._audio_chunks_received = 0
+
+        if live_transcription is None:
+            await self._send_error("I did not catch any audio.", code="empty_audio")
+            return
+
+        timings: dict[str, int] = {}
+        started_at = time.perf_counter()
+        if audio_started_at is not None:
+            timings["capture_ms"] = self._elapsed_ms(audio_started_at)
+
+        try:
+            transcription = await live_transcription.finish()
+            timings["stt_ms"] = self._elapsed_ms(started_at)
+            await self._send_event("assistant.started")
             response_text = await self._stream_chat_and_audio(
                 transcription["transcript"],
                 transcription,
@@ -294,6 +366,14 @@ class VoiceStreamSession:
                 confidence=event.get("confidence"),
                 metadata=event.get("metadata") or {},
             )
+        elif event.get("event") == "transcript.final":
+            await self._send_event(
+                "transcript.final",
+                transcript=event.get("transcript") or "",
+                confidence=event.get("confidence"),
+                speech_final=bool(event.get("speech_final")),
+                metadata=event.get("metadata") or {},
+            )
 
     def _next_speakable_chunk(self, text: str) -> tuple[Optional[str], str]:
         stripped = text.strip()
@@ -327,6 +407,51 @@ class VoiceStreamSession:
     async def _chunk_iterator(self, chunks: list[bytes]) -> AsyncIterator[bytes]:
         for chunk in chunks:
             yield chunk
+
+    def _supports_live_transcription(self) -> bool:
+        return hasattr(self.deepgram_streaming_service, "open_live_transcription")
+
+    async def _ensure_live_transcription(self) -> Any:
+        if self._live_transcription is not None:
+            return self._live_transcription
+        self._live_transcription = (
+            await self.deepgram_streaming_service.open_live_transcription(
+                content_type=self.input_mime_type,
+                sample_rate=self.sample_rate,
+                on_transcript=self._handle_live_transcript_event,
+            )
+        )
+        return self._live_transcription
+
+    async def _handle_live_transcript_event(self, event: dict[str, Any]) -> None:
+        await self._send_transcript_event(event)
+        if (
+            event.get("event") == "transcript.final"
+            and event.get("speech_final")
+            and (
+                self._active_turn_task is None
+                or self._active_turn_task.done()
+            )
+        ):
+            self._active_turn_task = asyncio.create_task(
+                self._process_live_utterance()
+            )
+
+    async def _close_live_transcription(self) -> None:
+        live_transcription = self._live_transcription
+        self._live_transcription = None
+        if live_transcription is not None:
+            await live_transcription.close()
+
+    def _audio_bytes_received(self) -> int:
+        if self._supports_live_transcription():
+            return self._audio_bytes
+        return sum(len(item) for item in self._audio_chunks)
+
+    def _audio_chunk_count(self) -> int:
+        if self._supports_live_transcription():
+            return self._audio_chunks_received
+        return len(self._audio_chunks)
 
     async def _cancel_active_turn(self) -> None:
         task = self._active_turn_task

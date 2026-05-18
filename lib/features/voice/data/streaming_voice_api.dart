@@ -51,6 +51,8 @@ class VoiceStreamEvent {
 
   String? get transcript => data['transcript'] as String?;
 
+  bool get speechFinal => data['speech_final'] as bool? ?? false;
+
   String? get token => data['token'] as String?;
 
   String? get conversationId => data['conversation_id'] as String?;

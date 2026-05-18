@@ -440,6 +440,10 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
     if (!capturedAudio) {
+      if (state.phase == VoiceCallPhase.thinking ||
+          state.phase == VoiceCallPhase.speaking) {
+        return;
+      }
       unawaited(session.endSession());
       resumeListening();
       return;
@@ -598,6 +602,9 @@ class VoiceCallController extends Notifier<VoiceCallState> {
             assistantText = '';
             responseAudioStarted = false;
             startThinking(finalTranscript: event.transcript);
+            if (event.speechFinal) {
+              unawaited(_activeStreamingCaptureService?.cancel());
+            }
           case 'conversation.updated':
             state = state.copyWith(
               conversationId: event.conversationId,

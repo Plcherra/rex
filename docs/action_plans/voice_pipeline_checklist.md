@@ -269,49 +269,49 @@ Neither fallback should be treated as the final street/pocket architecture.
 
 ## Phase 5.5 - Real Streaming Voice Architecture
 
-31. [ ] **Define `/voice/stream` WebSocket event contract**
+31. [x] **Define `/voice/stream` WebSocket event contract**
     - Files to create/update: `docs/cloud_voice_contract.md`, `backend/app/models/voice.py`
     - What to implement: Define typed events for `session.started`, `audio.chunk`, `transcript.partial`, `transcript.final`, `assistant.token`, `assistant.audio_chunk`, `assistant.done`, `user.interrupt`, and `error`.
     - Success criteria: Flutter and FastAPI can be implemented against one clear stream contract.
     - Verification command: Documentation review plus backend model tests once implemented.
 
-32. [ ] **Add FastAPI streaming voice route**
+32. [x] **Add FastAPI streaming voice route**
     - Files to create/update: `backend/app/routes/voice_stream.py`, `backend/app/main.py`, `tests/test_voice_stream_routes.py`
     - What to implement: Add a persistent WebSocket endpoint that receives microphone chunks and emits transcript, token, audio, done, and error events.
     - Success criteria: WebSocket can accept a session, receive test audio frames, and emit mocked events without calling real vendors.
     - Verification command: `PYTHONPATH=backend python3 -m pytest -q tests/test_voice_stream_routes.py`
 
-33. [ ] **Add Deepgram live streaming service**
+33. [x] **Add Deepgram live streaming service**
     - Files to create/update: `backend/app/services/deepgram_streaming_service.py`, `tests/test_deepgram_streaming_service.py`
     - What to implement: Stream audio frames from FastAPI to Deepgram live transcription and return interim/final transcript events.
     - Success criteria: Deepgram secrets stay backend-side and the service can be mocked in normal tests.
     - Verification command: `PYTHONPATH=backend python3 -m pytest -q tests/test_deepgram_streaming_service.py`
 
-34. [ ] **Stream Grok tokens into the voice session**
+34. [x] **Stream Grok tokens into the voice session**
     - Files to modify: `backend/app/services/chat_service.py`, `backend/app/services/ai_service.py`, `backend/app/services/voice_stream_session.py`
     - What to implement: Feed final Deepgram transcripts into the existing PromptService + ChatService path and emit Grok response tokens as they arrive.
     - Success criteria: Voice streaming uses the same time-aware memory path as text chat.
     - Verification command: `PYTHONPATH=backend python3 -m pytest -q tests/test_voice_stream_routes.py tests/test_chat_service.py`
 
-35. [ ] **Chunk streamed text for Google TTS**
+35. [x] **Chunk streamed text for Google TTS**
     - Files to create/update: `backend/app/services/tts_chunker.py`, `backend/app/services/google_tts_service.py`, `tests/test_tts_chunker.py`
     - What to implement: Convert streamed Grok tokens into speakable phrase/sentence chunks so Google TTS can start before the entire answer is finished.
     - Success criteria: Backend can emit first audio chunk quickly while preserving sentence quality.
     - Verification command: `PYTHONPATH=backend python3 -m pytest -q tests/test_tts_chunker.py tests/test_google_tts_service.py`
 
-36. [ ] **Add Flutter streaming voice client**
+36. [x] **Add Flutter streaming voice client**
     - Files to create/update: `lib/features/voice/data/streaming_voice_api.dart`, `lib/features/voice/application/voice_call_controller.dart`, `test/features/voice/application/voice_call_controller_test.dart`
     - What to implement: Open `/voice/stream`, send audio frames, receive transcript/token/audio events, and update call state.
     - Success criteria: The call stays open across turns instead of closing after each upload.
     - Verification command: `flutter analyze && flutter test test/features/voice`
 
-37. [ ] **Add streaming microphone capture**
+37. [x] **Add streaming microphone capture**
     - Files to create/update: `lib/features/voice/data/streaming_audio_capture_service.dart`, existing audio capture tests
     - What to implement: Capture small microphone frames continuously and feed them to the WebSocket without waiting for a full file.
     - Success criteria: Flutter can send steady audio chunks while maintaining mute/end-call controls.
     - Verification command: `flutter analyze && flutter test test/features/voice`
 
-38. [ ] **Add streaming audio playback queue and interruption**
+38. [x] **Add streaming audio playback queue and interruption**
     - Files to create/update: `lib/features/voice/data/streaming_audio_playback_queue.dart`, `lib/features/voice/application/voice_call_controller.dart`
     - What to implement: Queue incoming Google TTS audio chunks, play them in order, stop queued playback on interrupt, and return to listening.
     - Success criteria: Rex starts speaking before the full response is synthesized and user interruption does not play stale audio.
@@ -356,7 +356,8 @@ Neither fallback should be treated as the final street/pocket architecture.
 ## Recommendation
 For Rex’s real use case, treat Deepgram live STT, Grok streaming, and Google TTS chunked playback as required for the final production voice pipeline. Keep local STT/TTS and upload-per-turn cloud voice only as fallback and dev tooling.
 
-The next engineering step should be Phase 5.5 of this checklist: define and implement the real `/voice/stream` WebSocket path.
+Phase 5.5 is now implemented in the codebase and cross-checked against `docs/action_plans/active_voice_call_plan.md`. The next voice-specific work is Phase 6 physical iPhone acceptance: Wi-Fi, cellular, AirPods/Bluetooth, street noise, long monologues, interruption, and repeated turns. After that, continue with the remaining Action Plan 3 structured-memory items.
 
 ## Revision History
 - 2026-05-15 - Realigned from optional decision checklist into required Deepgram + Grok + Google TTS implementation pipeline.
+- 2026-05-18 - Reconciled Phase 5.5 with the implemented active `/voice/stream` architecture; physical iPhone acceptance remains open.

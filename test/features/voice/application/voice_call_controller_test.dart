@@ -526,6 +526,51 @@ void main() {
   );
 
   test(
+    'VoiceCallController keeps streaming socket active across multiple turns',
+    () async {
+      final streamingCaptureService = FakeStreamingAudioCaptureService();
+      final streamingSession = FakeStreamingVoiceSession();
+      final streamingApi = FakeStreamingVoiceApi(session: streamingSession);
+      final playbackService = FakeAudioPlaybackService();
+      final container = voiceCallTestContainer(
+        playbackService: playbackService,
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      expect(streamingApi.connectCount, 1);
+      expect(streamingCaptureService.captureCount, 1);
+      expect(streamingSession.utteranceEndCount, 1);
+      expect(playbackService.playCount, 1);
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
+
+      playbackService.complete();
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      expect(streamingApi.connectCount, 1);
+      expect(streamingCaptureService.captureCount, 2);
+      expect(streamingSession.utteranceEndCount, 2);
+      expect(playbackService.playCount, 2);
+      expect(
+        container.read(voiceCallProvider).lastAssistantResponse,
+        'Rex stream answer 2.',
+      );
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
+    },
+  );
+
+  test(
     'VoiceEndpointDetector detects speech, silence, and no-speech timeout',
     () {
       final config = VoiceCaptureConfig(
@@ -851,6 +896,7 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
   final sentAudioChunks = <List<int>>[];
   final _controller = StreamController<VoiceStreamEvent>();
   var utteranceEnded = false;
+  var utteranceEndCount = 0;
   var sessionEnded = false;
   var interruptCount = 0;
 
@@ -865,6 +911,11 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
   @override
   void endUtterance() {
     utteranceEnded = true;
+    utteranceEndCount++;
+    final turnNumber = utteranceEndCount;
+    final answer = turnNumber == 1
+        ? 'Rex stream answer.'
+        : 'Rex stream answer $turnNumber.';
     _controller
       ..add(
         const VoiceStreamEvent('transcript.final', {
@@ -879,26 +930,26 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
         }),
       )
       ..add(
-        const VoiceStreamEvent('assistant.token', {
+        VoiceStreamEvent('assistant.token', {
           'event': 'assistant.token',
-          'token': 'Rex stream ',
+          'token': turnNumber == 1 ? 'Rex stream ' : 'Rex stream answer ',
         }),
       )
       ..add(
-        const VoiceStreamEvent('assistant.token', {
+        VoiceStreamEvent('assistant.token', {
           'event': 'assistant.token',
-          'token': 'answer.',
+          'token': turnNumber == 1 ? 'answer.' : '$turnNumber.',
         }),
       )
       ..add(
-        const VoiceStreamEvent('assistant.audio_chunk', {
+        VoiceStreamEvent('assistant.audio_chunk', {
           'event': 'assistant.audio_chunk',
-          'audio_base64': 'bXAzLWJ5dGVz',
+          'audio_base64': turnNumber == 1 ? 'bXAzLWJ5dGVz' : 'bXAzLWJ5dGVzMg==',
           'audio_content_type': 'audio/mpeg',
         }),
       )
       ..add(
-        const VoiceStreamEvent('messages.updated', {
+        VoiceStreamEvent('messages.updated', {
           'event': 'messages.updated',
           'conversation_id': 'conversation-1',
           'messages': [
@@ -906,17 +957,17 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
               'id': 'message-1',
               'conversation_id': 'conversation-1',
               'role': 'assistant',
-              'content': 'Rex stream answer.',
+              'content': answer,
               'timestamp': '2026-05-17T00:00:00Z',
             },
           ],
         }),
       )
       ..add(
-        const VoiceStreamEvent('assistant.done', {
+        VoiceStreamEvent('assistant.done', {
           'event': 'assistant.done',
           'conversation_id': 'conversation-1',
-          'response_text': 'Rex stream answer.',
+          'response_text': answer,
         }),
       );
   }

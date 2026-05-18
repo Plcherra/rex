@@ -608,6 +608,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
           case 'transcript.partial':
             updateTranscript(event.transcript ?? state.currentTranscript);
           case 'transcript.final':
+            assistantText = '';
+            responseAudioStarted = false;
             startThinking(finalTranscript: event.transcript);
           case 'conversation.updated':
             state = state.copyWith(
@@ -666,7 +668,10 @@ class VoiceCallController extends Notifier<VoiceCallState> {
             await _streamingPlaybackQueue.waitUntilIdle();
             if (_isCurrentCall(generation) &&
                 state.isCallActive &&
-                state.phase != VoiceCallPhase.speaking) {
+                state.phase != VoiceCallPhase.speaking &&
+                state.phase != VoiceCallPhase.listening &&
+                state.phase != VoiceCallPhase.capturingSpeech &&
+                !state.isMuted) {
               resumeListening();
             }
           case 'session.ended':

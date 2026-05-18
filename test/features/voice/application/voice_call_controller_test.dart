@@ -632,13 +632,13 @@ void main() {
 
     update = detector.addAmplitude(
       currentDb: -70,
-      now: startedAt.add(const Duration(milliseconds: 1500)),
+      now: startedAt.add(const Duration(milliseconds: 1000)),
     );
     expect(update.endpointReached, false);
 
     update = detector.addAmplitude(
       currentDb: -70,
-      now: startedAt.add(const Duration(milliseconds: 2300)),
+      now: startedAt.add(const Duration(milliseconds: 1600)),
     );
     expect(update.endpointReached, true);
   });

@@ -8,4 +8,9 @@ abstract final class AppConfig {
     'REX_CLOUD_VOICE_ENABLED',
     defaultValue: true,
   );
+
+  static const bool streamingVoiceEnabled = bool.fromEnvironment(
+    'REX_STREAMING_VOICE_ENABLED',
+    defaultValue: false,
+  );
 }

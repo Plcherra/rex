@@ -97,8 +97,7 @@ class _VoiceCallPageState extends ConsumerState<VoiceCallPage> {
                 },
                 onToggleMute: controller.toggleMuted,
                 onInterrupt: () {
-                  controller.interrupt(reason: 'Rex was interrupted.');
-                  controller.resumeListening();
+                  controller.interruptAndListen(reason: 'Rex was interrupted.');
                 },
                 onRetry: () {
                   controller.startCall();

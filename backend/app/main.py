@@ -8,6 +8,7 @@ from app.routes.chat import router as chat_router
 from app.routes.conversations import router as conversations_router
 from app.routes.memory import router as memory_router
 from app.routes.voice import router as voice_router
+from app.routes.voice_stream import router as voice_stream_router
 from app.services.http_client import shutdown_http_client, startup_http_client
 
 
@@ -79,3 +80,4 @@ app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(memory_router)
 app.include_router(voice_router)
+app.include_router(voice_stream_router)

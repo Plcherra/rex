@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:rex/core/config/app_config.dart';
 import 'package:rex/features/chat/application/chat_controller.dart';
+import 'package:rex/features/chat/data/chat_models.dart';
 import 'package:rex/features/voice/application/voice_controller.dart';
 import 'package:rex/features/voice/data/audio_capture_service.dart';
 import 'package:rex/features/voice/data/audio_playback_service.dart';
@@ -10,14 +12,40 @@ import 'package:rex/features/voice/data/audio_recording_service.dart';
 import 'package:rex/features/voice/data/audio_session_service.dart';
 import 'package:rex/features/voice/data/background_voice_service.dart';
 import 'package:rex/features/voice/data/cloud_voice_api.dart';
+import 'package:rex/features/voice/data/streaming_audio_capture_service.dart';
+import 'package:rex/features/voice/data/streaming_audio_playback_queue.dart';
+import 'package:rex/features/voice/data/streaming_voice_api.dart';
 import 'package:rex/features/voice/domain/voice_call_state.dart';
 
 final audioCaptureServiceProvider = Provider<AudioCaptureService>(
   (ref) => PackageAudioCaptureService(),
 );
 
+final streamingAudioCaptureServiceProvider =
+    Provider<StreamingAudioCaptureService>(
+      (ref) => PackageStreamingAudioCaptureService(),
+    );
+
+final streamingVoiceApiProvider = Provider<StreamingVoiceApi>(
+  (ref) => StreamingVoiceApi(),
+);
+
+final streamingAudioPlaybackQueueProvider =
+    Provider<StreamingAudioPlaybackQueue>(
+      (ref) =>
+          StreamingAudioPlaybackQueue(ref.read(audioPlaybackServiceProvider)),
+    );
+
+final streamingVoiceEnabledProvider = Provider<bool>(
+  (ref) => AppConfig.streamingVoiceEnabled,
+);
+
 final voiceCaptureConfigProvider = Provider<VoiceCaptureConfig>(
   (ref) => const VoiceCaptureConfig(),
+);
+
+final voiceCallThinkingDelayProvider = Provider<Duration>(
+  (ref) => const Duration(milliseconds: 1200),
 );
 
 final voiceCallProvider = NotifierProvider<VoiceCallController, VoiceCallState>(
@@ -31,7 +59,10 @@ final voiceCallNowProvider = Provider<VoiceCallNow>((ref) => DateTime.now);
 class VoiceCallController extends Notifier<VoiceCallState> {
   int _callGeneration = 0;
   AudioCaptureService? _activeCaptureService;
+  StreamingAudioCaptureService? _activeStreamingCaptureService;
+  StreamingVoiceSession? _activeStreamingSession;
   AudioPlaybackService? _activePlaybackService;
+  StreamingAudioPlaybackQueue? _activeStreamingPlaybackQueue;
   VoiceAudioSessionService? _activeAudioSessionService;
   BackgroundVoiceService? _activeBackgroundVoiceService;
   var _isStartingCall = false;
@@ -42,10 +73,22 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       _callGeneration++;
       final captureService = _activeCaptureService;
       final playbackService = _activePlaybackService;
+      final streamingPlaybackQueue = _activeStreamingPlaybackQueue;
+      final streamingCaptureService = _activeStreamingCaptureService;
+      final streamingSession = _activeStreamingSession;
       final audioSessionService = _activeAudioSessionService;
       final backgroundVoiceService = _activeBackgroundVoiceService;
       if (captureService != null) {
         unawaited(captureService.cancel());
+      }
+      if (streamingCaptureService != null) {
+        unawaited(streamingCaptureService.cancel());
+      }
+      if (streamingSession != null) {
+        unawaited(streamingSession.endSession());
+      }
+      if (streamingPlaybackQueue != null) {
+        unawaited(streamingPlaybackQueue.cancel());
       }
       if (playbackService != null) {
         unawaited(playbackService.stop());
@@ -197,12 +240,42 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
     _callGeneration++;
+    unawaited(_captureService.cancel());
+    unawaited(_streamingCaptureService.cancel());
+    final streamingSession = _activeStreamingSession;
+    _activeStreamingSession = null;
+    streamingSession?.interrupt();
+    unawaited(_streamingPlaybackQueue.cancel());
+    unawaited(streamingSession?.endSession());
     unawaited(_playbackService.stop());
 
     state = state.copyWith(
       phase: VoiceCallPhase.interrupted,
       errorMessage: reason,
     );
+  }
+
+  void interruptAndListen({String? reason}) {
+    if (!state.isCallActive) {
+      return;
+    }
+
+    final generation = ++_callGeneration;
+    unawaited(_captureService.cancel());
+    unawaited(_streamingCaptureService.cancel());
+    final streamingSession = _activeStreamingSession;
+    _activeStreamingSession = null;
+    streamingSession?.interrupt();
+    unawaited(_streamingPlaybackQueue.cancel());
+    unawaited(streamingSession?.endSession());
+    unawaited(_playbackService.stop());
+
+    state = state.copyWith(
+      phase: VoiceCallPhase.listening,
+      clearCurrentTranscript: true,
+      clearError: true,
+    );
+    _startListeningCycle(generation);
   }
 
   void setMuted(bool isMuted) {
@@ -214,6 +287,12 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (isMuted) {
       _callGeneration++;
       unawaited(_captureService.cancel());
+      unawaited(_streamingCaptureService.cancel());
+      final streamingSession = _activeStreamingSession;
+      _activeStreamingSession = null;
+      streamingSession?.interrupt();
+      unawaited(_streamingPlaybackQueue.cancel());
+      unawaited(streamingSession?.endSession());
     } else if (state.phase == VoiceCallPhase.listening) {
       _startListeningCycle(++_callGeneration);
     }
@@ -239,6 +318,12 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   void fail(String message) {
     _callGeneration++;
     unawaited(_captureService.cancel());
+    unawaited(_streamingCaptureService.cancel());
+    final streamingSession = _activeStreamingSession;
+    _activeStreamingSession = null;
+    streamingSession?.interrupt();
+    unawaited(_streamingPlaybackQueue.cancel());
+    unawaited(streamingSession?.endSession());
     unawaited(_playbackService.stop());
     unawaited(_backgroundVoiceService.stop());
     unawaited(_audioSessionService.setActive(false));
@@ -256,6 +341,12 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
     _callGeneration++;
     unawaited(_captureService.cancel());
+    unawaited(_streamingCaptureService.cancel());
+    final streamingSession = _activeStreamingSession;
+    _activeStreamingSession = null;
+    streamingSession?.interrupt();
+    unawaited(_streamingPlaybackQueue.cancel());
+    unawaited(streamingSession?.endSession());
     unawaited(_playbackService.stop());
     unawaited(_backgroundVoiceService.stop());
     unawaited(_audioSessionService.setActive(false));
@@ -269,6 +360,12 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   void reset() {
     _callGeneration++;
     unawaited(_captureService.cancel());
+    unawaited(_streamingCaptureService.cancel());
+    final streamingSession = _activeStreamingSession;
+    _activeStreamingSession = null;
+    streamingSession?.interrupt();
+    unawaited(_streamingPlaybackQueue.cancel());
+    unawaited(streamingSession?.endSession());
     unawaited(_playbackService.stop());
     unawaited(_backgroundVoiceService.stop());
     unawaited(_audioSessionService.setActive(false));
@@ -282,7 +379,85 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
 
-    unawaited(_captureNextUtterance(generation));
+    if (ref.read(streamingVoiceEnabledProvider)) {
+      unawaited(_streamNextUtterance(generation));
+    } else {
+      unawaited(_captureNextUtterance(generation));
+    }
+  }
+
+  Future<void> _streamNextUtterance(int generation) async {
+    if (!_isCurrentCall(generation) ||
+        state.phase != VoiceCallPhase.listening ||
+        state.isMuted) {
+      return;
+    }
+
+    final StreamingVoiceSession session;
+    try {
+      session = await _ensureStreamingSession(generation);
+    } on StreamingVoiceApiException catch (error) {
+      if (_isCurrentCall(generation)) {
+        fail(error.message);
+      }
+      return;
+    } on Object {
+      if (_isCurrentCall(generation)) {
+        fail('Could not open Rex voice stream.');
+      }
+      return;
+    }
+
+    final bool capturedAudio;
+    try {
+      capturedAudio = await _streamingCaptureService.streamUtterance(
+        config: ref.read(voiceCaptureConfigProvider),
+        onSpeechStart: () {
+          if (_isCurrentCall(generation) &&
+              state.phase == VoiceCallPhase.listening) {
+            startCapturingSpeech();
+          }
+        },
+        onAudioChunk: (chunk) async {
+          if (_isCurrentCall(generation)) {
+            session.sendAudioChunk(chunk);
+          }
+        },
+      );
+    } on Object {
+      if (_isCurrentCall(generation)) {
+        fail('Could not stream voice audio.');
+      }
+      unawaited(session.endSession());
+      return;
+    }
+
+    if (!_isCurrentCall(generation) || !state.isCallActive) {
+      unawaited(session.endSession());
+      return;
+    }
+    if (!capturedAudio) {
+      unawaited(session.endSession());
+      resumeListening();
+      return;
+    }
+
+    endpointUtterance();
+    session.endUtterance();
+  }
+
+  Future<StreamingVoiceSession> _ensureStreamingSession(int generation) async {
+    final existingSession = _activeStreamingSession;
+    if (existingSession != null) {
+      return existingSession;
+    }
+
+    final session = await ref
+        .read(streamingVoiceApiProvider)
+        .connect(conversationId: state.conversationId);
+    _activeStreamingSession = session;
+    unawaited(_handleStreamingEvents(session, generation));
+    return session;
   }
 
   Future<void> _captureNextUtterance(int generation) async {
@@ -334,6 +509,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
     try {
       startTranscribing();
+      _markThinkingIfRequestIsStillPending(generation);
       final response = await ref
           .read(cloudVoiceApiProvider)
           .sendVoiceTurn(
@@ -345,6 +521,11 @@ class VoiceCallController extends Notifier<VoiceCallState> {
         return;
       }
 
+      state = state.copyWith(
+        conversationId: response.conversationId,
+        currentTranscript: response.transcript,
+        clearError: true,
+      );
       ref
           .read(chatProvider.notifier)
           .applyBackendMessages(
@@ -380,6 +561,145 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     }
   }
 
+  Future<void> _handleStreamingEvents(
+    StreamingVoiceSession session,
+    int generation,
+  ) async {
+    var assistantText = '';
+    var responseAudioStarted = false;
+    void beginStreamingAudioIfNeeded() {
+      if (responseAudioStarted) {
+        return;
+      }
+      responseAudioStarted = true;
+      _streamingPlaybackQueue.beginResponse();
+    }
+
+    StreamingAudioPlaybackCallbacks playbackCallbacks() {
+      return StreamingAudioPlaybackCallbacks(
+        onChunkStarted: (_) {
+          if (_isCurrentCall(generation)) {
+            startSpeaking(assistantText);
+          }
+        },
+        onQueueDrained: () {
+          if (_isCurrentCall(generation) &&
+              state.phase == VoiceCallPhase.speaking) {
+            completeSpeaking();
+          }
+        },
+        onError: (message) {
+          if (_isCurrentCall(generation)) {
+            fail(message);
+          }
+        },
+      );
+    }
+
+    try {
+      await for (final event in session.events) {
+        if (!_isCurrentCall(generation) || !state.isCallActive) {
+          return;
+        }
+
+        switch (event.name) {
+          case 'session.started':
+            break;
+          case 'transcript.partial':
+            updateTranscript(event.transcript ?? state.currentTranscript);
+          case 'transcript.final':
+            startThinking(finalTranscript: event.transcript);
+          case 'conversation.updated':
+            state = state.copyWith(
+              conversationId: event.conversationId,
+              clearError: true,
+            );
+          case 'assistant.started':
+            if (state.phase != VoiceCallPhase.thinking) {
+              startThinking(finalTranscript: state.currentTranscript);
+            }
+            beginStreamingAudioIfNeeded();
+          case 'assistant.token':
+            assistantText += event.token ?? '';
+            state = state.copyWith(lastAssistantResponse: assistantText);
+          case 'assistant.audio_chunk':
+            final audioBase64 = event.audioBase64;
+            if (audioBase64 == null || audioBase64.isEmpty) {
+              break;
+            }
+            beginStreamingAudioIfNeeded();
+            _streamingPlaybackQueue.enqueue(
+              StreamingAudioChunk(
+                audioBase64: audioBase64,
+                contentType: event.audioContentType,
+                text: event.data['text'] as String? ?? '',
+              ),
+              callbacks: playbackCallbacks(),
+            );
+          case 'messages.updated':
+            final rawMessages = event.data['messages'];
+            if (event.conversationId != null && rawMessages is List) {
+              final messages = rawMessages
+                  .whereType<Map<String, dynamic>>()
+                  .map(ChatApiMessage.fromJson)
+                  .toList(growable: false);
+              ref
+                  .read(chatProvider.notifier)
+                  .applyBackendMessages(
+                    conversationId: event.conversationId!,
+                    messages: messages,
+                    fallbackAssistantResponse: assistantText,
+                  );
+            }
+          case 'assistant.done':
+            beginStreamingAudioIfNeeded();
+            if (event.conversationId != null) {
+              state = state.copyWith(
+                conversationId: event.conversationId,
+                lastAssistantResponse: event.responseText ?? assistantText,
+                clearError: true,
+              );
+            }
+            _streamingPlaybackQueue.finishResponse(
+              callbacks: playbackCallbacks(),
+            );
+            await _streamingPlaybackQueue.waitUntilIdle();
+            if (_isCurrentCall(generation) &&
+                state.isCallActive &&
+                state.phase != VoiceCallPhase.speaking) {
+              resumeListening();
+            }
+          case 'session.ended':
+            return;
+          case 'session.interrupted':
+            break;
+        }
+      }
+    } on StreamingVoiceApiException catch (error) {
+      if (_isCurrentCall(generation)) {
+        fail(error.message);
+      }
+    } on Object {
+      if (_isCurrentCall(generation)) {
+        fail('Rex voice stream failed.');
+      }
+    } finally {
+      if (identical(_activeStreamingSession, session)) {
+        _activeStreamingSession = null;
+      }
+    }
+  }
+
+  void _markThinkingIfRequestIsStillPending(int generation) {
+    Future<void>.delayed(ref.read(voiceCallThinkingDelayProvider), () {
+      if (_isCurrentCall(generation) &&
+          state.isCallActive &&
+          state.phase == VoiceCallPhase.transcribing) {
+        state = state.copyWith(phase: VoiceCallPhase.thinking);
+      }
+    });
+  }
+
   bool _isCurrentCall(int generation) => generation == _callGeneration;
 
   String _permissionMessage(MicrophonePermissionDecision decision) {
@@ -404,6 +724,16 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     return service;
   }
 
+  StreamingAudioCaptureService get _streamingCaptureService {
+    final existingService = _activeStreamingCaptureService;
+    if (existingService != null) {
+      return existingService;
+    }
+    final service = ref.read(streamingAudioCaptureServiceProvider);
+    _activeStreamingCaptureService = service;
+    return service;
+  }
+
   AudioPlaybackService get _playbackService {
     final existingService = _activePlaybackService;
     if (existingService != null) {
@@ -412,6 +742,16 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     final service = ref.read(audioPlaybackServiceProvider);
     _activePlaybackService = service;
     return service;
+  }
+
+  StreamingAudioPlaybackQueue get _streamingPlaybackQueue {
+    final existingQueue = _activeStreamingPlaybackQueue;
+    if (existingQueue != null) {
+      return existingQueue;
+    }
+    final queue = ref.read(streamingAudioPlaybackQueueProvider);
+    _activeStreamingPlaybackQueue = queue;
+    return queue;
   }
 
   VoiceAudioSessionService get _audioSessionService {

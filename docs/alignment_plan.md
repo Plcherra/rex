@@ -2,17 +2,17 @@
 
 ## 1. Executive Summary
 
-Rex is roughly **7/10 aligned** with the updated founder vision overall, and closer to **7/10 aligned** with the voice-first daily-driver requirement at the code level. The strongest foundation is now in place: Flutter chat UI, FastAPI backend, Grok API integration, streaming responses, Supabase-backed conversations/messages/long-term memory, memory UI, file upload support, cloud voice with Deepgram + Google TTS, background audio/foreground-service scaffolding, tests, and VPS deployment docs. The biggest remaining risks are physical street/pocket validation, structured entity/rule/plan memory, deeper accountability logic, production monitoring, and real-device platform constraints. The project is no longer blocked by missing voice infrastructure; it is now blocked by physical device validation and deeper memory intelligence.
+Rex is roughly **7/10 aligned** with the updated founder vision overall, and closer to **7/10 aligned** with the voice-first daily-driver requirement at the code level. The strongest foundation is now in place: Flutter chat UI, FastAPI backend, Grok API integration, streaming responses, Supabase-backed conversations/messages/long-term memory, memory UI, file upload support, cloud voice with Deepgram + Google TTS, background audio/foreground-service scaffolding, tests, and VPS deployment docs. The biggest remaining risks are replacing upload-per-turn voice with a real WebSocket streaming voice session, physical street/pocket validation, structured entity/rule/plan memory, deeper accountability logic, production monitoring, and real-device platform constraints. The project is no longer blocked by missing voice infrastructure; it is now blocked by real streaming voice UX, physical device validation, and deeper memory intelligence.
 
 ## 2. Vision vs Reality Matrix
 
 | Vision Section / Requirement | Current Implementation Status (Fully Done / Partially Done / Not Started / Needs Refactor) | Key Files / Code Involved | Gap Description & Technical Reason | Effort Estimate (Small / Medium / Large / Unknown) | Priority (P0 / P1 / P2) |
 |---|---|---|---|---|---|
 | Founder-first personal daily driver | Partially Done | `REX_VISION.md`, `README.md`, `docs/deployment.md` | Project direction and docs now say founder-first, but product behavior still mostly behaves like a generic chat app with memory. No founder-specific rules, plans, entities, or accountability layer exists. | Medium | P0 |
-| Voice-first primary interface | Partially Done | `lib/features/voice/`, `lib/features/chat/presentation/widgets/chat_input_bar.dart`, `backend/app/routes/voice.py` | Push-to-talk voice UI, controller state machine, cloud transcription, cloud synthesis, and playback exist. It still needs real iPhone/Android street validation and UX tuning from physical use. | Medium | P0 |
+| Voice-first primary interface | Partially Done | `lib/features/voice/`, `lib/features/chat/presentation/widgets/chat_input_bar.dart`, `backend/app/routes/voice.py` | Push-to-talk voice UI, controller state machine, cloud transcription, cloud synthesis, and playback exist. Current cloud voice uses upload-per-turn fallback flow; the final product needs a persistent WebSocket session that streams microphone frames, Deepgram transcripts, Grok tokens, and Google TTS audio chunks. | Large | P0 |
 | Pocket / locked-screen / background voice workflow | Partially Done | `ios/Runner/Info.plist`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/kotlin/com/rex/rex/RexVoiceForegroundService.kt`, `lib/features/voice/data/audio_session_service.dart`, `docs/background_voice_constraints.md` | iOS background audio mode, Android foreground service, audio session handling, and interruption handling are implemented. Actual reliability is still unknown until physical device testing because OS rules decide final behavior. | Medium / Unknown | P0 |
-| Flutter speech-to-text pipeline | Fully Done | `lib/features/voice/data/audio_recording_service.dart`, `lib/features/voice/data/cloud_voice_api.dart`, `backend/app/services/deepgram_service.py`, `backend/app/routes/voice.py` | Production STT is cloud-based through Deepgram. Local `speech_to_text_service.dart` remains fallback/dev tooling only. | Small for tuning | P0 |
-| Flutter text-to-speech playback | Fully Done | `lib/features/voice/data/audio_playback_service.dart`, `lib/features/voice/data/cloud_voice_api.dart`, `backend/app/services/google_tts_service.py`, `backend/app/routes/voice.py` | Production TTS uses Google Cloud TTS through FastAPI and plays returned audio in Flutter. Local `text_to_speech_service.dart` remains fallback/dev tooling only. | Small for tuning | P0 |
+| Flutter speech-to-text pipeline | Partially Done | `lib/features/voice/data/audio_recording_service.dart`, `lib/features/voice/data/cloud_voice_api.dart`, `backend/app/services/deepgram_service.py`, `backend/app/routes/voice.py` | Cloud STT works through Deepgram for uploaded utterances. Real live STT still needs Flutter streaming audio frames to FastAPI and FastAPI streaming those frames to Deepgram. Local `speech_to_text_service.dart` remains fallback/dev tooling only. | Medium / Large | P0 |
+| Flutter text-to-speech playback | Partially Done | `lib/features/voice/data/audio_playback_service.dart`, `lib/features/voice/data/cloud_voice_api.dart`, `backend/app/services/google_tts_service.py`, `backend/app/routes/voice.py` | Google Cloud TTS works through FastAPI and Flutter can play returned audio. Real voice-call feel still needs phrase-level TTS chunking and a Flutter playback queue so Rex starts speaking before the full response is complete. | Medium / Large | P0 |
 | Streaming text chat | Fully Done | `lib/services/chat_api.dart`, `lib/features/chat/application/chat_controller.dart`, `backend/app/routes/chat.py`, `backend/app/services/ai_service.py`, `backend/app/services/chat_service.py` | SSE streaming exists, Flutter progressively renders assistant tokens, and voice uses the same chat pipeline before Google TTS synthesis. | Small for polish | P0 |
 | Text chat fallback | Fully Done | `lib/features/chat/presentation/pages/chat_page.dart`, `lib/features/chat/presentation/widgets/chat_input_bar.dart`, `lib/services/chat_api.dart` | Text chat is functional, supports loading/error states, streaming, conversations, and file attachments. | Small | P1 |
 | Conversation management | Fully Done | `backend/app/routes/conversations.py`, `lib/features/chat/presentation/pages/conversation_list_page.dart`, `lib/features/chat/application/conversation_controller.dart` | List/create/switch/delete are implemented with tests. Needs future UX polish but meets current requirement. | Small | P1 |
@@ -51,24 +51,26 @@ Rex is roughly **7/10 aligned** with the updated founder vision overall, and clo
 - Grok-powered memory extraction exists and saves useful `fact/preference/event` memories after successful chat turns.
 - Memory UI exists for listing, filtering, editing, and deactivating memories.
 - File upload support exists for `.txt`, `.md`, and `.csv`.
-- Production cloud voice exists: Flutter recording, Deepgram transcription, Grok chat, Google TTS synthesis, and Flutter audio playback.
+- Production cloud voice fallback exists: Flutter recording, Deepgram transcription, Grok chat, Google TTS synthesis, and Flutter audio playback. The final target is streaming microphone frames, live Deepgram transcripts, Grok tokens, and Google TTS audio chunks over a persistent voice session.
 - Background/pocket scaffolding exists: iOS background audio mode, Android foreground service, audio session handling, and interruption recovery.
 - Deployment path is clean for VPS: virtualenv, `systemd`, Nginx/Caddy, env vars, CORS, and HTTPS guidance.
 - Test coverage is strong for the current scope: backend route/service tests and Flutter API/controller/widget tests are in place.
 
 ## 4. Critical Gaps & Why They Exist
 
-The largest remaining voice gap is physical street/pocket validation. The cloud voice pipeline exists, but iOS and Android background behavior must be tested on real devices with screen lock, app switching, Bluetooth/headphones, noisy street conditions, and interruptions. Simulators and unit tests cannot prove the final founder workflow.
+The largest remaining voice gap is real streaming voice transport. The cloud voice fallback works, but the final founder workflow needs a persistent `/voice/stream` WebSocket: Flutter streams microphone frames, FastAPI forwards them to Deepgram live STT, final transcripts enter the existing time-aware ChatService, Grok streams tokens, Google TTS generates speakable chunks, and Flutter plays audio chunks while the call remains open.
 
-The second critical gap is structured memory depth, not basic time awareness. Current server time, session gaps, and memory ages are now injected through `PromptService` and `TimeContextService`, but Rex still lacks first-class entities, personal rules, commitments, and plans. Without those records, time deltas for “you promised this last month” or “this deadline is 31 days away” remain unreliable.
+The second voice gap is physical street/pocket validation. iOS and Android background behavior must be tested on real devices with screen lock, app switching, Bluetooth/headphones, noisy street conditions, and interruptions. Simulators and unit tests cannot prove the final founder workflow.
 
-The third critical gap is the lack of structured entity, rule, and plan storage. `long_term_memory` can hold generic facts, preferences, and events, but the updated vision requires Rex to remember specific people, recurring relationship context, personal rules, commitments, deadlines, and multi-month plans. Those need first-class schema and services, not just text memories. Without this, accountability will be unreliable and retrieval will be too dependent on keyword overlap.
+The third critical gap is structured memory depth, not basic time awareness. Current server time, session gaps, and memory ages are now injected through `PromptService` and `TimeContextService`, but Rex still lacks first-class entities, personal rules, commitments, and plans. Without those records, time deltas for “you promised this last month” or “this deadline is 31 days away” remain unreliable.
 
-The fourth critical gap is accountability logic. Rex currently retrieves memories and sends them to Grok, but it does not detect rule violations, compare current behavior to past commitments, run budget pattern checks, or surface missed plan milestones. The project needs explicit `personal_rules`, `commitments`, and `plans` models plus retrieval/violation logic before Rex can say, accurately, “you said you would stop doing this last month.”
+The fourth critical gap is the lack of structured entity, rule, and plan storage. `long_term_memory` can hold generic facts, preferences, and events, but the updated vision requires Rex to remember specific people, recurring relationship context, personal rules, commitments, deadlines, and multi-month plans. Those need first-class schema and services, not just text memories. Without this, accountability will be unreliable and retrieval will be too dependent on keyword overlap.
 
-The fifth gap is deeper personality grounding against structured facts. `PromptService` now owns the founder-first personality and direct/no-fluff behavior, but the personality will only become truly accountable once entities, rules, commitments, and plans are first-class memory records.
+The fifth critical gap is accountability logic. Rex currently retrieves memories and sends them to Grok, but it does not detect rule violations, compare current behavior to past commitments, run budget pattern checks, or surface missed plan milestones. The project needs explicit `personal_rules`, `commitments`, and `plans` models plus retrieval/violation logic before Rex can say, accurately, “you said you would stop doing this last month.”
 
-The sixth gap is finance intelligence. CSV upload exists, including `.csv`, but it is treated as raw file context. There is no Clarity parser, merchant/category extraction, recurring-spend detection, budget cap comparison, or monthly review logic. This is not required before the voice MVP, but it is central to the accountability vision.
+The sixth gap is deeper personality grounding against structured facts. `PromptService` now owns the founder-first personality and direct/no-fluff behavior, but the personality will only become truly accountable once entities, rules, commitments, and plans are first-class memory records.
+
+The seventh gap is finance intelligence. CSV upload exists, including `.csv`, but it is treated as raw file context. There is no Clarity parser, merchant/category extraction, recurring-spend detection, budget cap comparison, or monthly review logic. This is not required before the voice MVP, but it is central to the accountability vision.
 
 The final gap is production hardening beyond “deployable.” The VPS path is documented and the backend is technically deployable, but there is no committed `systemd` unit template file, no CI, no structured logs, no real integration test mode, no monitoring, and no rate limiting. This is acceptable for founder dogfooding but should be addressed before broader use.
 
@@ -89,13 +91,14 @@ The final gap is production hardening beyond “deployable.” The VPS path is d
 
 ### Phase 7 - Minimal Voice-First Personal Rex
 
-- Goal: Keep Rex usable as a voice-first personal assistant in foreground mode using the production cloud voice path.
+- Goal: Keep Rex usable as a voice-first personal assistant in foreground mode using the cloud voice fallback while preparing the real streaming call path.
 - Key deliverables:
-  - Flutter records microphone audio and uploads it to FastAPI.
-  - FastAPI transcribes through Deepgram.
+  - Flutter can record microphone audio and upload it to FastAPI as the fallback path.
+  - FastAPI transcribes fallback uploads through Deepgram.
   - Transcript enters the existing `/chat` streaming pipeline with Grok.
   - FastAPI synthesizes the final response through Google Cloud TTS.
   - Flutter plays returned audio and exposes recording/uploading/transcribing/thinking/generating/speaking states.
+  - Add the real streaming target contract for persistent `/voice/stream`.
   - Local STT/TTS stays available only as fallback/dev tooling.
 - Estimated time (solo founder pace): implemented; continue tuning from physical tests.
 - Dependencies: Phase 6 prompt foundation and backend cloud voice routes.
@@ -131,7 +134,7 @@ The final gap is production hardening beyond “deployable.” The VPS path is d
   - Research and implement feasible background audio handling on iOS and Android within platform limits.
   - Configure proper audio session categories, iOS background audio, and Android foreground service behavior.
   - Handle interruptions (incoming calls, notifications, headphones, screen lock).
-  - Ensure the production cloud voice flow (recording → Deepgram transcription → Grok thinking → Google TTS speaking) survives app backgrounding and screen off where possible.
+  - Ensure the final streaming voice flow (microphone frames → Deepgram live transcript → Grok streaming → Google TTS audio chunks → playback/listening loop) survives app backgrounding and screen off where possible.
   - Add clear UX feedback when background continuation is limited by the OS.
   - Document realistic platform constraints.
 - **Estimated time (solo founder pace)**: implementation scaffold complete; physical validation and tuning still required.

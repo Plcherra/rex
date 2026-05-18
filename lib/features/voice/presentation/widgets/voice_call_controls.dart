@@ -79,6 +79,7 @@ class VoiceCallControls extends StatelessWidget {
           tooltip: 'Interrupt Rex',
           icon: Icons.front_hand_rounded,
           onPressed: canInterrupt ? onInterrupt : null,
+          onLongPress: canInterrupt ? onInterrupt : null,
         ),
       ],
     );
@@ -90,6 +91,7 @@ class _RoundCallButton extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.onLongPress,
     this.backgroundColor,
     this.foregroundColor,
     this.size = 58,
@@ -98,6 +100,7 @@ class _RoundCallButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
   final Color? backgroundColor;
   final Color? foregroundColor;
   final double size;
@@ -112,6 +115,7 @@ class _RoundCallButton extends StatelessWidget {
         dimension: size,
         child: IconButton.filled(
           onPressed: onPressed,
+          onLongPress: onLongPress,
           style: IconButton.styleFrom(
             backgroundColor: backgroundColor ?? scheme.surfaceContainerHighest,
             foregroundColor: foregroundColor ?? scheme.onSurface,

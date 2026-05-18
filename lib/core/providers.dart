@@ -23,6 +23,9 @@ export 'package:rex/features/voice/application/voice_controller.dart'
 export 'package:rex/features/voice/application/voice_call_controller.dart'
     show
         audioCaptureServiceProvider,
+        streamingAudioCaptureServiceProvider,
+        streamingVoiceApiProvider,
+        streamingVoiceEnabledProvider,
         voiceCallNowProvider,
         voiceCallProvider,
         voiceCaptureConfigProvider;

@@ -100,6 +100,32 @@ void main() {
     expect(find.text('Listening'), findsOneWidget);
   });
 
+  testWidgets(
+    'VoiceCallPage supports press-and-hold interruption while speaking',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: voiceCallWidgetOverrides(),
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(voiceCallProvider.notifier);
+      await controller.startCall();
+      controller.startSpeaking('Rex is still talking.');
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: VoiceCallPage(autoStart: false)),
+        ),
+      );
+
+      await tester.longPress(find.byTooltip('Interrupt Rex'));
+      await tester.pumpAndSettle();
+
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.listening);
+      expect(find.text('Listening'), findsOneWidget);
+    },
+  );
+
   testWidgets('VoiceCallPage renders failed state with retry action', (
     tester,
   ) async {

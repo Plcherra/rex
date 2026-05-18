@@ -1,9 +1,25 @@
 # Cloud Voice Contract
 
 ## Goal
-Define the first production voice contract for Rex before implementing Deepgram STT and Google TTS.
+Define the Rex voice contracts for both the final streaming call architecture and the fallback upload-per-turn cloud voice path.
 
-## Pipeline
+## Target Streaming Pipeline
+
+```text
+iPhone microphone
+-> Flutter streams audio frames continuously
+-> FastAPI WebSocket voice session
+-> Deepgram live streaming transcription
+-> FastAPI emits partial/final transcript events
+-> Final transcript enters ChatService / PromptService / Grok / Supabase memory
+-> Grok streams response tokens
+-> Backend chunks response into speakable phrases/sentences
+-> Google TTS generates audio chunks
+-> FastAPI streams audio chunks back to Flutter
+-> Flutter plays chunks while the session stays open
+```
+
+## Fallback Upload Pipeline
 
 ```text
 Flutter audio capture
@@ -13,6 +29,42 @@ Flutter audio capture
 -> Google TTS
 -> Flutter audio playback
 ```
+
+This fallback is working and should remain available for debugging, vendor outage fallback, and non-streaming regression tests. It is not the final street/pocket call architecture.
+
+## Streaming Request Contract
+
+Endpoint:
+
+```text
+WebSocket /voice/stream
+```
+
+Client-to-server events:
+
+- `session.start`: starts a voice session with optional `conversation_id`, audio format, and client metadata.
+- `audio.chunk`: sends a small base64 or binary microphone frame.
+- `audio.end_utterance`: optional manual endpoint marker when Flutter detects end of speech.
+- `user.interrupt`: cancels the current assistant response and queued TTS work.
+- `session.end`: ends the call and closes the backend session cleanly.
+
+Server-to-client events:
+
+- `session.started`: confirms the backend session is ready.
+- `transcript.partial`: live Deepgram transcript text for UI feedback.
+- `transcript.final`: final utterance text that will enter ChatService.
+- `assistant.token`: streamed Grok token/text delta.
+- `assistant.audio_chunk`: Google TTS audio chunk for playback queue.
+- `assistant.done`: final message metadata and conversation ID.
+- `error`: normalized error object safe to show in the Flutter UI.
+
+Streaming audio requirements:
+
+- Flutter sends short microphone frames continuously while listening.
+- FastAPI forwards frames to Deepgram live STT without exposing the Deepgram key.
+- Backend chunks Grok text into speakable phrases/sentences for Google TTS.
+- Flutter queues and plays returned audio chunks in order.
+- Raw audio is not stored by default.
 
 ## MVP Request Contract
 

@@ -4,13 +4,20 @@
 Document what Rex can realistically support for street, pocket, and locked-screen voice before deeper native work.
 
 ## Current Target
-Rex should keep a voice turn alive as far as the operating system allows:
+Rex should keep a streaming voice session alive as far as the operating system allows:
 
 ```text
-recording -> upload/transcribe -> Grok thinking -> Google TTS playback
+iPhone microphone
+-> Flutter streams audio frames
+-> FastAPI WebSocket voice session
+-> Deepgram live transcription
+-> Grok streaming response
+-> Google TTS audio chunks
+-> iPhone speaker playback
+-> return to listening without closing the session
 ```
 
-The Phase 5 implementation prepares the app for this by configuring mobile audio sessions, Android foreground-service declarations, and interruption handling. Physical-device testing is still required.
+The upload-per-turn route remains a fallback. The Phase 5 implementation prepares the app for streaming by configuring mobile audio sessions, Android foreground-service declarations, and interruption handling. Physical-device testing is still required.
 
 ## iOS Constraints
 Apple allows background audio behavior when the app declares `UIBackgroundModes` with `audio` and configures the audio session correctly. For Rex, the right first configuration is:

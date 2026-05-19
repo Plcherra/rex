@@ -213,6 +213,39 @@ def test_prompt_service_injects_structured_memory_before_generic_memory():
     assert "plan: Visa runway" in system_content
 
 
+def test_prompt_service_labels_plan_with_linked_person():
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
+
+    messages = service.build_messages(
+        user_message="What do you remember about the date plan?",
+        structured_context={
+            "entities": [
+                {
+                    "id": "entity-melissa",
+                    "entity_type": "person",
+                    "display_name": "Melissa",
+                    "relationship": "dating interest from work",
+                }
+            ],
+            "plans": [
+                {
+                    "id": "plan-date",
+                    "plan_type": "dating",
+                    "title": "Dinner invitation",
+                    "desired_outcome": "Successful date.",
+                    "primary_entity_id": "entity-melissa",
+                    "relevance_reason": "Matched current message terms: date, plan",
+                }
+            ],
+        },
+    )
+
+    system_content = messages[0]["content"]
+    assert "- plan/dating Dinner invitation for Melissa: Successful date." in (
+        system_content
+    )
+
+
 def test_prompt_service_injects_accountability_before_generic_memory():
     service = PromptService(TimeContextService(timezone_name="America/New_York"))
 

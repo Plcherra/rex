@@ -405,6 +405,7 @@ class SupabaseMemoryService:
             ),
             reverse=True,
         )
+        scored_memories = self._filter_stale_corrected_memories(scored_memories)
         return scored_memories[:limit]
 
     async def get_structured_memory_context(self, query: str) -> dict:
@@ -470,6 +471,24 @@ class SupabaseMemoryService:
             for commitment in selected_commitments
             if commitment.get("entity_id")
         )
+        selected_entity_ids.update(
+            str(plan.get("primary_entity_id"))
+            for plan in selected_plans
+            if plan.get("primary_entity_id")
+        )
+        related_entities = self._related_records(
+            entities,
+            link_field="id",
+            selected_ids=selected_entity_ids,
+            weight_field="importance",
+            status_values={"active"},
+            limit=STRUCTURED_MEMORY_RELATED_LIMIT,
+        )
+        selected_entities = self._merge_related_records(
+            selected_entities,
+            related_entities,
+        )
+        selected_entity_ids = {str(entity.get("id")) for entity in selected_entities}
         related_plans = self._related_records(
             plans,
             link_field="primary_entity_id",
@@ -1127,10 +1146,13 @@ class SupabaseMemoryService:
         )
         importance_score = max(1, min(int(memory.get("importance") or 3), 5)) / 5
         recency_score = self._recency_score(memory)
+        correction_pairs = self._memory_correction_pairs(memory)
+        correction_boost = 0.16 if correction_pairs else 0
         relevance_score = (
             (0.65 * overlap_score)
             + (0.25 * importance_score)
             + (0.10 * recency_score)
+            + correction_boost
         )
 
         if relevance_score < RELEVANT_MEMORY_MINIMUM_SCORE:
@@ -1142,6 +1164,8 @@ class SupabaseMemoryService:
             reason = "Included high-priority user preference."
         else:
             reason = "Included as recent important context."
+        if correction_pairs:
+            reason = f"{reason}. Includes corrected current truth."
 
         return {
             **memory,
@@ -1220,16 +1244,20 @@ class SupabaseMemoryService:
         )
         weight_score = weight / 5
         recency_score = self._recency_score(record)
+        exact_match_boost = self._exact_match_boost(record_text, query_terms)
         relevance_score = (
             (0.62 * overlap_score)
             + (0.30 * weight_score)
             + (0.08 * recency_score)
+            + exact_match_boost
         )
         if relevance_score < STRUCTURED_MEMORY_MINIMUM_SCORE:
             return None
 
         if matched_terms:
             reason = f"Matched current message terms: {', '.join(matched_terms[:6])}"
+            if exact_match_boost:
+                reason = f"{reason}. Strong exact-name match."
         elif is_high_priority:
             reason = "Included high-priority active structured memory."
         else:
@@ -1304,6 +1332,99 @@ class SupabaseMemoryService:
             )
             seen_ids.add(record_id)
         return merged
+
+    def _filter_stale_corrected_memories(
+        self,
+        scored_memories: list[dict],
+    ) -> list[dict]:
+        correction_pairs = []
+        for memory in scored_memories:
+            for old_value, new_value in self._memory_correction_pairs(memory):
+                correction_pairs.append(
+                    {
+                        "source_id": str(memory.get("id") or ""),
+                        "old": old_value,
+                        "new": new_value,
+                    }
+                )
+        if not correction_pairs:
+            return scored_memories
+
+        filtered = []
+        for memory in scored_memories:
+            memory_id = str(memory.get("id") or "")
+            content = str(memory.get("content") or "")
+            stale = False
+            for pair in correction_pairs:
+                if memory_id == pair["source_id"]:
+                    continue
+                if self._contains_word(content, pair["old"]) and not self._contains_word(
+                    content,
+                    pair["new"],
+                ):
+                    stale = True
+                    break
+            if not stale:
+                filtered.append(memory)
+        return filtered
+
+    def _memory_correction_pairs(self, memory: dict) -> list[tuple[str, str]]:
+        content = str(memory.get("content") or "")
+        if not content:
+            return []
+
+        pairs: list[tuple[str, str]] = []
+        correction_patterns = [
+            r"\b(?P<new>[A-Z][A-Za-z]{2,})\b[^.\n]{0,120}?\b(?:not|corrected from|instead of|rather than)\s+(?P<old>[A-Z][A-Za-z]{1,})\b",
+            r"\b(?:not|wrong|incorrect)\s+(?P<old>[A-Z][A-Za-z]{1,})\b[^.\n]{0,120}?\b(?:correct|real|actual|now|is)\s+(?P<new>[A-Z][A-Za-z]{2,})\b",
+            r"\b(?P<old>[A-Z][A-Za-z]{1,})\b[^.\n]{0,80}?\b(?:was wrong|is wrong)\b[^.\n]{0,120}?\b(?P<new>[A-Z][A-Za-z]{2,})\b",
+        ]
+        for pattern in correction_patterns:
+            for match in re.finditer(pattern, content):
+                old_value = match.group("old").strip()
+                new_value = match.group("new").strip()
+                if self._valid_correction_pair(old_value, new_value):
+                    pairs.append((old_value, new_value))
+        for match in re.finditer(
+            r"\b(?:corrected from|not|instead of|rather than)\s+(?P<old>[A-Z][A-Za-z]{1,})\b",
+            content,
+        ):
+            old_value = match.group("old").strip()
+            prefix = content[: match.start()]
+            new_value = self._last_name_candidate(prefix)
+            if new_value and self._valid_correction_pair(old_value, new_value):
+                pairs.append((old_value, new_value))
+
+        return list(dict.fromkeys(pairs))
+
+    def _valid_correction_pair(self, old_value: str, new_value: str) -> bool:
+        if old_value.lower() == new_value.lower():
+            return False
+        blocked_values = {"the", "this", "that", "user", "person", "name"}
+        return new_value.lower() not in blocked_values
+
+    def _last_name_candidate(self, text: str) -> Optional[str]:
+        blocked_values = {"The", "This", "That", "User", "Person", "Name"}
+        candidates = [
+            candidate
+            for candidate in re.findall(r"\b[A-Z][A-Za-z]{2,}\b", text)
+            if candidate not in blocked_values
+        ]
+        return candidates[-1] if candidates else None
+
+    def _contains_word(self, text: str, word: str) -> bool:
+        return re.search(rf"\b{re.escape(word)}\b", text, flags=re.I) is not None
+
+    def _exact_match_boost(self, record_text: str, query_terms: set[str]) -> float:
+        if not query_terms:
+            return 0
+        record_terms = self._expanded_terms(record_text)
+        matched_terms = query_terms & record_terms
+        if not matched_terms:
+            return 0
+        if len(matched_terms) >= 2:
+            return 0.08
+        return 0.04
 
     def _expanded_terms(self, text: str) -> set[str]:
         terms = {

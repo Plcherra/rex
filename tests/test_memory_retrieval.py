@@ -357,6 +357,43 @@ async def test_get_relevant_memories_ignores_inactive_stale_correction_rows():
 
 
 @pytest.mark.asyncio
+async def test_get_relevant_memories_prefers_active_correction_over_stale_row():
+    service = InMemoryRetrievalService(
+        [
+            {
+                "id": "memory-stale-name",
+                "memory_type": "event",
+                "content": "I am planning to ask Al out for dinner Monday.",
+                "importance": 4,
+                "active": True,
+                "created_at": "2026-05-18T19:00:00Z",
+                "last_accessed_at": "2026-05-18T19:00:00Z",
+            },
+            {
+                "id": "memory-corrected-name",
+                "memory_type": "fact",
+                "content": (
+                    "The person for the next-week dinner plan is Melissa, "
+                    "corrected from Al."
+                ),
+                "importance": 4,
+                "active": True,
+                "created_at": "2026-05-19T01:00:00Z",
+                "last_accessed_at": "2026-05-19T01:00:00Z",
+            },
+        ]
+    )
+
+    memories = await service.get_relevant_memories(
+        "Do you remember the person for my next week dinner plan?",
+        limit=5,
+    )
+
+    assert [memory["id"] for memory in memories] == ["memory-corrected-name"]
+    assert "corrected current truth" in memories[0]["relevance_reason"]
+
+
+@pytest.mark.asyncio
 async def test_get_structured_memory_context_ranks_records_and_links_children():
     service = InMemoryRetrievalService(
         [],
@@ -532,6 +569,48 @@ async def test_structured_memory_context_includes_plans_linked_to_selected_perso
     assert [milestone["id"] for milestone in context["plan_milestones"]] == [
         "milestone-date-line"
     ]
+
+
+@pytest.mark.asyncio
+async def test_structured_memory_context_includes_person_linked_to_selected_plan():
+    service = InMemoryRetrievalService(
+        memories=[],
+        entities=[
+            {
+                "id": "entity-melissa",
+                "entity_type": "person",
+                "display_name": "Melissa",
+                "normalized_name": "melissa",
+                "aliases": ["girl from work"],
+                "relationship": "Dating interest",
+                "summary": "Person connected to the next-week date plan.",
+                "importance": 4,
+                "status": "active",
+                "active": True,
+            }
+        ],
+        plans=[
+            {
+                "id": "plan-date",
+                "plan_type": "dating",
+                "title": "Dinner invitation",
+                "description": "Ask Melissa out next Monday.",
+                "desired_outcome": "Successful date with Melissa.",
+                "primary_entity_id": "entity-melissa",
+                "priority": 4,
+                "status": "active",
+                "active": True,
+            }
+        ],
+    )
+
+    context = await service.get_structured_memory_context(
+        "Do you remember the next week date plan?",
+    )
+
+    assert [plan["id"] for plan in context["plans"]] == ["plan-date"]
+    assert [entity["id"] for entity in context["entities"]] == ["entity-melissa"]
+    assert context["entities"][0]["relevance_reason"]
 
 
 @pytest.mark.asyncio

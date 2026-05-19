@@ -273,7 +273,7 @@ class PromptService:
             used_characters = self._append_structured_line(
                 lines,
                 used_characters,
-                self._plan_line(plan),
+                self._plan_line(plan, entity_names),
             )
         for milestone in structured_context.get("plan_milestones") or []:
             used_characters = self._append_structured_line(
@@ -363,12 +363,15 @@ class PromptService:
             line = f"{line}: {rule_text}"
         return self._with_relevance(line, rule)
 
-    def _plan_line(self, plan: dict) -> Optional[str]:
+    def _plan_line(self, plan: dict, entity_names: dict[str, str]) -> Optional[str]:
         title = plan.get("title")
         if not title:
             return None
 
         line = f"- plan/{plan.get('plan_type') or 'goal'} {title}"
+        entity_name = entity_names.get(str(plan.get("primary_entity_id") or ""))
+        if entity_name:
+            line = f"{line} for {entity_name}"
         desired_outcome = plan.get("desired_outcome")
         description = plan.get("description")
         if desired_outcome:

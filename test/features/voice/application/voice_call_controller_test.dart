@@ -511,6 +511,44 @@ void main() {
   );
 
   test(
+    'VoiceCallController stops Rex when the user starts speaking over playback',
+    () async {
+      final streamingCaptureService = FakeStreamingAudioCaptureService();
+      final streamingSession = FakeStreamingVoiceSession();
+      final streamingApi = FakeStreamingVoiceApi(session: streamingSession);
+      final playbackService = FakeAudioPlaybackService();
+      final bargeInDetectionService = FakeBargeInDetectionService();
+      final container = voiceCallTestContainer(
+        playbackService: playbackService,
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+        bargeInDetectionService: bargeInDetectionService,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
+      expect(bargeInDetectionService.startCount, 1);
+
+      bargeInDetectionService.triggerBargeIn();
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.listening);
+      expect(streamingSession.interruptCount, 1);
+      expect(playbackService.stopCount, greaterThanOrEqualTo(1));
+
+      await pumpEventQueue();
+      expect(streamingCaptureService.captureCount, greaterThanOrEqualTo(2));
+    },
+  );
+
+  test(
     'VoiceCallController uses a fresh stream for each active call turn',
     () async {
       final streamingCaptureService = FakeStreamingAudioCaptureService();
@@ -633,6 +671,7 @@ ProviderContainer voiceCallTestContainer({
   FakeAudioCaptureService? captureService,
   FakeStreamingAudioCaptureService? streamingAudioCaptureService,
   FakeAudioPlaybackService? playbackService,
+  FakeBargeInDetectionService? bargeInDetectionService,
   FakeCloudVoiceApi? cloudVoiceApi,
   FakeStreamingVoiceApi? streamingVoiceApi,
   bool streamingVoiceEnabled = false,
@@ -644,6 +683,7 @@ ProviderContainer voiceCallTestContainer({
         captureService: captureService,
         streamingAudioCaptureService: streamingAudioCaptureService,
         playbackService: playbackService,
+        bargeInDetectionService: bargeInDetectionService,
         cloudVoiceApi: cloudVoiceApi,
         streamingVoiceApi: streamingVoiceApi,
         streamingVoiceEnabled: streamingVoiceEnabled,
@@ -657,6 +697,7 @@ List<Override> voiceCallTestOverrides({
   FakeAudioCaptureService? captureService,
   FakeStreamingAudioCaptureService? streamingAudioCaptureService,
   FakeAudioPlaybackService? playbackService,
+  FakeBargeInDetectionService? bargeInDetectionService,
   FakeCloudVoiceApi? cloudVoiceApi,
   FakeStreamingVoiceApi? streamingVoiceApi,
   bool streamingVoiceEnabled = false,
@@ -673,6 +714,9 @@ List<Override> voiceCallTestOverrides({
     ),
     audioPlaybackServiceProvider.overrideWithValue(
       playbackService ?? FakeAudioPlaybackService(),
+    ),
+    bargeInDetectionServiceProvider.overrideWithValue(
+      bargeInDetectionService ?? FakeBargeInDetectionService(),
     ),
     voiceAudioSessionServiceProvider.overrideWithValue(
       FakeVoiceAudioSessionService(),
@@ -766,6 +810,30 @@ class FakeStreamingAudioCaptureService implements StreamingAudioCaptureService {
     await onAudioChunk(Uint8List.fromList([1, 2, 3]));
     onSpeechEnded();
     return true;
+  }
+}
+
+class FakeBargeInDetectionService implements BargeInDetectionService {
+  BargeInCallback? _onBargeIn;
+  var startCount = 0;
+  var stopCount = 0;
+
+  @override
+  Future<void> start({
+    required VoiceCaptureConfig config,
+    required BargeInCallback onBargeIn,
+  }) async {
+    startCount++;
+    _onBargeIn = onBargeIn;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCount++;
+  }
+
+  void triggerBargeIn() {
+    _onBargeIn?.call();
   }
 }
 

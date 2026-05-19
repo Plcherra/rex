@@ -26,6 +26,10 @@ final streamingAudioCaptureServiceProvider =
       (ref) => PackageStreamingAudioCaptureService(),
     );
 
+final bargeInDetectionServiceProvider = Provider<BargeInDetectionService>(
+  (ref) => PackageBargeInDetectionService(),
+);
+
 final streamingVoiceApiProvider = Provider<StreamingVoiceApi>(
   (ref) => StreamingVoiceApi(),
 );
@@ -59,11 +63,13 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   StreamingVoiceSession? _activeStreamingSession;
   AudioPlaybackService? _activePlaybackService;
   StreamingAudioPlaybackQueue? _activeStreamingPlaybackQueue;
+  BargeInDetectionService? _activeBargeInDetectionService;
   VoiceAudioSessionService? _activeAudioSessionService;
   BackgroundVoiceService? _activeBackgroundVoiceService;
   var _finalTranscriptBuffer = '';
   var _partialTranscriptBuffer = '';
   var _isStartingCall = false;
+  var _isBargeInMonitoring = false;
 
   @override
   VoiceCallState build() {
@@ -72,6 +78,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       final captureService = _activeCaptureService;
       final playbackService = _activePlaybackService;
       final streamingPlaybackQueue = _activeStreamingPlaybackQueue;
+      final bargeInDetectionService = _activeBargeInDetectionService;
       final streamingCaptureService = _activeStreamingCaptureService;
       final streamingSession = _activeStreamingSession;
       final audioSessionService = _activeAudioSessionService;
@@ -87,6 +94,9 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       }
       if (streamingPlaybackQueue != null) {
         unawaited(streamingPlaybackQueue.cancel());
+      }
+      if (bargeInDetectionService != null) {
+        unawaited(bargeInDetectionService.stop());
       }
       if (playbackService != null) {
         unawaited(playbackService.stop());
@@ -249,6 +259,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _callGeneration++;
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
+    _stopBargeInMonitoring();
     final streamingSession = _activeStreamingSession;
     _activeStreamingSession = null;
     streamingSession?.interrupt();
@@ -270,6 +281,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     final generation = ++_callGeneration;
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
+    _stopBargeInMonitoring();
     final streamingSession = _activeStreamingSession;
     _activeStreamingSession = null;
     streamingSession?.interrupt();
@@ -296,6 +308,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       _callGeneration++;
       unawaited(_captureService.cancel());
       unawaited(_streamingCaptureService.cancel());
+      _stopBargeInMonitoring();
       final streamingSession = _activeStreamingSession;
       _activeStreamingSession = null;
       streamingSession?.interrupt();
@@ -328,6 +341,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _callGeneration++;
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
+    _stopBargeInMonitoring();
     final streamingSession = _activeStreamingSession;
     _activeStreamingSession = null;
     streamingSession?.interrupt();
@@ -351,6 +365,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _callGeneration++;
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
+    _stopBargeInMonitoring();
     final streamingSession = _activeStreamingSession;
     _activeStreamingSession = null;
     streamingSession?.interrupt();
@@ -371,6 +386,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     _callGeneration++;
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
+    _stopBargeInMonitoring();
     final streamingSession = _activeStreamingSession;
     _activeStreamingSession = null;
     streamingSession?.interrupt();
@@ -545,16 +561,19 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
       startThinking(finalTranscript: response.transcript);
       startSpeaking(response.responseText);
+      _startBargeInMonitoring(generation);
       await _playbackService.playBase64Audio(
         response.audioBase64,
         contentType: response.audioContentType,
         onComplete: () {
           if (_isCurrentCall(generation)) {
+            _stopBargeInMonitoring();
             completeSpeaking();
           }
         },
         onError: (message) {
           if (_isCurrentCall(generation)) {
+            _stopBargeInMonitoring();
             fail(message);
           }
         },
@@ -589,15 +608,18 @@ class VoiceCallController extends Notifier<VoiceCallState> {
         onChunkStarted: (_) {
           if (_isCurrentCall(generation)) {
             startSpeaking(assistantText);
+            _startBargeInMonitoring(generation);
           }
         },
         onQueueDrained: () {
+          _stopBargeInMonitoring();
           if (_isCurrentCall(generation) &&
               state.phase == VoiceCallPhase.speaking) {
             completeSpeaking();
           }
         },
         onError: (message) {
+          _stopBargeInMonitoring();
           if (_isCurrentCall(generation)) {
             fail(message);
           }
@@ -715,6 +737,41 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
   bool _isCurrentCall(int generation) => generation == _callGeneration;
 
+  void _startBargeInMonitoring(int generation) {
+    if (_isBargeInMonitoring ||
+        !_isCurrentCall(generation) ||
+        state.phase != VoiceCallPhase.speaking ||
+        state.isMuted) {
+      return;
+    }
+
+    _isBargeInMonitoring = true;
+    unawaited(
+      _bargeInDetectionService
+          .start(
+            config: ref.read(voiceCaptureConfigProvider),
+            onBargeIn: () {
+              if (_isCurrentCall(generation) &&
+                  state.phase == VoiceCallPhase.speaking &&
+                  !state.isMuted) {
+                interruptAndListen();
+              }
+            },
+          )
+          .catchError((Object _) {
+            _isBargeInMonitoring = false;
+          }),
+    );
+  }
+
+  void _stopBargeInMonitoring() {
+    if (!_isBargeInMonitoring && _activeBargeInDetectionService == null) {
+      return;
+    }
+    _isBargeInMonitoring = false;
+    unawaited(_bargeInDetectionService.stop());
+  }
+
   void _clearVisibleTranscript() {
     _finalTranscriptBuffer = '';
     _partialTranscriptBuffer = '';
@@ -739,7 +796,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       _finalTranscriptBuffer = next;
       return;
     }
-    if (_finalTranscriptBuffer == next || _finalTranscriptBuffer.endsWith(next)) {
+    if (_finalTranscriptBuffer == next ||
+        _finalTranscriptBuffer.endsWith(next)) {
       return;
     }
     if (next.startsWith(_finalTranscriptBuffer)) {
@@ -816,6 +874,16 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     final queue = ref.read(streamingAudioPlaybackQueueProvider);
     _activeStreamingPlaybackQueue = queue;
     return queue;
+  }
+
+  BargeInDetectionService get _bargeInDetectionService {
+    final existingService = _activeBargeInDetectionService;
+    if (existingService != null) {
+      return existingService;
+    }
+    final service = ref.read(bargeInDetectionServiceProvider);
+    _activeBargeInDetectionService = service;
+    return service;
   }
 
   VoiceAudioSessionService get _audioSessionService {

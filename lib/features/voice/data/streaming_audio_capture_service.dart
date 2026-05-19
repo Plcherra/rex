@@ -8,6 +8,7 @@ import 'package:rex/features/voice/data/audio_capture_service.dart';
 
 typedef AudioChunkCallback = Future<void> Function(Uint8List chunk);
 typedef SpeechEndCallback = void Function();
+typedef BargeInCallback = void Function();
 
 abstract class StreamingAudioCaptureService {
   Future<bool> streamUtterance({
@@ -18,6 +19,121 @@ abstract class StreamingAudioCaptureService {
   });
 
   Future<void> cancel();
+}
+
+abstract class BargeInDetectionService {
+  Future<void> start({
+    required VoiceCaptureConfig config,
+    required BargeInCallback onBargeIn,
+  });
+
+  Future<void> stop();
+}
+
+class PackageBargeInDetectionService implements BargeInDetectionService {
+  static const _bargeInGracePeriod = Duration(milliseconds: 800);
+  static const _bargeInMinimumSpeechDuration = Duration(milliseconds: 260);
+  static const _bargeInSpeechThresholdDb = -34.0;
+
+  PackageBargeInDetectionService({
+    AudioRecorder? recorder,
+    DateTime Function()? now,
+  }) : _recorder = recorder ?? AudioRecorder(),
+       _now = now ?? DateTime.now;
+
+  final AudioRecorder _recorder;
+  final DateTime Function() _now;
+  StreamSubscription<Uint8List>? _streamSubscription;
+  DateTime? _startedAt;
+  DateTime? _speechStartedAt;
+  var _notified = false;
+
+  @override
+  Future<void> start({
+    required VoiceCaptureConfig config,
+    required BargeInCallback onBargeIn,
+  }) async {
+    await stop();
+    _startedAt = _now();
+    _speechStartedAt = null;
+    _notified = false;
+
+    final stream = await _recorder.startStream(
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+      ),
+    );
+
+    _streamSubscription = stream.listen(
+      (chunk) {
+        if (_notified) {
+          return;
+        }
+
+        final startedAt = _startedAt;
+        final now = _now();
+        if (startedAt == null ||
+            now.difference(startedAt) < _bargeInGracePeriod) {
+          return;
+        }
+
+        final currentDb = _pcm16Decibels(chunk);
+        if (currentDb < _bargeInSpeechThresholdDb) {
+          _speechStartedAt = null;
+          return;
+        }
+
+        _speechStartedAt ??= now;
+        if (now.difference(_speechStartedAt!) >=
+            _bargeInMinimumSpeechDuration) {
+          _notified = true;
+          onBargeIn();
+          unawaited(stop());
+        }
+      },
+      onError: (_) {
+        unawaited(stop());
+      },
+      cancelOnError: true,
+    );
+  }
+
+  @override
+  Future<void> stop() async {
+    await _streamSubscription?.cancel();
+    _streamSubscription = null;
+    _startedAt = null;
+    _speechStartedAt = null;
+    _notified = false;
+    try {
+      await _recorder.cancel();
+    } on Object {
+      // The recorder may already be stopped.
+    }
+  }
+
+  double _pcm16Decibels(Uint8List chunk) {
+    if (chunk.length < 2) {
+      return -160;
+    }
+
+    var sumSquares = 0.0;
+    var sampleCount = 0;
+    final byteData = ByteData.sublistView(chunk);
+    for (var offset = 0; offset + 1 < chunk.length; offset += 2) {
+      final sample = byteData.getInt16(offset, Endian.little) / 32768.0;
+      sumSquares += sample * sample;
+      sampleCount++;
+    }
+    if (sampleCount == 0 || sumSquares == 0) {
+      return -160;
+    }
+
+    final rms = sqrt(sumSquares / sampleCount);
+    return 20 * log(rms) / ln10;
+  }
 }
 
 class PackageStreamingAudioCaptureService

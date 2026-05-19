@@ -11,9 +11,23 @@ from app.config import Settings, get_settings
 from app.services.http_client import request_with_retries
 
 VALID_MEMORY_TYPES = {"fact", "preference", "event"}
+VALID_MEMORY_CORRECTION_TYPES = {
+    "entity_name",
+    "entity_relationship",
+    "plan_detail",
+    "rule_detail",
+    "commitment_detail",
+    "location",
+    "preference",
+    "other",
+}
 LONG_TERM_MEMORY_SELECT = (
     "id,memory_type,content,source_conversation_id,source_message_id,"
     "importance,active,created_at,updated_at,last_accessed_at"
+)
+MEMORY_CORRECTION_SELECT = (
+    "id,correction_type,old_value,new_value,target_table,target_id,"
+    "source_conversation_id,source_message_id,applied,confidence,metadata,created_at"
 )
 ENTITIES_TABLE = "entities"
 ENTITY_EVENTS_TABLE = "entity_events"
@@ -555,6 +569,57 @@ class SupabaseMemoryService:
     async def deactivate_long_term_memory(self, memory_id: str) -> bool:
         memory = await self.update_long_term_memory(memory_id, active=False)
         return memory is not None
+
+    async def create_memory_correction(self, correction: dict) -> dict:
+        correction_type = correction.get("correction_type")
+        if correction_type not in VALID_MEMORY_CORRECTION_TYPES:
+            raise MemoryServiceError("Invalid memory correction type.", 400)
+        new_value = str(correction.get("new_value") or "").strip()
+        if not new_value:
+            raise MemoryServiceError("Memory correction new value is required.", 400)
+
+        payload = {
+            "correction_type": correction_type,
+            "old_value": correction.get("old_value"),
+            "new_value": new_value,
+            "target_table": correction.get("target_table"),
+            "target_id": correction.get("target_id"),
+            "source_conversation_id": correction.get("source_conversation_id"),
+            "source_message_id": correction.get("source_message_id"),
+            "applied": bool(correction.get("applied", False)),
+            "confidence": correction.get("confidence", 0.9),
+            "metadata": correction.get("metadata") or {},
+        }
+        return await self._create_record(
+            self.settings.supabase_memory_corrections_table,
+            payload,
+            MEMORY_CORRECTION_SELECT,
+        )
+
+    async def list_memory_corrections(
+        self,
+        limit: int = 50,
+        correction_type: Optional[str] = None,
+        applied: Optional[bool] = None,
+        target_table: Optional[str] = None,
+        target_id: Optional[str] = None,
+    ) -> list[dict]:
+        if correction_type is not None and (
+            correction_type not in VALID_MEMORY_CORRECTION_TYPES
+        ):
+            raise MemoryServiceError("Invalid memory correction type.", 400)
+        return await self._list_records(
+            self.settings.supabase_memory_corrections_table,
+            select=MEMORY_CORRECTION_SELECT,
+            filters={
+                "correction_type": correction_type,
+                "applied": applied,
+                "target_table": target_table,
+                "target_id": target_id,
+            },
+            order="created_at.desc",
+            limit=limit,
+        )
 
     async def create_entity(self, entity: dict) -> dict:
         return await self._create_record(ENTITIES_TABLE, entity, ENTITY_SELECT)

@@ -160,6 +160,22 @@ class MemoryStore(Protocol):
     ) -> dict:
         pass
 
+    async def update_long_term_memory(
+        self,
+        memory_id: str,
+        memory_type: Optional[str] = None,
+        content: Optional[str] = None,
+        importance: Optional[int] = None,
+        active: Optional[bool] = None,
+    ) -> Optional[dict]:
+        pass
+
+    async def deactivate_long_term_memory(self, memory_id: str) -> bool:
+        pass
+
+    async def create_memory_correction(self, correction: dict) -> dict:
+        pass
+
     async def create_entity(self, payload: dict) -> dict:
         pass
 
@@ -236,6 +252,17 @@ class MemoryExtractionService:
         for candidate in candidates:
             normalized = self._normalize_candidate(candidate)
             if normalized is None:
+                continue
+            corrected_memory = await self._upsert_corrected_memory(
+                normalized,
+                conversation_id=conversation_id,
+                user_message_id=str(user_message.get("id"))
+                if user_message.get("id")
+                else None,
+                source_text=str(user_message.get("content", "")),
+            )
+            if corrected_memory is not None:
+                saved_memories.append(corrected_memory)
                 continue
             if await self._is_duplicate(normalized["content"]):
                 continue
@@ -508,6 +535,145 @@ class MemoryExtractionService:
                 )
 
         return saved
+
+    async def _upsert_corrected_memory(
+        self,
+        normalized: dict,
+        *,
+        conversation_id: str,
+        user_message_id: Optional[str],
+        source_text: str = "",
+    ) -> Optional[dict]:
+        correction_source = f"{normalized['content']} {source_text}".strip()
+        correction = self._correction_terms(correction_source)
+        if correction is None:
+            return None
+
+        existing_memories = await self.memory_service.get_relevant_memories(
+            query=correction_source,
+            limit=20,
+        )
+        stale_memories = [
+            memory
+            for memory in existing_memories
+            if self._is_stale_corrected_memory(memory, correction)
+        ]
+        if not stale_memories:
+            return None
+
+        update_method = getattr(self.memory_service, "update_long_term_memory", None)
+        deactivate_method = getattr(
+            self.memory_service,
+            "deactivate_long_term_memory",
+            None,
+        )
+
+        updated_memory = None
+        if update_method is not None:
+            try:
+                updated_memory = await update_method(
+                    stale_memories[0]["id"],
+                    memory_type=normalized["memory_type"],
+                    content=normalized["content"],
+                    importance=normalized["importance"],
+                    active=True,
+                )
+            except Exception:
+                updated_memory = None
+
+        if deactivate_method is not None:
+            start_index = 1 if updated_memory is not None else 0
+            for stale_memory in stale_memories[start_index:]:
+                try:
+                    await deactivate_method(stale_memory["id"])
+                except Exception:
+                    continue
+
+        if updated_memory is None:
+            return None
+
+        await self._record_memory_correction(
+            correction=correction,
+            normalized=normalized,
+            updated_memory=updated_memory,
+            stale_memories=stale_memories,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+        )
+
+        return {
+            **updated_memory,
+            "source_conversation_id": updated_memory.get("source_conversation_id")
+            or conversation_id,
+            "source_message_id": updated_memory.get("source_message_id")
+            or user_message_id,
+            "extraction_kind": "long_term_memory",
+            "extraction_action": "updated_correction",
+            "extraction_rationale": normalized["rationale"],
+        }
+
+    async def _record_memory_correction(
+        self,
+        *,
+        correction: dict[str, set[str]],
+        normalized: dict,
+        updated_memory: dict,
+        stale_memories: list[dict],
+        conversation_id: str,
+        user_message_id: Optional[str],
+    ) -> None:
+        create_correction = getattr(self.memory_service, "create_memory_correction", None)
+        if create_correction is None:
+            return
+
+        wrong_values = sorted(correction["wrong"])
+        corrected_values = sorted(correction["corrected"])
+        old_value = ", ".join(wrong_values) if wrong_values else None
+        new_value = (
+            ", ".join(corrected_values)
+            if corrected_values
+            else normalized["content"]
+        )
+        payload = {
+            "correction_type": self._correction_type(normalized["content"]),
+            "old_value": old_value,
+            "new_value": new_value,
+            "target_table": "long_term_memory",
+            "target_id": updated_memory.get("id"),
+            "source_conversation_id": conversation_id,
+            "source_message_id": user_message_id,
+            "applied": True,
+            "confidence": 0.9,
+            "metadata": {
+                "updated_memory_id": updated_memory.get("id"),
+                "stale_memory_ids": [
+                    memory.get("id")
+                    for memory in stale_memories
+                    if memory.get("id")
+                ],
+                "corrected_content": normalized["content"],
+                "rationale": normalized.get("rationale"),
+            },
+        }
+        try:
+            await create_correction(payload)
+        except Exception:
+            return
+
+    def _correction_type(self, content: str) -> str:
+        terms = self._normalized_text(content).split()
+        term_set = set(terms)
+        if term_set & {"live", "lives", "living", "location", "state", "timezone"}:
+            return "location"
+        if term_set & {"date", "dinner", "plan", "restaurant", "monday"}:
+            return "plan_detail"
+        if term_set & {"rule", "budget", "spending", "doordash", "uber"}:
+            return "rule_detail"
+        if term_set & {"prefer", "preference"}:
+            return "preference"
+        if term_set & {"name", "named", "person", "woman", "girl"}:
+            return "entity_name"
+        return "other"
 
     def _normalize_entity_candidate(
         self,
@@ -986,6 +1152,103 @@ class MemoryExtractionService:
                 return True
 
         return False
+
+    def _correction_terms(self, content: str) -> Optional[dict[str, set[str]]]:
+        lowered = content.lower()
+        if not any(
+            term in lowered
+            for term in (
+                "not ",
+                "wrong",
+                "corrected from",
+                "change",
+                "replace",
+                "update",
+            )
+        ):
+            return None
+
+        wrong_terms: set[str] = set()
+        corrected_terms: set[str] = set()
+        pair_patterns = (
+            r"\b(?:change|update|replace)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9]{1,24})(?:\s+(?:memory|name|reference|plan|person))?\s+(?:to|for|with)\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bfrom\s+([A-Za-z][A-Za-z0-9]{1,24})\s+to\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+        )
+        wrong_patterns = (
+            r"\bnot\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bcorrected\s+from\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bcorrected\s+from\s+[A-Za-z][A-Za-z0-9]{1,24}\s+or\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\b([A-Za-z][A-Za-z0-9]{1,24})\s+was\s+wrong\b",
+        )
+        corrected_patterns = (
+            r"\bis\s+named\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bcorrect\s+name\s+is\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bcorrect\s+reference\s+(?:is|was)\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bperson\s+(?:is|was|now)\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bis\s+([A-Za-z][A-Za-z0-9]{1,24}),?\s+corrected\s+from\b",
+        )
+
+        for pattern in pair_patterns:
+            for wrong, corrected in re.findall(pattern, content, flags=re.I):
+                self._add_correction_term(wrong_terms, wrong)
+                self._add_correction_term(corrected_terms, corrected)
+        for pattern in wrong_patterns:
+            for match in re.findall(pattern, content, flags=re.I):
+                self._add_correction_term(wrong_terms, match)
+        for pattern in corrected_patterns:
+            for match in re.findall(pattern, content, flags=re.I):
+                self._add_correction_term(corrected_terms, match)
+
+        wrong_terms -= corrected_terms
+        if not wrong_terms:
+            return None
+        return {"wrong": wrong_terms, "corrected": corrected_terms}
+
+    def _add_correction_term(self, terms: set[str], value: Any) -> None:
+        if isinstance(value, tuple):
+            for item in value:
+                self._add_correction_term(terms, item)
+            return
+        term = self._normalized_text(value)
+        ignored_terms = {
+            "actual",
+            "another",
+            "correct",
+            "from",
+            "name",
+            "named",
+            "person",
+            "prior",
+            "real",
+            "reference",
+            "the",
+            "wrong",
+        }
+        if len(term) < 2 or term in ignored_terms:
+            return
+        terms.add(term)
+
+    def _is_stale_corrected_memory(
+        self,
+        memory: dict,
+        correction: dict[str, set[str]],
+    ) -> bool:
+        if memory.get("active") is False:
+            return False
+        if not memory.get("id"):
+            return False
+
+        normalized = self._normalized_text(memory.get("content", ""))
+        if not normalized:
+            return False
+
+        tokens = set(normalized.split())
+        if not tokens.intersection(correction["wrong"]):
+            return False
+        corrected_terms = correction["corrected"]
+        if corrected_terms and tokens.intersection(corrected_terms):
+            return False
+        return True
 
     def _normalized_text(self, text: Any) -> str:
         return " ".join(re.findall(r"[a-z0-9]+", str(text).lower()))

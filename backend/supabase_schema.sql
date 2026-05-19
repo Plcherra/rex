@@ -32,11 +32,53 @@ create table if not exists public.long_term_memory (
   last_accessed_at timestamptz not null default now()
 );
 
+alter table public.long_term_memory
+  add column if not exists superseded_by uuid references public.long_term_memory(id) on delete set null,
+  add column if not exists confidence numeric not null default 0.75 check (confidence between 0 and 1),
+  add column if not exists correction_group text,
+  add column if not exists metadata jsonb not null default '{}'::jsonb;
+
 create index if not exists long_term_memory_active_importance_idx
   on public.long_term_memory (active, importance desc, last_accessed_at desc);
 
 create index if not exists long_term_memory_source_conversation_idx
   on public.long_term_memory (source_conversation_id);
+
+create index if not exists long_term_memory_correction_group_idx
+  on public.long_term_memory (correction_group)
+  where correction_group is not null;
+
+create table if not exists public.memory_corrections (
+  id uuid primary key default gen_random_uuid(),
+  correction_type text not null check (
+    correction_type in (
+      'entity_name',
+      'entity_relationship',
+      'plan_detail',
+      'rule_detail',
+      'commitment_detail',
+      'location',
+      'preference',
+      'other'
+    )
+  ),
+  old_value text,
+  new_value text not null,
+  target_table text,
+  target_id uuid,
+  source_conversation_id uuid references public.conversations(id) on delete set null,
+  source_message_id uuid references public.messages(id) on delete set null,
+  applied boolean not null default false,
+  confidence numeric not null default 0.9 check (confidence between 0 and 1),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists memory_corrections_target_idx
+  on public.memory_corrections (target_table, target_id);
+
+create index if not exists memory_corrections_created_idx
+  on public.memory_corrections (created_at desc);
 
 create table if not exists public.entities (
   id uuid primary key default gen_random_uuid(),

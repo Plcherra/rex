@@ -22,6 +22,9 @@ class FakeMemoryStore:
     def __init__(self, existing_memories=None):
         self.existing_memories = existing_memories or []
         self.saved_memories = []
+        self.updated_memories = []
+        self.deactivated_memory_ids = []
+        self.created_memory_corrections = []
         self.created_entities = []
         self.created_entity_events = []
         self.created_rules = []
@@ -53,6 +56,45 @@ class FakeMemoryStore:
         }
         self.saved_memories.append(memory)
         return memory
+
+    async def update_long_term_memory(
+        self,
+        memory_id,
+        memory_type=None,
+        content=None,
+        importance=None,
+        active=None,
+    ):
+        for memory in self.existing_memories:
+            if memory["id"] != memory_id:
+                continue
+            if memory_type is not None:
+                memory["memory_type"] = memory_type
+            if content is not None:
+                memory["content"] = content
+            if importance is not None:
+                memory["importance"] = importance
+            if active is not None:
+                memory["active"] = active
+            self.updated_memories.append(memory.copy())
+            return memory
+        return None
+
+    async def deactivate_long_term_memory(self, memory_id):
+        self.deactivated_memory_ids.append(memory_id)
+        for memory in self.existing_memories:
+            if memory["id"] == memory_id:
+                memory["active"] = False
+                return True
+        return False
+
+    async def create_memory_correction(self, correction):
+        row = {
+            "id": f"correction-{len(self.created_memory_corrections) + 1}",
+            **correction,
+        }
+        self.created_memory_corrections.append(row)
+        return row
 
     async def create_entity(self, payload):
         entity = {"id": f"entity-{len(self.created_entities) + 1}", **payload}
@@ -516,9 +558,21 @@ async def test_memory_extraction_saves_corrected_person_name_as_current_truth():
         "structured_memory",
         "structured_memory",
     ]
-    assert memory_store.saved_memories[0]["content"] == (
+    assert memory_store.saved_memories == []
+    assert memory_store.updated_memories[0]["content"] == (
         "The woman I am planning a date with is named Melissa, not Al."
     )
+    assert memory_store.created_memory_corrections[0]["correction_type"] == (
+        "plan_detail"
+    )
+    assert memory_store.created_memory_corrections[0]["old_value"] == "al"
+    assert memory_store.created_memory_corrections[0]["new_value"] == "melissa"
+    assert memory_store.created_memory_corrections[0]["target_id"] == (
+        "memory-existing"
+    )
+    assert memory_store.created_memory_corrections[0]["applied"] is True
+    assert saved[0]["id"] == "memory-existing"
+    assert saved[0]["extraction_action"] == "updated_correction"
     assert memory_store.created_entities[0]["display_name"] == "Melissa"
     assert memory_store.created_entities[0]["normalized_name"] == "melissa"
     assert memory_store.created_entity_events[0]["entity_id"] == "entity-1"
@@ -526,6 +580,267 @@ async def test_memory_extraction_saves_corrected_person_name_as_current_truth():
         "relationship_update"
     )
     assert "Al was wrong" in memory_store.created_entity_events[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_updates_stale_memory_when_correction_matches():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [
+            {
+              "memory_type": "fact",
+              "content": "The person for the next-week date plan is Melissa, corrected from Al or AI.",
+              "importance": 4,
+              "rationale": "The user corrected the stale date-plan name."
+            }
+          ],
+          "structured_memories": {}
+        }
+        """
+    )
+    memory_store = FakeMemoryStore(
+        existing_memories=[
+            {
+                "id": "memory-stale",
+                "memory_type": "event",
+                "content": "I am planning to confidently ask Al out for dinner on her off day Monday at a restaurant near my house",
+                "importance": 3,
+                "active": True,
+            }
+        ]
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "Change the Al memory to Melissa.",
+        },
+        {"id": "message-2", "content": "Saved."},
+    )
+
+    assert memory_store.saved_memories == []
+    assert memory_store.updated_memories[0]["id"] == "memory-stale"
+    assert memory_store.updated_memories[0]["memory_type"] == "fact"
+    assert memory_store.updated_memories[0]["importance"] == 4
+    assert memory_store.updated_memories[0]["content"] == (
+        "The person for the next-week date plan is Melissa, corrected from Al or AI."
+    )
+    assert memory_store.created_memory_corrections[0]["old_value"] == "ai, al"
+    assert memory_store.created_memory_corrections[0]["new_value"] == "melissa"
+    assert saved[0]["id"] == "memory-stale"
+    assert saved[0]["extraction_action"] == "updated_correction"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_uses_user_message_to_apply_correction():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [
+            {
+              "memory_type": "fact",
+              "content": "The person for the next-week date plan is Melissa.",
+              "importance": 4,
+              "rationale": "The user corrected the stale date-plan name."
+            }
+          ],
+          "structured_memories": {}
+        }
+        """
+    )
+    memory_store = FakeMemoryStore(
+        existing_memories=[
+            {
+                "id": "memory-stale",
+                "memory_type": "event",
+                "content": "I am planning to ask Al out for dinner Monday.",
+                "importance": 3,
+                "active": True,
+            }
+        ]
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "Change the Al memory to Melissa.",
+        },
+        {"id": "message-2", "content": "Saved."},
+    )
+
+    assert memory_store.saved_memories == []
+    assert memory_store.updated_memories[0]["id"] == "memory-stale"
+    assert memory_store.updated_memories[0]["content"] == (
+        "The person for the next-week date plan is Melissa."
+    )
+    assert memory_store.relevant_queries[0]["query"] == (
+        "The person for the next-week date plan is Melissa. "
+        "Change the Al memory to Melissa."
+    )
+    assert memory_store.created_memory_corrections[0]["target_table"] == (
+        "long_term_memory"
+    )
+    assert memory_store.created_memory_corrections[0]["metadata"][
+        "updated_memory_id"
+    ] == "memory-stale"
+    assert saved[0]["extraction_action"] == "updated_correction"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_updates_stale_location_correction():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [
+            {
+              "memory_type": "fact",
+              "content": "I live in Massachusetts.",
+              "importance": 4,
+              "rationale": "The user corrected their location."
+            }
+          ],
+          "structured_memories": {}
+        }
+        """
+    )
+    memory_store = FakeMemoryStore(
+        existing_memories=[
+            {
+                "id": "memory-location",
+                "memory_type": "fact",
+                "content": "I live in Europe.",
+                "importance": 3,
+                "active": True,
+            }
+        ]
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "I live in Massachusetts, not Europe.",
+        },
+        {"id": "message-2", "content": "Got it."},
+    )
+
+    assert memory_store.saved_memories == []
+    assert memory_store.updated_memories[0]["id"] == "memory-location"
+    assert memory_store.updated_memories[0]["content"] == (
+        "I live in Massachusetts."
+    )
+    assert memory_store.updated_memories[0]["importance"] == 4
+    assert memory_store.created_memory_corrections[0]["correction_type"] == "location"
+    assert memory_store.created_memory_corrections[0]["old_value"] == "europe"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_updates_stale_plan_detail_correction():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [
+            {
+              "memory_type": "event",
+              "content": "The dinner plan is at Cafe Luna, not downtown.",
+              "importance": 4,
+              "rationale": "The user corrected the plan location."
+            }
+          ],
+          "structured_memories": {}
+        }
+        """
+    )
+    memory_store = FakeMemoryStore(
+        existing_memories=[
+            {
+                "id": "memory-plan",
+                "memory_type": "event",
+                "content": "The dinner plan is downtown on Monday.",
+                "importance": 3,
+                "active": True,
+            }
+        ]
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "The dinner plan is at Cafe Luna, not downtown.",
+        },
+        {"id": "message-2", "content": "Updated."},
+    )
+
+    assert memory_store.saved_memories == []
+    assert memory_store.updated_memories[0]["id"] == "memory-plan"
+    assert memory_store.updated_memories[0]["content"] == (
+        "The dinner plan is at Cafe Luna, not downtown."
+    )
+    assert memory_store.created_memory_corrections[0]["correction_type"] == (
+        "plan_detail"
+    )
+    assert memory_store.created_memory_corrections[0]["old_value"] == "downtown"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_deactivates_extra_stale_correction_matches():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [
+            {
+              "memory_type": "fact",
+              "content": "The woman I am planning a date with is named Melissa, not Al.",
+              "importance": 4,
+              "rationale": "The user corrected the stale date-plan name."
+            }
+          ],
+          "structured_memories": {}
+        }
+        """
+    )
+    memory_store = FakeMemoryStore(
+        existing_memories=[
+            {
+                "id": "memory-stale-1",
+                "memory_type": "event",
+                "content": "I am planning to ask Al out for dinner Monday.",
+                "importance": 3,
+                "active": True,
+            },
+            {
+                "id": "memory-stale-2",
+                "memory_type": "event",
+                "content": "Al has Monday off and I plan to ask her out.",
+                "importance": 3,
+                "active": True,
+            },
+        ]
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "Her name is not Al. It is Melissa.",
+        },
+        {"id": "message-2", "content": "Saved."},
+    )
+
+    assert memory_store.updated_memories[0]["id"] == "memory-stale-1"
+    assert memory_store.deactivated_memory_ids == ["memory-stale-2"]
+    assert memory_store.created_memory_corrections[0]["metadata"][
+        "stale_memory_ids"
+    ] == ["memory-stale-1", "memory-stale-2"]
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,22 @@ class FakeStructuredMemoryService(SupabaseMemoryService):
     ("method_name", "table", "body"),
     [
         (
+            "create_memory_correction",
+            "memory_corrections",
+            {
+                "correction_type": "entity_name",
+                "old_value": "Al",
+                "new_value": "Melissa",
+                "target_table": "long_term_memory",
+                "target_id": "memory-1",
+                "source_conversation_id": None,
+                "source_message_id": None,
+                "applied": True,
+                "confidence": 0.9,
+                "metadata": {},
+            },
+        ),
+        (
             "create_entity",
             "entities",
             {
@@ -117,6 +133,12 @@ async def test_structured_memory_list_methods_apply_filters_and_ordering():
     await service.list_plans(plan_type="immigration", status="active")
     await service.list_plan_milestones(plan_id="plan-1", status="open")
     await service.list_commitments(plan_id="plan-1", entity_id="entity-1")
+    await service.list_memory_corrections(
+        correction_type="entity_name",
+        applied=True,
+        target_table="long_term_memory",
+        target_id="memory-1",
+    )
 
     entity_request = service.requests[0]
     assert entity_request["method"] == "GET"
@@ -135,6 +157,11 @@ async def test_structured_memory_list_methods_apply_filters_and_ordering():
     assert service.requests[3]["query"]["plan_id"] == "eq.plan-1"
     assert service.requests[4]["table"] == "commitments"
     assert service.requests[4]["query"]["entity_id"] == "eq.entity-1"
+    assert service.requests[5]["table"] == "memory_corrections"
+    assert service.requests[5]["query"]["correction_type"] == "eq.entity_name"
+    assert service.requests[5]["query"]["applied"] == "eq.true"
+    assert service.requests[5]["query"]["target_table"] == "eq.long_term_memory"
+    assert service.requests[5]["query"]["target_id"] == "eq.memory-1"
     assert all(request["query"]["order"] for request in service.requests)
 
 

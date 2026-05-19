@@ -10,6 +10,11 @@ final memoryProvider = NotifierProvider<MemoryController, MemoryState>(
 class MemoryState {
   const MemoryState({
     this.memories = const [],
+    this.people = const [],
+    this.rules = const [],
+    this.plans = const [],
+    this.commitments = const [],
+    this.selectedLayer = MemoryLayer.longTerm,
     this.selectedType,
     this.activeOnly = true,
     this.isLoading = false,
@@ -18,6 +23,11 @@ class MemoryState {
   });
 
   final List<MemoryItem> memories;
+  final List<PersonMemoryItem> people;
+  final List<RuleMemoryItem> rules;
+  final List<PlanMemoryItem> plans;
+  final List<CommitmentMemoryItem> commitments;
+  final MemoryLayer selectedLayer;
   final MemoryType? selectedType;
   final bool activeOnly;
   final bool isLoading;
@@ -26,6 +36,11 @@ class MemoryState {
 
   MemoryState copyWith({
     List<MemoryItem>? memories,
+    List<PersonMemoryItem>? people,
+    List<RuleMemoryItem>? rules,
+    List<PlanMemoryItem>? plans,
+    List<CommitmentMemoryItem>? commitments,
+    MemoryLayer? selectedLayer,
     MemoryType? selectedType,
     bool clearSelectedType = false,
     bool? activeOnly,
@@ -36,6 +51,11 @@ class MemoryState {
   }) {
     return MemoryState(
       memories: memories ?? this.memories,
+      people: people ?? this.people,
+      rules: rules ?? this.rules,
+      plans: plans ?? this.plans,
+      commitments: commitments ?? this.commitments,
+      selectedLayer: selectedLayer ?? this.selectedLayer,
       selectedType: clearSelectedType
           ? null
           : selectedType ?? this.selectedType,
@@ -45,34 +65,94 @@ class MemoryState {
       errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
     );
   }
+
+  bool get isSelectedLayerEmpty {
+    switch (selectedLayer) {
+      case MemoryLayer.longTerm:
+        return memories.isEmpty;
+      case MemoryLayer.people:
+        return people.isEmpty;
+      case MemoryLayer.rules:
+        return rules.isEmpty;
+      case MemoryLayer.plans:
+        return plans.isEmpty;
+      case MemoryLayer.commitments:
+        return commitments.isEmpty;
+    }
+  }
 }
 
 class MemoryController extends Notifier<MemoryState> {
   @override
   MemoryState build() => const MemoryState();
 
-  Future<void> loadMemories({MemoryType? memoryType, bool? activeOnly}) async {
+  Future<void> loadMemories({
+    MemoryLayer? layer,
+    MemoryType? memoryType,
+    bool? activeOnly,
+  }) async {
+    final nextLayer = layer ?? state.selectedLayer;
     final nextActiveOnly = activeOnly ?? state.activeOnly;
     state = state.copyWith(
+      selectedLayer: nextLayer,
       selectedType: memoryType,
-      clearSelectedType: memoryType == null,
+      clearSelectedType:
+          nextLayer != MemoryLayer.longTerm || memoryType == null,
       activeOnly: nextActiveOnly,
       isLoading: true,
       clearError: true,
     );
 
     try {
-      final memories = await ref
-          .read(memoryApiProvider)
-          .getMemories(
+      final api = ref.read(memoryApiProvider);
+      switch (nextLayer) {
+        case MemoryLayer.longTerm:
+          final memories = await api.getMemories(
             memoryType: memoryType,
             active: nextActiveOnly ? true : null,
           );
-      state = state.copyWith(
-        memories: memories,
-        isLoading: false,
-        clearError: true,
-      );
+          state = state.copyWith(
+            memories: memories,
+            isLoading: false,
+            clearError: true,
+          );
+        case MemoryLayer.people:
+          final people = await api.getPeople(
+            active: nextActiveOnly ? true : null,
+          );
+          state = state.copyWith(
+            people: people,
+            isLoading: false,
+            clearError: true,
+          );
+        case MemoryLayer.rules:
+          final rules = await api.getRules(
+            active: nextActiveOnly ? true : null,
+          );
+          state = state.copyWith(
+            rules: rules,
+            isLoading: false,
+            clearError: true,
+          );
+        case MemoryLayer.plans:
+          final plans = await api.getPlans(
+            active: nextActiveOnly ? true : null,
+          );
+          state = state.copyWith(
+            plans: plans,
+            isLoading: false,
+            clearError: true,
+          );
+        case MemoryLayer.commitments:
+          final commitments = await api.getCommitments(
+            active: nextActiveOnly ? true : null,
+          );
+          state = state.copyWith(
+            commitments: commitments,
+            isLoading: false,
+            clearError: true,
+          );
+      }
     } on Object catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: error.toString());
     }

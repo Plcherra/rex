@@ -80,6 +80,45 @@ class MemoryApi {
     return MemoryItem.fromJson(data);
   }
 
+  Future<List<PersonMemoryItem>> getPeople({
+    bool? active,
+    int limit = 50,
+  }) async {
+    final data = await _getList('/entities', {
+      'entity_type': 'person',
+      'limit': limit.toString(),
+      if (active != null) 'active': active.toString(),
+    });
+    return data.map(PersonMemoryItem.fromJson).toList(growable: false);
+  }
+
+  Future<List<RuleMemoryItem>> getRules({bool? active, int limit = 50}) async {
+    final data = await _getList('/rules', {
+      'limit': limit.toString(),
+      if (active != null) 'active': active.toString(),
+    });
+    return data.map(RuleMemoryItem.fromJson).toList(growable: false);
+  }
+
+  Future<List<PlanMemoryItem>> getPlans({bool? active, int limit = 50}) async {
+    final data = await _getList('/plans', {
+      'limit': limit.toString(),
+      if (active != null) 'active': active.toString(),
+    });
+    return data.map(PlanMemoryItem.fromJson).toList(growable: false);
+  }
+
+  Future<List<CommitmentMemoryItem>> getCommitments({
+    bool? active,
+    int limit = 50,
+  }) async {
+    final data = await _getList('/commitments', {
+      'limit': limit.toString(),
+      if (active != null) 'active': active.toString(),
+    });
+    return data.map(CommitmentMemoryItem.fromJson).toList(growable: false);
+  }
+
   Future<void> deactivateMemory(String memoryId) async {
     final response = await _client.delete(_uri('/memory/$memoryId'));
 
@@ -95,6 +134,20 @@ class MemoryApi {
     }
 
     return base.replace(queryParameters: query);
+  }
+
+  Future<List<Map<String, dynamic>>> _getList(
+    String path,
+    Map<String, String> query,
+  ) async {
+    final response = await _client.get(_uri(path, query));
+    final data = _decodeResponse(response);
+
+    if (data is! List) {
+      throw const MemoryApiException('Backend returned an invalid response.');
+    }
+
+    return data.whereType<Map<String, dynamic>>().toList(growable: false);
   }
 
   dynamic _decodeResponse(http.Response response) {

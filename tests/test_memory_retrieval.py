@@ -324,6 +324,39 @@ async def test_get_relevant_memories_retrieves_timezone_context_from_state_quest
 
 
 @pytest.mark.asyncio
+async def test_get_relevant_memories_ignores_inactive_stale_correction_rows():
+    service = InMemoryRetrievalService(
+        [
+            {
+                "id": "memory-stale-name",
+                "memory_type": "event",
+                "content": "I am planning to ask Al out for dinner Monday.",
+                "importance": 4,
+                "active": False,
+                "created_at": "2026-05-18T19:00:00Z",
+                "last_accessed_at": "2026-05-18T19:00:00Z",
+            },
+            {
+                "id": "memory-corrected-name",
+                "memory_type": "fact",
+                "content": "The person for the next-week dinner plan is Melissa.",
+                "importance": 4,
+                "active": True,
+                "created_at": "2026-05-19T01:00:00Z",
+                "last_accessed_at": "2026-05-19T01:00:00Z",
+            },
+        ]
+    )
+
+    memories = await service.get_relevant_memories(
+        "Do you remember the person for my next week dinner plan?",
+        limit=5,
+    )
+
+    assert [memory["id"] for memory in memories] == ["memory-corrected-name"]
+
+
+@pytest.mark.asyncio
 async def test_get_structured_memory_context_ranks_records_and_links_children():
     service = InMemoryRetrievalService(
         [],

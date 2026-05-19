@@ -23,7 +23,7 @@ abstract class StreamingAudioCaptureService {
 class PackageStreamingAudioCaptureService
     implements StreamingAudioCaptureService {
   static const _minimumStreamingSilenceAfterSpeech = Duration(
-    milliseconds: 1900,
+    milliseconds: 3000,
   );
   static const _minimumStreamingSpeechDuration = Duration(milliseconds: 500);
   static const _streamingSpeechStartThresholdDb = -48.0;

@@ -273,7 +273,7 @@ class DeepgramStreamingService:
                 "language": self.settings.deepgram_language,
                 "smart_format": "true",
                 "interim_results": "true",
-                "endpointing": "true",
+                "endpointing": str(self.settings.deepgram_endpointing_ms),
                 "vad_events": "true",
                 "encoding": "linear16",
                 "sample_rate": sample_rate,

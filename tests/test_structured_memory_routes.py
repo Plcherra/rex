@@ -11,6 +11,7 @@ from app.main import app
 from app.services.commitment_service import CommitmentServiceError
 from app.services.entity_service import EntityServiceError
 from app.services.plan_service import PlanServiceError
+from app.services.rule_service import RuleServiceError
 
 
 @pytest.fixture
@@ -84,10 +85,19 @@ class FakeEntityService:
 
 
 class FakeRuleService:
+    def __init__(self, error=None):
+        self.error = error
+
+    def _raise_if_configured(self):
+        if self.error is not None:
+            raise self.error
+
     async def list_rules(self, *, rule_type=None, status=None, active=True, limit=50):
+        self._raise_if_configured()
         return [_rule_row(rule_type=rule_type or "finance")]
 
     async def create_rule(self, request):
+        self._raise_if_configured()
         return _rule_row(
             rule_type=request.rule_type,
             title=request.title,
@@ -95,9 +105,11 @@ class FakeRuleService:
         )
 
     async def update_rule(self, rule_id, request):
+        self._raise_if_configured()
         return {**_rule_row(), "id": rule_id, **request.model_dump(exclude_none=True)}
 
     async def deactivate_rule(self, rule_id):
+        self._raise_if_configured()
         return {**_rule_row(), "id": rule_id, "active": False}
 
 
@@ -224,6 +236,22 @@ def test_entity_routes_map_service_errors(client):
     assert response.json()["detail"] == "Entity not found."
 
 
+def test_create_entity_rejects_invalid_schema_payload(client):
+    app.dependency_overrides[get_entity_service] = lambda: FakeEntityService()
+
+    response = client.post(
+        "/entities",
+        json={
+            "entity_type": "person",
+            "display_name": "Clara",
+            "normalized_name": "clara",
+            "importance": 9,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_rule_crud_routes(client):
     app.dependency_overrides[get_rule_service] = lambda: FakeRuleService()
 
@@ -243,6 +271,33 @@ def test_rule_crud_routes(client):
     assert update_response.status_code == 200
     assert update_response.json()["priority"] == 5
     assert delete_response.status_code == 204
+
+
+def test_rule_routes_map_service_errors(client):
+    app.dependency_overrides[get_rule_service] = lambda: FakeRuleService(
+        RuleServiceError("Personal rule not found.", 404)
+    )
+
+    response = client.patch("/rules/missing", json={"priority": 5})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Personal rule not found."
+
+
+def test_create_rule_rejects_invalid_schema_payload(client):
+    app.dependency_overrides[get_rule_service] = lambda: FakeRuleService()
+
+    response = client.post(
+        "/rules",
+        json={
+            "rule_type": "finance",
+            "title": "No DoorDash",
+            "rule_text": "Avoid delivery.",
+            "priority": 8,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_plan_routes_include_nested_milestones(client):
@@ -268,6 +323,17 @@ def test_plan_routes_include_nested_milestones(client):
     assert milestone_response.json()["plan_id"] == "plan-1"
     assert list_response.status_code == 200
     assert list_response.json()[0]["status"] == "open"
+
+
+def test_create_plan_rejects_invalid_schema_payload(client):
+    app.dependency_overrides[get_plan_service] = lambda: FakePlanService()
+
+    response = client.post(
+        "/plans",
+        json={"plan_type": "unknown", "title": "Move abroad"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_plan_milestone_rejects_plan_id_mismatch(client):
@@ -315,6 +381,22 @@ def test_commitment_crud_routes(client):
     assert update_response.status_code == 200
     assert update_response.json()["status"] == "missed"
     assert delete_response.status_code == 204
+
+
+def test_create_commitment_rejects_invalid_schema_payload(client):
+    app.dependency_overrides[get_commitment_service] = lambda: FakeCommitmentService()
+
+    response = client.post(
+        "/commitments",
+        json={
+            "commitment_type": "health",
+            "title": "Workout",
+            "commitment_text": "Work out tomorrow morning.",
+            "priority": 0,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_commitment_routes_map_service_errors(client):

@@ -59,6 +59,30 @@ class FakeMemoryStore:
         self.created_entities.append(entity)
         return entity
 
+    async def list_entities(
+        self,
+        limit=50,
+        entity_type=None,
+        status=None,
+        active=None,
+        normalized_name=None,
+    ):
+        rows = self.created_entities
+        if entity_type is not None:
+            rows = [row for row in rows if row.get("entity_type") == entity_type]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        if active is not None:
+            rows = [row for row in rows if row.get("active") is active]
+        if normalized_name is not None:
+            rows = [
+                row for row in rows if row.get("normalized_name") == normalized_name
+            ]
+        return rows[:limit]
+
+    async def update_entity(self, entity_id, **updates):
+        return _update(self.created_entities, entity_id, updates)
+
     async def create_entity_event(self, payload):
         event = {"id": f"event-{len(self.created_entity_events) + 1}", **payload}
         self.created_entity_events.append(event)
@@ -69,10 +93,42 @@ class FakeMemoryStore:
         self.created_rules.append(rule)
         return rule
 
+    async def list_personal_rules(
+        self,
+        limit=50,
+        rule_type=None,
+        status=None,
+        active=None,
+    ):
+        rows = self.created_rules
+        if rule_type is not None:
+            rows = [row for row in rows if row.get("rule_type") == rule_type]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        if active is not None:
+            rows = [row for row in rows if row.get("active") is active]
+        return rows[:limit]
+
+    async def update_personal_rule(self, rule_id, **updates):
+        return _update(self.created_rules, rule_id, updates)
+
     async def create_plan(self, payload):
         plan = {"id": f"plan-{len(self.created_plans) + 1}", **payload}
         self.created_plans.append(plan)
         return plan
+
+    async def list_plans(self, limit=50, plan_type=None, status=None, active=None):
+        rows = self.created_plans
+        if plan_type is not None:
+            rows = [row for row in rows if row.get("plan_type") == plan_type]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        if active is not None:
+            rows = [row for row in rows if row.get("active") is active]
+        return rows[:limit]
+
+    async def update_plan(self, plan_id, **updates):
+        return _update(self.created_plans, plan_id, updates)
 
     async def create_plan_milestone(self, payload):
         milestone = {"id": f"milestone-{len(self.created_milestones) + 1}", **payload}
@@ -86,6 +142,41 @@ class FakeMemoryStore:
         }
         self.created_commitments.append(commitment)
         return commitment
+
+    async def list_commitments(
+        self,
+        limit=50,
+        commitment_type=None,
+        plan_id=None,
+        entity_id=None,
+        status=None,
+        active=None,
+    ):
+        rows = self.created_commitments
+        if commitment_type is not None:
+            rows = [
+                row for row in rows if row.get("commitment_type") == commitment_type
+            ]
+        if plan_id is not None:
+            rows = [row for row in rows if row.get("plan_id") == plan_id]
+        if entity_id is not None:
+            rows = [row for row in rows if row.get("entity_id") == entity_id]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        if active is not None:
+            rows = [row for row in rows if row.get("active") is active]
+        return rows[:limit]
+
+    async def update_commitment(self, commitment_id, **updates):
+        return _update(self.created_commitments, commitment_id, updates)
+
+
+def _update(rows, row_id, updates):
+    for row in rows:
+        if row["id"] == row_id:
+            row.update(updates)
+            return row
+    return None
 
 
 @pytest.mark.asyncio
@@ -360,6 +451,153 @@ async def test_memory_extraction_saves_structured_candidates():
 
 
 @pytest.mark.asyncio
+async def test_memory_extraction_deduplicates_and_links_structured_candidates():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [],
+          "structured_memories": {
+            "entities": [
+              {
+                "entity_type": "person",
+                "display_name": "Clara from work",
+                "relationship": "Dating interest",
+                "summary": "Clara is someone the user knows from work.",
+                "importance": 4,
+                "rationale": "Named person."
+              }
+            ],
+            "entity_events": [
+              {
+                "entity_name": "Clara",
+                "event_type": "interaction",
+                "title": "Lunch conversation",
+                "content": "The user talked with Clara at lunch.",
+                "importance": 4,
+                "rationale": "Relevant relationship context."
+              }
+            ],
+            "personal_rules": [
+              {
+                "rule_type": "food_delivery",
+                "title": "No delivery",
+                "rule_text": "No DoorDash this month.",
+                "trigger_keywords": ["DoorDash", "Uber Eats"],
+                "priority": 5,
+                "rationale": "Budget rule."
+              }
+            ],
+            "plans": [
+              {
+                "plan_type": "immigration",
+                "title": "Move abroad",
+                "desired_outcome": "Leave with enough runway.",
+                "priority": 5,
+                "rationale": "Major plan."
+              }
+            ],
+            "plan_milestones": [
+              {
+                "plan_title": "Move abroad",
+                "title": "Save relocation runway",
+                "milestone_type": "goal",
+                "priority": 4,
+                "rationale": "Progress marker."
+              }
+            ],
+            "commitments": [
+              {
+                "commitment_type": "relationship",
+                "title": "Text Clara",
+                "commitment_text": "Text Clara tomorrow.",
+                "entity_name": "Clara",
+                "priority": 4,
+                "rationale": "Direct commitment."
+              }
+            ]
+          }
+        }
+        """
+    )
+    memory_store = FakeMemoryStore()
+    memory_store.created_entities.append(
+        {
+            "id": "entity-existing",
+            "entity_type": "person",
+            "display_name": "Clara",
+            "normalized_name": "clara",
+            "aliases": ["Clara"],
+            "importance": 3,
+            "active": True,
+            "metadata": {},
+        }
+    )
+    memory_store.created_rules.append(
+        {
+            "id": "rule-existing",
+            "rule_type": "food_delivery",
+            "title": "No DoorDash",
+            "rule_text": "No DoorDash this month.",
+            "trigger_keywords": ["DoorDash"],
+            "priority": 3,
+            "active": True,
+            "metadata": {},
+        }
+    )
+    memory_store.created_plans.append(
+        {
+            "id": "plan-existing",
+            "plan_type": "immigration",
+            "title": "Move abroad",
+            "priority": 3,
+            "active": True,
+            "metadata": {},
+        }
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {"id": "message-1", "content": "I need to text Clara tomorrow."},
+        {"id": "message-2", "content": "I will track that."},
+    )
+
+    assert [item["structured_type"] for item in saved] == [
+        "entity",
+        "entity_event",
+        "personal_rule",
+        "plan",
+        "plan_milestone",
+        "commitment",
+    ]
+    assert memory_store.created_entities == [
+        {
+            "id": "entity-existing",
+            "entity_type": "person",
+            "display_name": "Clara",
+            "normalized_name": "clara",
+            "aliases": ["Clara"],
+            "importance": 4,
+            "active": True,
+            "metadata": {"extraction_rationale": "Named person."},
+            "relationship": "Dating interest",
+            "summary": "Clara is someone the user knows from work.",
+            "source_conversation_id": "conversation-1",
+            "source_message_id": "message-1",
+        }
+    ]
+    assert memory_store.created_entity_events[0]["entity_id"] == "entity-existing"
+    assert memory_store.created_rules[0]["id"] == "rule-existing"
+    assert memory_store.created_rules[0]["trigger_keywords"] == [
+        "DoorDash",
+        "Uber Eats",
+    ]
+    assert memory_store.created_plans[0]["id"] == "plan-existing"
+    assert memory_store.created_milestones[0]["plan_id"] == "plan-existing"
+    assert memory_store.created_commitments[0]["entity_id"] == "entity-existing"
+
+
+@pytest.mark.asyncio
 async def test_memory_extraction_filters_low_value_structured_candidates():
     ai_service = FakeExtractionAIService(
         """
@@ -405,3 +643,78 @@ async def test_memory_extraction_filters_low_value_structured_candidates():
     assert saved == []
     assert memory_store.created_entities == []
     assert memory_store.created_rules == []
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_ignores_invalid_structured_payloads_but_keeps_valid():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [],
+          "structured_memories": {
+            "entities": "not a list",
+            "personal_rules": [
+              {
+                "rule_type": "finance",
+                "title": "Current request",
+                "rule_text": "The user asked Rex to answer the current question.",
+                "priority": 5,
+                "rationale": "Noisy current-turn instruction."
+              },
+              {
+                "rule_type": "food_delivery",
+                "title": "No DoorDash",
+                "rule_text": "Do not order DoorDash this week.",
+                "trigger_keywords": ["DoorDash", "delivery"],
+                "priority": 4,
+                "rationale": "Useful recurring budget rule."
+              },
+              {
+                "rule_type": "random",
+                "title": "Invalid",
+                "rule_text": "This should not save.",
+                "priority": 5,
+                "rationale": "Invalid enum."
+              }
+            ],
+            "plans": [
+              "not an object",
+              {
+                "plan_type": "immigration",
+                "title": "",
+                "priority": 5,
+                "rationale": "Missing title."
+              }
+            ]
+          }
+        }
+        """
+    )
+    memory_store = FakeMemoryStore()
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {"id": "message-1", "content": "No DoorDash this week."},
+        {"id": "message-2", "content": "I will hold you to that."},
+    )
+
+    assert [item["structured_type"] for item in saved] == ["personal_rule"]
+    assert memory_store.created_rules == [
+        {
+            "id": "rule-1",
+            "rule_type": "food_delivery",
+            "title": "No DoorDash",
+            "rule_text": "Do not order DoorDash this week.",
+            "trigger_keywords": ["DoorDash", "delivery"],
+            "enforcement_style": "gentle_direct",
+            "source_conversation_id": "conversation-1",
+            "source_message_id": "message-1",
+            "priority": 4,
+            "status": "active",
+            "active": True,
+            "metadata": {"extraction_rationale": "Useful recurring budget rule."},
+        }
+    ]
+    assert memory_store.created_entities == []
+    assert memory_store.created_plans == []

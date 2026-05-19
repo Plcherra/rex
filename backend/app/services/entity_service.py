@@ -11,6 +11,27 @@ from app.models.entity import (
 )
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
+ENTITY_DESCRIPTOR_PREFIXES = (
+    "the girl ",
+    "a girl ",
+    "girl ",
+    "the guy ",
+    "a guy ",
+    "guy ",
+    "the person ",
+    "a person ",
+    "person ",
+)
+
+ENTITY_DESCRIPTOR_SUFFIXES = (
+    " from work",
+    " at work",
+    " from school",
+    " from church",
+    " from gym",
+    " from the gym",
+)
+
 
 class EntityServiceError(Exception):
     def __init__(self, detail: str, status_code: int = 400) -> None:
@@ -27,7 +48,7 @@ class EntityService:
         payload = _payload(request)
         display_name = _clean_required(payload.get("display_name"), "display_name")
         payload["display_name"] = display_name
-        payload["normalized_name"] = _normalize_key(
+        payload["normalized_name"] = _normalize_entity_name(
             payload.get("normalized_name") or display_name
         )
         payload["aliases"] = _dedupe_strings(payload.get("aliases", []))
@@ -35,12 +56,19 @@ class EntityService:
         try:
             existing = await self.memory_service.list_entities(
                 entity_type=payload["entity_type"],
-                normalized_name=payload["normalized_name"],
                 active=True,
-                limit=1,
+                limit=100,
             )
-            if existing:
-                return await self._merge_existing_entity(existing[0], payload)
+            duplicate = next(
+                (
+                    entity
+                    for entity in existing
+                    if _entity_matches_payload(entity, payload)
+                ),
+                None,
+            )
+            if duplicate:
+                return await self._merge_existing_entity(duplicate, payload)
             return await self.memory_service.create_entity(payload)
         except MemoryServiceError as error:
             raise EntityServiceError(error.detail, error.status_code) from error
@@ -74,9 +102,11 @@ class EntityService:
                 payload["display_name"], "display_name"
             )
         if "normalized_name" in payload:
-            payload["normalized_name"] = _normalize_key(payload["normalized_name"])
+            payload["normalized_name"] = _normalize_entity_name(
+                payload["normalized_name"]
+            )
         elif "display_name" in payload:
-            payload["normalized_name"] = _normalize_key(payload["display_name"])
+            payload["normalized_name"] = _normalize_entity_name(payload["display_name"])
         if "aliases" in payload:
             payload["aliases"] = _dedupe_strings(payload["aliases"])
 
@@ -215,6 +245,41 @@ def _normalize_key(value: Any) -> str:
     if not normalized:
         raise EntityServiceError("normalized_name is required.", 422)
     return normalized
+
+
+def _normalize_entity_name(value: Any) -> str:
+    normalized = _normalize_key(value)
+    for prefix in ENTITY_DESCRIPTOR_PREFIXES:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :].strip()
+            break
+    for suffix in ENTITY_DESCRIPTOR_SUFFIXES:
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)].strip()
+            break
+    return normalized or _normalize_key(value)
+
+
+def _entity_match_keys(entity: dict[str, Any]) -> set[str]:
+    raw_values = [
+        entity.get("normalized_name"),
+        entity.get("display_name"),
+        *entity.get("aliases", []),
+    ]
+    return {
+        _normalize_entity_name(value)
+        for value in raw_values
+        if _clean_optional(value)
+    }
+
+
+def _entity_matches_payload(
+    entity: dict[str, Any],
+    payload: dict[str, Any],
+) -> bool:
+    existing_keys = _entity_match_keys(entity)
+    incoming_keys = _entity_match_keys(payload)
+    return bool(existing_keys & incoming_keys)
 
 
 def _dedupe_strings(values: list[str] | None) -> list[str]:

@@ -4,6 +4,7 @@ from app.services.time_context_service import TimeContextService
 
 MAX_CONTEXT_CHARACTERS = 24000
 MAX_MEMORY_CONTEXT_CHARACTERS = 2000
+MAX_STRUCTURED_MEMORY_CONTEXT_CHARACTERS = 3000
 REX_PERSONALITY_PROMPT = """
 Rex is a private personal AI assistant with long-term memory. It is being built first as the founder's personal daily driver: an uncensored, voice-first, time-aware, memory-powered life co-pilot that knows the ongoing story and gives direct, useful feedback without generic corporate filler.
 
@@ -27,6 +28,7 @@ FILE_CONTEXT_PREFIX = "Uploaded file content:\n\n"
 PERSONALITY_CONTEXT_PREFIX = "Rex personality and behavior:\n"
 TIME_CONTEXT_PREFIX = "Current time context:\n"
 CONVERSATION_CONTEXT_PREFIX = "Conversation context:\n"
+STRUCTURED_MEMORY_PREFIX = "Relevant structured memory:\n"
 LONG_TERM_MEMORY_PREFIX = "Relevant long-term memory:\n"
 
 
@@ -42,6 +44,7 @@ class PromptService:
         user_message: str,
         recent_messages: Optional[list[dict]] = None,
         relevant_memories: Optional[list[dict]] = None,
+        structured_context: Optional[dict] = None,
         file_context: Optional[str] = None,
         conversation_metadata: Optional[dict] = None,
         time_context: Optional[dict] = None,
@@ -54,6 +57,7 @@ class PromptService:
 
         system_sections = self._system_sections(
             relevant_memories=relevant_memories or [],
+            structured_context=structured_context or {},
             conversation_metadata=conversation_metadata,
             time_context=time_context,
         )
@@ -78,6 +82,7 @@ class PromptService:
     def _system_sections(
         self,
         relevant_memories: list[dict],
+        structured_context: dict,
         conversation_metadata: Optional[dict],
         time_context: Optional[dict],
     ) -> list[str]:
@@ -92,6 +97,10 @@ class PromptService:
         )
         if conversation_section:
             sections.append(conversation_section)
+
+        structured_section = self._structured_memory_section(structured_context)
+        if structured_section:
+            sections.append(structured_section)
 
         memory_section = self._long_term_memory_section(
             relevant_memories,
@@ -147,6 +156,218 @@ class PromptService:
         if not lines:
             return None
         return f"{CONVERSATION_CONTEXT_PREFIX}{chr(10).join(lines)}"
+
+    def _structured_memory_section(self, structured_context: dict) -> Optional[str]:
+        if not structured_context:
+            return None
+
+        lines: list[str] = []
+        used_characters = 0
+        entity_names = self._entity_name_map(structured_context.get("entities") or [])
+        plan_titles = self._plan_title_map(structured_context.get("plans") or [])
+
+        for entity in structured_context.get("entities") or []:
+            used_characters = self._append_structured_line(
+                lines,
+                used_characters,
+                self._entity_line(entity),
+            )
+        for event in structured_context.get("entity_events") or []:
+            used_characters = self._append_structured_line(
+                lines,
+                used_characters,
+                self._entity_event_line(event, entity_names),
+            )
+        for rule in structured_context.get("personal_rules") or []:
+            used_characters = self._append_structured_line(
+                lines,
+                used_characters,
+                self._personal_rule_line(rule),
+            )
+        for plan in structured_context.get("plans") or []:
+            used_characters = self._append_structured_line(
+                lines,
+                used_characters,
+                self._plan_line(plan),
+            )
+        for milestone in structured_context.get("plan_milestones") or []:
+            used_characters = self._append_structured_line(
+                lines,
+                used_characters,
+                self._milestone_line(milestone, plan_titles),
+            )
+        for commitment in structured_context.get("commitments") or []:
+            used_characters = self._append_structured_line(
+                lines,
+                used_characters,
+                self._commitment_line(commitment, entity_names, plan_titles),
+            )
+
+        if not lines:
+            return None
+        return f"{STRUCTURED_MEMORY_PREFIX}{chr(10).join(lines)}"
+
+    def _append_structured_line(
+        self,
+        lines: list[str],
+        used_characters: int,
+        line: Optional[str],
+    ) -> int:
+        if not line:
+            return used_characters
+
+        remaining_characters = (
+            MAX_STRUCTURED_MEMORY_CONTEXT_CHARACTERS - used_characters
+        )
+        if remaining_characters <= 0:
+            return used_characters
+        if len(line) > remaining_characters:
+            if remaining_characters < 40:
+                return used_characters
+            line = f"{line[: remaining_characters - 22].rstrip()} [truncated]"
+
+        lines.append(line)
+        return used_characters + len(line) + 1
+
+    def _entity_line(self, entity: dict) -> Optional[str]:
+        name = entity.get("display_name") or entity.get("normalized_name")
+        if not name:
+            return None
+
+        parts = [f"- entity/{entity.get('entity_type') or 'unknown'} {name}"]
+        relationship = entity.get("relationship")
+        if relationship:
+            parts.append(str(relationship))
+        summary = entity.get("summary")
+        if summary:
+            parts.append(str(summary))
+        return self._with_relevance(" - ".join(parts), entity)
+
+    def _entity_event_line(
+        self,
+        event: dict,
+        entity_names: dict[str, str],
+    ) -> Optional[str]:
+        title = event.get("title")
+        content = event.get("content")
+        if not title and not content:
+            return None
+
+        entity_name = entity_names.get(str(event.get("entity_id") or ""))
+        subject = f" for {entity_name}" if entity_name else ""
+        line = f"- entity_event/{event.get('event_type') or 'event'}{subject}"
+        if title:
+            line = f"{line}: {title}"
+        if content:
+            line = f"{line} - {content}"
+        occurred_at = event.get("occurred_at")
+        if occurred_at:
+            line = f"{line} (occurred: {occurred_at})"
+        return line
+
+    def _personal_rule_line(self, rule: dict) -> Optional[str]:
+        title = rule.get("title")
+        rule_text = rule.get("rule_text")
+        if not title and not rule_text:
+            return None
+
+        line = f"- rule/{rule.get('rule_type') or 'personal'}"
+        if title:
+            line = f"{line} {title}"
+        if rule_text:
+            line = f"{line}: {rule_text}"
+        return self._with_relevance(line, rule)
+
+    def _plan_line(self, plan: dict) -> Optional[str]:
+        title = plan.get("title")
+        if not title:
+            return None
+
+        line = f"- plan/{plan.get('plan_type') or 'goal'} {title}"
+        desired_outcome = plan.get("desired_outcome")
+        description = plan.get("description")
+        if desired_outcome:
+            line = f"{line}: {desired_outcome}"
+        elif description:
+            line = f"{line}: {description}"
+        target_date = plan.get("target_date")
+        if target_date:
+            line = f"{line} (target: {target_date})"
+        return self._with_relevance(line, plan)
+
+    def _milestone_line(
+        self,
+        milestone: dict,
+        plan_titles: dict[str, str],
+    ) -> Optional[str]:
+        title = milestone.get("title")
+        if not title:
+            return None
+
+        plan_title = plan_titles.get(str(milestone.get("plan_id") or ""))
+        subject = f" for {plan_title}" if plan_title else ""
+        line = f"- milestone/{milestone.get('milestone_type') or 'step'}{subject}: {title}"
+        description = milestone.get("description")
+        if description:
+            line = f"{line} - {description}"
+        target_date = milestone.get("target_date")
+        if target_date:
+            line = f"{line} (target: {target_date})"
+        return line
+
+    def _commitment_line(
+        self,
+        commitment: dict,
+        entity_names: dict[str, str],
+        plan_titles: dict[str, str],
+    ) -> Optional[str]:
+        title = commitment.get("title")
+        text = commitment.get("commitment_text")
+        if not title and not text:
+            return None
+
+        line = f"- commitment/{commitment.get('commitment_type') or 'deadline'}"
+        if title:
+            line = f"{line} {title}"
+        if text:
+            line = f"{line}: {text}"
+
+        links = []
+        entity_name = entity_names.get(str(commitment.get("entity_id") or ""))
+        if entity_name:
+            links.append(f"person: {entity_name}")
+        plan_title = plan_titles.get(str(commitment.get("plan_id") or ""))
+        if plan_title:
+            links.append(f"plan: {plan_title}")
+        due_at = commitment.get("due_at")
+        if due_at:
+            links.append(f"due: {due_at}")
+        if links:
+            line = f"{line} ({'; '.join(links)})"
+        return self._with_relevance(line, commitment)
+
+    def _with_relevance(self, line: str, record: dict) -> str:
+        relevance_reason = record.get("relevance_reason")
+        if relevance_reason:
+            return f"{line} (why recalled: {relevance_reason})"
+        return line
+
+    def _entity_name_map(self, entities: list[dict]) -> dict[str, str]:
+        return {
+            str(entity["id"]): str(
+                entity.get("display_name") or entity.get("normalized_name")
+            )
+            for entity in entities
+            if entity.get("id")
+            and (entity.get("display_name") or entity.get("normalized_name"))
+        }
+
+    def _plan_title_map(self, plans: list[dict]) -> dict[str, str]:
+        return {
+            str(plan["id"]): str(plan["title"])
+            for plan in plans
+            if plan.get("id") and plan.get("title")
+        }
 
     def _long_term_memory_section(
         self,

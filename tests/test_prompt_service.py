@@ -5,6 +5,7 @@ from app.services.prompt_service import (
     PERSONALITY_CONTEXT_PREFIX,
     PromptService,
     REX_PERSONALITY_PROMPT,
+    STRUCTURED_MEMORY_PREFIX,
     TIME_CONTEXT_PREFIX,
 )
 from app.services.time_context_service import TimeContextService
@@ -121,6 +122,121 @@ def test_prompt_service_injects_time_conversation_memory_and_file_context():
         "role": "user",
         "content": "Read this and help me decide.",
     }
+
+
+def test_prompt_service_injects_structured_memory_before_generic_memory():
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
+
+    messages = service.build_messages(
+        user_message="I saw Clara and ordered DoorDash again.",
+        relevant_memories=[
+            {
+                "memory_type": "event",
+                "content": "I said DoorDash was hurting my budget.",
+            },
+        ],
+        structured_context={
+            "entities": [
+                {
+                    "id": "entity-clara",
+                    "entity_type": "person",
+                    "display_name": "Clara",
+                    "relationship": "dating interest from work",
+                    "summary": "Clara touched my arm and matters to the dating story.",
+                    "relevance_reason": "Matched current message terms: clara",
+                }
+            ],
+            "entity_events": [
+                {
+                    "entity_id": "entity-clara",
+                    "event_type": "interaction",
+                    "title": "Clara touched my arm",
+                    "content": "This felt like flirting at work.",
+                    "occurred_at": "2026-05-18T12:00:00Z",
+                }
+            ],
+            "personal_rules": [
+                {
+                    "rule_type": "finance",
+                    "title": "Avoid DoorDash",
+                    "rule_text": "Do not order DoorDash while the budget is slipping.",
+                    "relevance_reason": "Matched current message terms: doordash",
+                }
+            ],
+            "plans": [
+                {
+                    "id": "plan-visa",
+                    "plan_type": "immigration",
+                    "title": "Visa runway",
+                    "desired_outcome": "Leave with enough money and clean paperwork.",
+                    "target_date": "2026-07-01",
+                    "relevance_reason": "Matched current message terms: visa",
+                }
+            ],
+            "plan_milestones": [
+                {
+                    "plan_id": "plan-visa",
+                    "milestone_type": "deadline",
+                    "title": "Prepare immigration documents",
+                    "target_date": "2026-06-01",
+                }
+            ],
+            "commitments": [
+                {
+                    "commitment_type": "deadline",
+                    "title": "Review visa paperwork",
+                    "commitment_text": "Review the visa documents before June.",
+                    "plan_id": "plan-visa",
+                    "due_at": "2026-05-31T18:00:00Z",
+                    "relevance_reason": "Matched current message terms: visa",
+                }
+            ],
+        },
+    )
+
+    system_content = messages[0]["content"]
+    assert system_content.index(STRUCTURED_MEMORY_PREFIX) < system_content.index(
+        LONG_TERM_MEMORY_PREFIX
+    )
+    assert "- entity/person Clara - dating interest from work" in system_content
+    assert "Clara touched my arm and matters to the dating story." in system_content
+    assert "- entity_event/interaction for Clara: Clara touched my arm" in (
+        system_content
+    )
+    assert "- rule/finance Avoid DoorDash: Do not order DoorDash" in system_content
+    assert "- plan/immigration Visa runway: Leave with enough money" in system_content
+    assert "- milestone/deadline for Visa runway: Prepare immigration documents" in (
+        system_content
+    )
+    assert "- commitment/deadline Review visa paperwork" in system_content
+    assert "plan: Visa runway" in system_content
+
+
+def test_prompt_service_limits_structured_memory_context_budget():
+    service = PromptService()
+
+    messages = service.build_messages(
+        user_message="Tell me what matters about Clara.",
+        structured_context={
+            "entities": [
+                {
+                    "id": "entity-clara",
+                    "entity_type": "person",
+                    "display_name": "Clara",
+                    "relationship": "dating interest",
+                    "summary": "Clara " * 1000,
+                    "relevance_reason": "Matched current message terms: clara",
+                }
+            ]
+        },
+    )
+
+    structured_section = messages[0]["content"].split(
+        STRUCTURED_MEMORY_PREFIX,
+        1,
+    )[1]
+    assert len(structured_section) < 3200
+    assert "[truncated]" in structured_section
 
 
 def test_prompt_shape_contains_required_time_aware_founder_context():

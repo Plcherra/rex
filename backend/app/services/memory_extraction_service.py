@@ -8,6 +8,10 @@ from app.models.entity import EntityCreateRequest, EntityEventCreateRequest, Ent
 from app.models.personal_rule import PersonalRuleCreateRequest, RuleType
 from app.models.plan import PlanCreateRequest, PlanMilestoneCreateRequest, PlanType
 from app.services.ai_service import AIService
+from app.services.commitment_service import CommitmentService
+from app.services.entity_service import EntityService
+from app.services.plan_service import PlanService
+from app.services.rule_service import RuleService
 
 VALID_MEMORY_TYPES = {"fact", "preference", "event"}
 VALID_STRUCTURED_SECTIONS = {
@@ -152,13 +156,35 @@ class MemoryStore(Protocol):
     async def create_entity(self, payload: dict) -> dict:
         pass
 
+    async def list_entities(
+        self,
+        limit: int = 50,
+        entity_type: Optional[str] = None,
+        status: Optional[str] = None,
+        active: Optional[bool] = None,
+        normalized_name: Optional[str] = None,
+    ) -> list[dict]:
+        pass
+
     async def create_entity_event(self, payload: dict) -> dict:
         pass
 
     async def create_personal_rule(self, payload: dict) -> dict:
         pass
 
+    async def update_personal_rule(self, rule_id: str, **updates: object) -> dict:
+        pass
+
     async def create_plan(self, payload: dict) -> dict:
+        pass
+
+    async def list_plans(
+        self,
+        limit: int = 50,
+        plan_type: Optional[str] = None,
+        status: Optional[str] = None,
+        active: Optional[bool] = None,
+    ) -> list[dict]:
         pass
 
     async def create_plan_milestone(self, payload: dict) -> dict:
@@ -172,6 +198,10 @@ class MemoryExtractionService:
     def __init__(self, ai_service: AIService, memory_service: MemoryStore) -> None:
         self.ai_service = ai_service
         self.memory_service = memory_service
+        self.entity_service = EntityService(memory_service)
+        self.rule_service = RuleService(memory_service)
+        self.plan_service = PlanService(memory_service)
+        self.commitment_service = CommitmentService(memory_service)
 
     async def extract_and_save(
         self,
@@ -335,6 +365,8 @@ class MemoryExtractionService:
         user_message_id: Optional[str],
     ) -> list[dict]:
         saved: list[dict] = []
+        entity_ids_by_key: dict[str, str] = {}
+        plan_ids_by_key: dict[str, str] = {}
 
         for candidate in structured_memories.get("entities", []):
             normalized = self._normalize_entity_candidate(
@@ -344,11 +376,12 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_entity = await self._call_optional_store_method(
-                "create_entity",
-                normalized["payload"],
+            saved_entity = await self._call_service_create(
+                self.entity_service.create_entity,
+                EntityCreateRequest(**normalized["payload"]),
             )
             if saved_entity:
+                self._remember_entity_keys(saved_entity, entity_ids_by_key)
                 saved.append(
                     self._saved_structured_result(
                         saved_entity,
@@ -358,6 +391,7 @@ class MemoryExtractionService:
                 )
 
         for candidate in structured_memories.get("entity_events", []):
+            await self._resolve_entity_reference(candidate, entity_ids_by_key)
             normalized = self._normalize_entity_event_candidate(
                 candidate,
                 conversation_id=conversation_id,
@@ -386,9 +420,9 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_rule = await self._call_optional_store_method(
-                "create_personal_rule",
-                normalized["payload"],
+            saved_rule = await self._call_service_create(
+                self.rule_service.create_rule,
+                PersonalRuleCreateRequest(**normalized["payload"]),
             )
             if saved_rule:
                 saved.append(
@@ -407,11 +441,12 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_plan = await self._call_optional_store_method(
-                "create_plan",
-                normalized["payload"],
+            saved_plan = await self._call_service_create(
+                self.plan_service.create_plan,
+                PlanCreateRequest(**normalized["payload"]),
             )
             if saved_plan:
+                self._remember_plan_keys(saved_plan, plan_ids_by_key)
                 saved.append(
                     self._saved_structured_result(
                         saved_plan,
@@ -421,6 +456,7 @@ class MemoryExtractionService:
                 )
 
         for candidate in structured_memories.get("plan_milestones", []):
+            await self._resolve_plan_reference(candidate, plan_ids_by_key)
             normalized = self._normalize_plan_milestone_candidate(
                 candidate,
                 conversation_id=conversation_id,
@@ -428,9 +464,9 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_milestone = await self._call_optional_store_method(
-                "create_plan_milestone",
-                normalized["payload"],
+            saved_milestone = await self._call_service_create(
+                self.plan_service.create_milestone,
+                PlanMilestoneCreateRequest(**normalized["payload"]),
             )
             if saved_milestone:
                 saved.append(
@@ -442,6 +478,8 @@ class MemoryExtractionService:
                 )
 
         for candidate in structured_memories.get("commitments", []):
+            await self._resolve_entity_reference(candidate, entity_ids_by_key)
+            await self._resolve_plan_reference(candidate, plan_ids_by_key)
             normalized = self._normalize_commitment_candidate(
                 candidate,
                 conversation_id=conversation_id,
@@ -449,9 +487,9 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_commitment = await self._call_optional_store_method(
-                "create_commitment",
-                normalized["payload"],
+            saved_commitment = await self._call_service_create(
+                self.commitment_service.create_commitment,
+                CommitmentCreateRequest(**normalized["payload"]),
             )
             if saved_commitment:
                 saved.append(
@@ -676,6 +714,8 @@ class MemoryExtractionService:
         commitment_text = self._clean_text(candidate.get("commitment_text"))
         due_at = self._clean_text(candidate.get("due_at"))
         rationale = self._clean_text(candidate.get("rationale"))
+        entity_id = self._clean_text(candidate.get("entity_id"))
+        plan_id = self._clean_text(candidate.get("plan_id"))
 
         if priority is None or priority < MIN_IMPORTANCE_TO_SAVE:
             return None
@@ -689,6 +729,8 @@ class MemoryExtractionService:
                 commitment_type=commitment_type,
                 title=title,
                 commitment_text=commitment_text,
+                entity_id=entity_id,
+                plan_id=plan_id,
                 source_conversation_id=conversation_id,
                 source_message_id=user_message_id,
                 priority=priority,
@@ -698,6 +740,114 @@ class MemoryExtractionService:
         except Exception:
             return None
         return {"payload": payload, "rationale": rationale or "Useful commitment."}
+
+    def _remember_entity_keys(
+        self,
+        entity: dict[str, Any],
+        entity_ids_by_key: dict[str, str],
+    ) -> None:
+        entity_id = self._clean_text(entity.get("id"))
+        if not entity_id:
+            return
+        values = [
+            entity.get("display_name"),
+            entity.get("normalized_name"),
+            *entity.get("aliases", []),
+        ]
+        for value in values:
+            key = self._normalized_text(value)
+            if key:
+                entity_ids_by_key[key] = entity_id
+
+    def _remember_plan_keys(
+        self,
+        plan: dict[str, Any],
+        plan_ids_by_key: dict[str, str],
+    ) -> None:
+        plan_id = self._clean_text(plan.get("id"))
+        if not plan_id:
+            return
+        for value in (plan.get("title"), plan.get("description")):
+            key = self._normalized_text(value)
+            if key:
+                plan_ids_by_key[key] = plan_id
+
+    async def _resolve_entity_reference(
+        self,
+        candidate: dict[str, Any],
+        entity_ids_by_key: dict[str, str],
+    ) -> None:
+        if self._clean_text(candidate.get("entity_id")):
+            return
+        entity_name = self._clean_text(candidate.get("entity_name"))
+        if not entity_name:
+            return
+
+        entity_id = entity_ids_by_key.get(self._normalized_text(entity_name))
+        if entity_id:
+            candidate["entity_id"] = entity_id
+            return
+
+        existing = await self._find_existing_entity(entity_name)
+        if existing:
+            self._remember_entity_keys(existing, entity_ids_by_key)
+            candidate["entity_id"] = existing.get("id")
+
+    async def _resolve_plan_reference(
+        self,
+        candidate: dict[str, Any],
+        plan_ids_by_key: dict[str, str],
+    ) -> None:
+        if self._clean_text(candidate.get("plan_id")):
+            return
+        plan_title = self._clean_text(candidate.get("plan_title"))
+        if not plan_title:
+            return
+
+        plan_id = plan_ids_by_key.get(self._normalized_text(plan_title))
+        if plan_id:
+            candidate["plan_id"] = plan_id
+            return
+
+        existing = await self._find_existing_plan(plan_title)
+        if existing:
+            self._remember_plan_keys(existing, plan_ids_by_key)
+            candidate["plan_id"] = existing.get("id")
+
+    async def _find_existing_entity(self, entity_name: str) -> Optional[dict[str, Any]]:
+        method = getattr(self.memory_service, "list_entities", None)
+        if method is None:
+            return None
+        try:
+            entities = await method(active=True, limit=100)
+        except Exception:
+            return None
+
+        target = self._normalized_text(entity_name)
+        for entity in entities:
+            keys = [
+                entity.get("normalized_name"),
+                entity.get("display_name"),
+                *entity.get("aliases", []),
+            ]
+            if target in {self._normalized_text(key) for key in keys if key}:
+                return entity
+        return None
+
+    async def _find_existing_plan(self, plan_title: str) -> Optional[dict[str, Any]]:
+        method = getattr(self.memory_service, "list_plans", None)
+        if method is None:
+            return None
+        try:
+            plans = await method(active=True, limit=100)
+        except Exception:
+            return None
+
+        target = self._normalized_text(plan_title)
+        for plan in plans:
+            if target == self._normalized_text(plan.get("title")):
+                return plan
+        return None
 
     def _candidate_importance(
         self,
@@ -723,6 +873,12 @@ class MemoryExtractionService:
             return None
         try:
             return await method(payload)
+        except Exception:
+            return None
+
+    async def _call_service_create(self, method: Any, request: Any) -> Optional[dict]:
+        try:
+            return await method(request)
         except Exception:
             return None
 

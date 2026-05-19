@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -52,6 +53,11 @@ COMMITMENT_SELECT = (
 )
 RELEVANT_MEMORY_SCAN_LIMIT = 100
 RELEVANT_MEMORY_MINIMUM_SCORE = 0.12
+STRUCTURED_MEMORY_SCAN_LIMIT = 50
+STRUCTURED_MEMORY_DIRECT_LIMIT = 5
+STRUCTURED_MEMORY_RELATED_LIMIT = 8
+STRUCTURED_MEMORY_MINIMUM_SCORE = 0.14
+HIGH_PRIORITY_STRUCTURED_THRESHOLD = 4
 STOP_WORDS = {
     "about",
     "after",
@@ -346,6 +352,100 @@ class SupabaseMemoryService:
             reverse=True,
         )
         return scored_memories[:limit]
+
+    async def get_structured_memory_context(self, query: str) -> dict:
+        (
+            entities,
+            entity_events,
+            personal_rules,
+            plans,
+            plan_milestones,
+            commitments,
+        ) = await asyncio.gather(
+            self.list_entities(limit=STRUCTURED_MEMORY_SCAN_LIMIT, active=True),
+            self.list_entity_events(limit=STRUCTURED_MEMORY_SCAN_LIMIT, active=True),
+            self.list_personal_rules(limit=STRUCTURED_MEMORY_SCAN_LIMIT, active=True),
+            self.list_plans(limit=STRUCTURED_MEMORY_SCAN_LIMIT, active=True),
+            self.list_plan_milestones(limit=STRUCTURED_MEMORY_SCAN_LIMIT, active=True),
+            self.list_commitments(limit=STRUCTURED_MEMORY_SCAN_LIMIT, active=True),
+        )
+
+        query_terms = self._expanded_terms(query)
+        selected_entities = self._rank_structured_records(
+            entities,
+            query_terms=query_terms,
+            text_fields=("display_name", "normalized_name", "relationship", "summary"),
+            list_fields=("aliases",),
+            weight_field="importance",
+            status_values={"active"},
+            limit=STRUCTURED_MEMORY_DIRECT_LIMIT,
+        )
+        selected_rules = self._rank_structured_records(
+            personal_rules,
+            query_terms=query_terms,
+            text_fields=("title", "rule_text", "rule_type"),
+            list_fields=("trigger_keywords",),
+            weight_field="priority",
+            status_values={"active"},
+            include_high_priority=True,
+            limit=STRUCTURED_MEMORY_DIRECT_LIMIT,
+        )
+        selected_plans = self._rank_structured_records(
+            plans,
+            query_terms=query_terms,
+            text_fields=("title", "description", "desired_outcome", "plan_type"),
+            weight_field="priority",
+            status_values={"active", "paused"},
+            include_high_priority=True,
+            limit=STRUCTURED_MEMORY_DIRECT_LIMIT,
+        )
+        selected_commitments = self._rank_structured_records(
+            commitments,
+            query_terms=query_terms,
+            text_fields=("title", "commitment_text", "commitment_type"),
+            weight_field="priority",
+            status_values={"open", "in_progress"},
+            include_high_priority=True,
+            limit=STRUCTURED_MEMORY_DIRECT_LIMIT,
+        )
+
+        selected_entity_ids = {str(entity.get("id")) for entity in selected_entities}
+        selected_plan_ids = {str(plan.get("id")) for plan in selected_plans}
+        selected_entity_ids.update(
+            str(commitment.get("entity_id"))
+            for commitment in selected_commitments
+            if commitment.get("entity_id")
+        )
+        selected_plan_ids.update(
+            str(commitment.get("plan_id"))
+            for commitment in selected_commitments
+            if commitment.get("plan_id")
+        )
+
+        related_entity_events = self._related_records(
+            entity_events,
+            link_field="entity_id",
+            selected_ids=selected_entity_ids,
+            weight_field="importance",
+            limit=STRUCTURED_MEMORY_RELATED_LIMIT,
+        )
+        related_milestones = self._related_records(
+            plan_milestones,
+            link_field="plan_id",
+            selected_ids=selected_plan_ids,
+            weight_field="priority",
+            status_values={"open", "in_progress"},
+            limit=STRUCTURED_MEMORY_RELATED_LIMIT,
+        )
+
+        return {
+            "entities": selected_entities,
+            "entity_events": related_entity_events,
+            "personal_rules": selected_rules,
+            "plans": selected_plans,
+            "plan_milestones": related_milestones,
+            "commitments": selected_commitments,
+        }
 
     async def list_long_term_memory(
         self,
@@ -929,6 +1029,142 @@ class SupabaseMemoryService:
             "relevance_score": round(relevance_score, 4),
             "relevance_reason": reason,
         }
+
+    def _rank_structured_records(
+        self,
+        records: list[dict],
+        *,
+        query_terms: set[str],
+        text_fields: tuple[str, ...],
+        weight_field: str,
+        list_fields: tuple[str, ...] = (),
+        status_values: Optional[set[str]] = None,
+        include_high_priority: bool = False,
+        limit: int = STRUCTURED_MEMORY_DIRECT_LIMIT,
+    ) -> list[dict]:
+        scored_records = []
+        for record in records:
+            if status_values is not None and record.get("status") not in status_values:
+                continue
+
+            scored = self._score_structured_record(
+                record,
+                query_terms=query_terms,
+                text_fields=text_fields,
+                list_fields=list_fields,
+                weight_field=weight_field,
+                include_high_priority=include_high_priority,
+            )
+            if scored is not None:
+                scored_records.append(scored)
+
+        scored_records.sort(
+            key=lambda record: (
+                record.get("relevance_score", 0),
+                int(record.get(weight_field) or 0),
+                str(record.get("updated_at") or record.get("created_at") or ""),
+            ),
+            reverse=True,
+        )
+        return scored_records[:limit]
+
+    def _score_structured_record(
+        self,
+        record: dict,
+        *,
+        query_terms: set[str],
+        text_fields: tuple[str, ...],
+        list_fields: tuple[str, ...],
+        weight_field: str,
+        include_high_priority: bool,
+    ) -> Optional[dict]:
+        record_text = self._structured_record_text(record, text_fields, list_fields)
+        record_terms = self._expanded_terms(record_text)
+        matched_terms = sorted(query_terms & record_terms)
+        weight = max(1, min(int(record.get(weight_field) or 3), 5))
+        is_high_priority = (
+            include_high_priority and weight >= HIGH_PRIORITY_STRUCTURED_THRESHOLD
+        )
+
+        if not query_terms:
+            matched_terms = []
+            has_direct_match = is_high_priority
+        else:
+            has_direct_match = bool(matched_terms)
+        if not has_direct_match and not is_high_priority:
+            return None
+
+        overlap_score = (
+            len(matched_terms) / max(len(query_terms), 1)
+            if matched_terms
+            else 0.18
+        )
+        weight_score = weight / 5
+        recency_score = self._recency_score(record)
+        relevance_score = (
+            (0.62 * overlap_score)
+            + (0.30 * weight_score)
+            + (0.08 * recency_score)
+        )
+        if relevance_score < STRUCTURED_MEMORY_MINIMUM_SCORE:
+            return None
+
+        if matched_terms:
+            reason = f"Matched current message terms: {', '.join(matched_terms[:6])}"
+        elif is_high_priority:
+            reason = "Included high-priority active structured memory."
+        else:
+            reason = "Included as relevant structured context."
+
+        return {
+            **record,
+            "relevance_score": round(relevance_score, 4),
+            "relevance_reason": reason,
+        }
+
+    def _structured_record_text(
+        self,
+        record: dict,
+        text_fields: tuple[str, ...],
+        list_fields: tuple[str, ...],
+    ) -> str:
+        values = [str(record.get(field) or "") for field in text_fields]
+        for field in list_fields:
+            raw_value = record.get(field) or []
+            if isinstance(raw_value, list):
+                values.extend(str(item) for item in raw_value)
+        return " ".join(values)
+
+    def _related_records(
+        self,
+        records: list[dict],
+        *,
+        link_field: str,
+        selected_ids: set[str],
+        weight_field: str,
+        status_values: Optional[set[str]] = None,
+        limit: int = STRUCTURED_MEMORY_RELATED_LIMIT,
+    ) -> list[dict]:
+        if not selected_ids:
+            return []
+
+        related = []
+        for record in records:
+            if str(record.get(link_field) or "") not in selected_ids:
+                continue
+            if status_values is not None and record.get("status") not in status_values:
+                continue
+            related.append(record)
+
+        related.sort(
+            key=lambda record: (
+                int(record.get(weight_field) or 0),
+                str(record.get("occurred_at") or record.get("target_date") or ""),
+                str(record.get("updated_at") or record.get("created_at") or ""),
+            ),
+            reverse=True,
+        )
+        return related[:limit]
 
     def _expanded_terms(self, text: str) -> set[str]:
         terms = {

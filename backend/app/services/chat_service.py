@@ -45,6 +45,9 @@ class MemoryService(Protocol):
     async def get_relevant_memories(self, query: str, limit: int = 8) -> list[dict]:
         pass
 
+    async def get_structured_memory_context(self, query: str) -> dict:
+        pass
+
     async def save_voice_turn(
         self,
         conversation_id: str,
@@ -87,7 +90,11 @@ class ChatService:
         conversation_id = await self._existing_conversation_id(conversation_id)
         file_text = await self.file_service.read_text_file(file) if file else None
 
-        conversation_history, long_term_memory = await self._fetch_prompt_context(
+        (
+            conversation_history,
+            long_term_memory,
+            structured_context,
+        ) = await self._fetch_prompt_context(
             message=message,
             conversation_id=conversation_id,
         )
@@ -100,6 +107,7 @@ class ChatService:
             conversation_id=conversation_id,
             conversation_history=conversation_history,
             long_term_memory=long_term_memory,
+            structured_context=structured_context,
             file_text=file_text,
         )
 
@@ -169,7 +177,11 @@ class ChatService:
         conversation_id = await self._existing_conversation_id(conversation_id)
         file_text = await self.file_service.read_text_file(file) if file else None
 
-        conversation_history, long_term_memory = await self._fetch_prompt_context(
+        (
+            conversation_history,
+            long_term_memory,
+            structured_context,
+        ) = await self._fetch_prompt_context(
             message=message,
             conversation_id=conversation_id,
         )
@@ -182,6 +194,7 @@ class ChatService:
             conversation_id=conversation_id,
             conversation_history=conversation_history,
             long_term_memory=long_term_memory,
+            structured_context=structured_context,
             file_text=file_text,
         )
 
@@ -236,18 +249,38 @@ class ChatService:
         self,
         message: str,
         conversation_id: Optional[str],
-    ) -> tuple[list[dict], list[dict]]:
+    ) -> tuple[list[dict], list[dict], dict]:
         long_term_memory_task = self.memory_service.get_relevant_memories(
             query=message,
             limit=8,
         )
+        structured_context_task = self._fetch_structured_context(message)
         if conversation_id is None:
-            return [], await long_term_memory_task
+            long_term_memory, structured_context = await asyncio.gather(
+                long_term_memory_task,
+                structured_context_task,
+            )
+            return [], long_term_memory, structured_context
 
         return await asyncio.gather(
             self.memory_service.get_recent_messages(conversation_id, limit=20),
             long_term_memory_task,
+            structured_context_task,
         )
+
+    async def _fetch_structured_context(self, message: str) -> dict:
+        get_structured_context = getattr(
+            self.memory_service,
+            "get_structured_memory_context",
+            None,
+        )
+        if get_structured_context is None:
+            return {}
+
+        try:
+            return await get_structured_context(message)
+        except Exception:
+            return {}
 
     def _build_prompt_messages(
         self,
@@ -255,6 +288,7 @@ class ChatService:
         conversation_id: str,
         conversation_history: list[dict],
         long_term_memory: list[dict],
+        structured_context: dict,
         file_text: Optional[str],
     ) -> list[dict]:
         last_message_timestamp = self._last_message_timestamp(conversation_history)
@@ -262,6 +296,7 @@ class ChatService:
             user_message=message,
             recent_messages=conversation_history,
             relevant_memories=long_term_memory,
+            structured_context=structured_context,
             file_context=file_text,
             conversation_metadata={
                 "id": conversation_id,

@@ -69,7 +69,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: extract structured memory candidates`
    - Rough time estimate: 5-8 hours
 
-7. [ ] **Implement deduplication and linking logic**
+7. [x] **Implement deduplication and linking logic**
    - Exact files to create or modify: `backend/app/services/entity_service.py`, `backend/app/services/rule_service.py`, `backend/app/services/plan_service.py`, `backend/app/services/commitment_service.py`, `backend/app/services/memory_extraction_service.py`
    - What must be implemented: Add simple but reliable deduplication for repeated people, aliases, rules, plans, and commitments. Link new entity events to existing entities when names or aliases match. Link extracted records back to source conversation/message IDs when available.
    - Success criteria: Repeated mentions like “Clara,” “the girl Clara,” and “Clara from work” do not create endless duplicate entities, and repeated rules update or reinforce existing rules instead of creating noise.
@@ -77,7 +77,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: deduplicate structured memories`
    - Rough time estimate: 5-9 hours
 
-8. [ ] **Add structured retrieval for prompt context**
+8. [x] **Add structured retrieval for prompt context**
    - Exact files to create or modify: `backend/app/services/memory_service.py`, `backend/app/services/prompt_service.py`, `backend/app/services/entity_service.py`, `backend/app/services/rule_service.py`, `backend/app/services/plan_service.py`
    - What must be implemented: Retrieve relevant entities, recent entity events, active personal rules, active plans, upcoming milestones, and open commitments for each chat turn. Use the current user message, detected names, keywords, importance, recency, and plan/rule status to choose what enters the prompt.
    - Success criteria: If the user mentions a known person, rule, or plan, Rex receives the correct structured context without overloading the prompt. Existing generic long-term memory retrieval still works as fallback.
@@ -85,7 +85,7 @@ Action Plan 1 (Time-Aware Prompt Foundation) must be complete. Existing Supabase
    - Suggested git commit message: `feat: retrieve structured memory context`
    - Rough time estimate: 6-10 hours
 
-9. [ ] **Add comprehensive backend tests**
+9. [x] **Add comprehensive backend tests**
    - Exact files to create or modify: `tests/test_entity_service.py`, `tests/test_rule_service.py`, `tests/test_plan_service.py`, `tests/test_structured_memory_routes.py`, update `tests/test_prompt_service.py` and `tests/test_memory_extraction.py`
    - What must be implemented: Add tests for schema-shaped payloads, create/update/deactivate flows, extraction parsing, deduplication, retrieval by name, retrieval by active rule/plan, and prompt context injection.
    - Success criteria: Tests cover the main success and failure paths without calling real Grok or Supabase. Future regressions in entity/rule/plan memory should fail fast.

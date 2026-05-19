@@ -5,8 +5,23 @@ from app.services.memory_service import SupabaseMemoryService
 
 
 class InMemoryRetrievalService(SupabaseMemoryService):
-    def __init__(self, memories):
+    def __init__(
+        self,
+        memories,
+        entities=None,
+        entity_events=None,
+        personal_rules=None,
+        plans=None,
+        plan_milestones=None,
+        commitments=None,
+    ):
         self.memories = memories
+        self.entities = entities or []
+        self.entity_events = entity_events or []
+        self.personal_rules = personal_rules or []
+        self.plans = plans or []
+        self.plan_milestones = plan_milestones or []
+        self.commitments = commitments or []
 
     async def list_long_term_memory(self, limit=50, memory_type=None, active=None):
         memories = self.memories
@@ -19,6 +34,117 @@ class InMemoryRetrievalService(SupabaseMemoryService):
                 if memory["memory_type"] == memory_type
             ]
         return memories[:limit]
+
+    async def list_entities(
+        self,
+        limit=50,
+        entity_type=None,
+        status=None,
+        active=None,
+        normalized_name=None,
+    ):
+        records = self.entities
+        if active is not None:
+            records = [record for record in records if record["active"] is active]
+        if entity_type is not None:
+            records = [
+                record for record in records if record["entity_type"] == entity_type
+            ]
+        if status is not None:
+            records = [record for record in records if record["status"] == status]
+        if normalized_name is not None:
+            records = [
+                record
+                for record in records
+                if record["normalized_name"] == normalized_name
+            ]
+        return records[:limit]
+
+    async def list_entity_events(
+        self,
+        limit=50,
+        entity_id=None,
+        event_type=None,
+        active=None,
+    ):
+        records = self.entity_events
+        if active is not None:
+            records = [record for record in records if record["active"] is active]
+        if entity_id is not None:
+            records = [record for record in records if record["entity_id"] == entity_id]
+        if event_type is not None:
+            records = [
+                record for record in records if record["event_type"] == event_type
+            ]
+        return records[:limit]
+
+    async def list_personal_rules(
+        self,
+        limit=50,
+        rule_type=None,
+        status=None,
+        active=None,
+    ):
+        records = self.personal_rules
+        if active is not None:
+            records = [record for record in records if record["active"] is active]
+        if rule_type is not None:
+            records = [record for record in records if record["rule_type"] == rule_type]
+        if status is not None:
+            records = [record for record in records if record["status"] == status]
+        return records[:limit]
+
+    async def list_plans(self, limit=50, plan_type=None, status=None, active=None):
+        records = self.plans
+        if active is not None:
+            records = [record for record in records if record["active"] is active]
+        if plan_type is not None:
+            records = [record for record in records if record["plan_type"] == plan_type]
+        if status is not None:
+            records = [record for record in records if record["status"] == status]
+        return records[:limit]
+
+    async def list_plan_milestones(
+        self,
+        limit=50,
+        plan_id=None,
+        status=None,
+        active=None,
+    ):
+        records = self.plan_milestones
+        if active is not None:
+            records = [record for record in records if record["active"] is active]
+        if plan_id is not None:
+            records = [record for record in records if record["plan_id"] == plan_id]
+        if status is not None:
+            records = [record for record in records if record["status"] == status]
+        return records[:limit]
+
+    async def list_commitments(
+        self,
+        limit=50,
+        commitment_type=None,
+        plan_id=None,
+        entity_id=None,
+        status=None,
+        active=None,
+    ):
+        records = self.commitments
+        if active is not None:
+            records = [record for record in records if record["active"] is active]
+        if commitment_type is not None:
+            records = [
+                record
+                for record in records
+                if record["commitment_type"] == commitment_type
+            ]
+        if plan_id is not None:
+            records = [record for record in records if record["plan_id"] == plan_id]
+        if entity_id is not None:
+            records = [record for record in records if record["entity_id"] == entity_id]
+        if status is not None:
+            records = [record for record in records if record["status"] == status]
+        return records[:limit]
 
 
 class FakeVoiceTurnMemoryService(SupabaseMemoryService):
@@ -135,6 +261,126 @@ async def test_get_relevant_memories_keeps_high_priority_preferences_available()
     assert len(memories) == 1
     assert memories[0]["id"] == "memory-style"
     assert memories[0]["relevance_reason"] == "Included high-priority user preference."
+
+
+@pytest.mark.asyncio
+async def test_get_structured_memory_context_ranks_records_and_links_children():
+    service = InMemoryRetrievalService(
+        [],
+        entities=[
+            {
+                "id": "entity-clara",
+                "entity_type": "person",
+                "display_name": "Clara",
+                "normalized_name": "clara",
+                "aliases": ["girl from work"],
+                "relationship": "dating interest from work",
+                "summary": "Clara touched my arm and is part of the dating story.",
+                "importance": 5,
+                "status": "active",
+                "active": True,
+                "updated_at": "2026-05-18T10:00:00Z",
+            },
+            {
+                "id": "entity-gym",
+                "entity_type": "place",
+                "display_name": "Gym",
+                "normalized_name": "gym",
+                "aliases": [],
+                "relationship": "workout location",
+                "summary": "Local gym.",
+                "importance": 2,
+                "status": "active",
+                "active": True,
+                "updated_at": "2026-05-10T10:00:00Z",
+            },
+        ],
+        entity_events=[
+            {
+                "id": "event-clara-touch",
+                "entity_id": "entity-clara",
+                "event_type": "interaction",
+                "title": "Clara touched my arm",
+                "content": "This felt like flirting at work.",
+                "importance": 4,
+                "active": True,
+                "occurred_at": "2026-05-18T12:00:00Z",
+            }
+        ],
+        personal_rules=[
+            {
+                "id": "rule-doordash",
+                "rule_type": "finance",
+                "title": "Avoid DoorDash",
+                "rule_text": "Do not order DoorDash while the budget is slipping.",
+                "trigger_keywords": ["doordash", "delivery", "budget"],
+                "priority": 5,
+                "status": "active",
+                "active": True,
+                "updated_at": "2026-05-18T09:00:00Z",
+            }
+        ],
+        plans=[
+            {
+                "id": "plan-visa",
+                "plan_type": "immigration",
+                "title": "Visa runway",
+                "description": "Protect legal and financial runway.",
+                "desired_outcome": "Leave with enough money and clean paperwork.",
+                "priority": 5,
+                "status": "active",
+                "active": True,
+                "target_date": "2026-07-01",
+                "updated_at": "2026-05-18T08:00:00Z",
+            }
+        ],
+        plan_milestones=[
+            {
+                "id": "milestone-visa-docs",
+                "plan_id": "plan-visa",
+                "milestone_type": "deadline",
+                "title": "Prepare immigration documents",
+                "description": "Collect visa paperwork.",
+                "priority": 4,
+                "status": "open",
+                "active": True,
+                "target_date": "2026-06-01",
+            }
+        ],
+        commitments=[
+            {
+                "id": "commitment-visa-docs",
+                "commitment_type": "deadline",
+                "title": "Review visa paperwork",
+                "commitment_text": "Review the visa documents before June.",
+                "plan_id": "plan-visa",
+                "entity_id": None,
+                "priority": 4,
+                "status": "open",
+                "active": True,
+                "due_at": "2026-05-31T18:00:00Z",
+                "updated_at": "2026-05-18T08:30:00Z",
+            }
+        ],
+    )
+
+    context = await service.get_structured_memory_context(
+        "I saw Clara at work and I need to stop DoorDash while handling my visa.",
+    )
+
+    assert [entity["id"] for entity in context["entities"]] == ["entity-clara"]
+    assert [event["id"] for event in context["entity_events"]] == [
+        "event-clara-touch"
+    ]
+    assert [rule["id"] for rule in context["personal_rules"]] == ["rule-doordash"]
+    assert [plan["id"] for plan in context["plans"]] == ["plan-visa"]
+    assert [milestone["id"] for milestone in context["plan_milestones"]] == [
+        "milestone-visa-docs"
+    ]
+    assert [commitment["id"] for commitment in context["commitments"]] == [
+        "commitment-visa-docs"
+    ]
+    assert "clara" in context["entities"][0]["relevance_reason"]
 
 
 @pytest.mark.asyncio

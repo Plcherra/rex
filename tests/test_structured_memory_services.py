@@ -206,6 +206,41 @@ async def test_entity_service_deduplicates_existing_entity():
 
 
 @pytest.mark.asyncio
+async def test_entity_service_deduplicates_descriptive_mentions_and_aliases():
+    repo = FakeStructuredMemoryRepository()
+    repo.entities.append(
+        {
+            "id": "entity-1",
+            "entity_type": "person",
+            "display_name": "Clara",
+            "normalized_name": "clara",
+            "aliases": ["Clara"],
+            "importance": 3,
+            "active": True,
+            "metadata": {},
+        }
+    )
+    service = EntityService(repo)
+
+    row = await service.create_entity(
+        EntityCreateRequest(
+            entity_type="person",
+            display_name="the girl Clara",
+            normalized_name="Clara from work",
+            aliases=["Clara from work"],
+            summary="Clara is someone the user knows from work.",
+            importance=4,
+        )
+    )
+
+    assert row["id"] == "entity-1"
+    assert row["aliases"] == ["Clara", "Clara from work"]
+    assert row["summary"] == "Clara is someone the user knows from work."
+    assert row["importance"] == 4
+    assert repo.created_entities == []
+
+
+@pytest.mark.asyncio
 async def test_entity_service_update_missing_entity_raises_not_found():
     service = EntityService(FakeStructuredMemoryRepository())
 

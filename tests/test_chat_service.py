@@ -8,7 +8,11 @@ from app.config import Settings
 from app.services.chat_service import ChatService
 from app.services.file_service import FileService
 from app.services.memory_service import SupabaseMemoryService, MemoryServiceError
-from app.services.prompt_service import FILE_CONTEXT_PREFIX, LONG_TERM_MEMORY_PREFIX
+from app.services.prompt_service import (
+    FILE_CONTEXT_PREFIX,
+    LONG_TERM_MEMORY_PREFIX,
+    STRUCTURED_MEMORY_PREFIX,
+)
 from app.services.time_context_service import TimeContextService
 
 
@@ -44,6 +48,8 @@ class FakeMemoryService:
         self.next_message_id = 1
         self.next_memory_id = 1
         self.relevant_memory_queries = []
+        self.structured_context_queries = []
+        self.structured_context = {}
 
     async def create_conversation(self):
         conversation_id = f"conversation-{self.next_conversation_id}"
@@ -116,6 +122,10 @@ class FakeMemoryService:
     async def get_relevant_memories(self, query, limit=8):
         self.relevant_memory_queries.append({"query": query, "limit": limit})
         return self.long_term_memory[-limit:]
+
+    async def get_structured_memory_context(self, query):
+        self.structured_context_queries.append(query)
+        return self.structured_context
 
 
 class FakeMemoryExtractionService:
@@ -346,6 +356,34 @@ async def test_chat_service_includes_long_term_memory():
     assert ai_service.messages[0]["role"] == "system"
     assert "Relevant long-term memory" in ai_service.messages[0]["content"]
     assert "- preference: I prefer concise answers" in ai_service.messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_chat_service_includes_structured_memory_context():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.structured_context = {
+        "entities": [
+            {
+                "id": "entity-clara",
+                "entity_type": "person",
+                "display_name": "Clara",
+                "relationship": "dating interest from work",
+                "summary": "Clara touched my arm.",
+                "relevance_reason": "Matched current message terms: clara",
+            }
+        ]
+    }
+    chat_service = ChatService(ai_service, FileService(), memory_service)
+
+    await chat_service.send_message("I saw Clara today.")
+
+    assert memory_service.structured_context_queries == ["I saw Clara today."]
+    assert ai_service.messages[0]["role"] == "system"
+    assert STRUCTURED_MEMORY_PREFIX in ai_service.messages[0]["content"]
+    assert "- entity/person Clara - dating interest from work" in (
+        ai_service.messages[0]["content"]
+    )
 
 
 @pytest.mark.asyncio

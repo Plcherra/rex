@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -146,6 +147,25 @@ class FakeMemoryExtractionService:
         return []
 
 
+class BlockingMemoryExtractionService:
+    def __init__(self):
+        self.calls = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def extract_and_save(self, conversation_id, user_message, assistant_message):
+        self.calls.append(
+            {
+                "conversation_id": conversation_id,
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+            }
+        )
+        self.started.set()
+        await self.release.wait()
+        return []
+
+
 class FakeUpload:
     def __init__(self, filename, content):
         self.filename = filename
@@ -206,6 +226,33 @@ async def test_chat_service_streams_tokens_and_persists_final_response():
         "assistant",
     ]
     assert memory_service.messages[-1]["content"] == "Rex stream"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_stream_done_does_not_wait_for_memory_extraction():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    extraction_service = BlockingMemoryExtractionService()
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        extraction_service,
+    )
+
+    events = [
+        event async for event in chat_service.stream_message("Hello Rex", file=None)
+    ]
+
+    assert events[-1]["event"] == "done"
+    assert events[-1]["response"] == "Rex stream"
+
+    await asyncio.wait_for(extraction_service.started.wait(), timeout=1)
+    assert len(extraction_service.calls) == 1
+    assert extraction_service.calls[0]["conversation_id"] == "conversation-1"
+
+    extraction_service.release.set()
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,7 @@ class ChatService:
         self.memory_extraction_service = memory_extraction_service
         self.prompt_service = prompt_service or PromptService()
         self.time_context_service = time_context_service or TimeContextService()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def send_message(
         self,
@@ -217,7 +218,7 @@ class ChatService:
             rex_response,
         )
 
-        await self._extract_memory_after_success(
+        self._schedule_memory_extraction(
             conversation_id,
             user_message,
             assistant_message,
@@ -339,3 +340,22 @@ class ChatService:
             # Memory extraction is best-effort. A failed extraction must not
             # break a successful chat response.
             return
+
+    def _schedule_memory_extraction(
+        self,
+        conversation_id: str,
+        user_message: dict,
+        assistant_message: dict,
+    ) -> None:
+        if self.memory_extraction_service is None:
+            return
+
+        task = asyncio.create_task(
+            self._extract_memory_after_success(
+                conversation_id,
+                user_message,
+                assistant_message,
+            )
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)

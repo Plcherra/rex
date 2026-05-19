@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.services.chat_service import ChatService
+from app.services.chat_service import ChatService, PROFILE_MEMORY_QUERY
 from app.services.file_service import FileService
 from app.services.memory_service import SupabaseMemoryService, MemoryServiceError
 from app.services.prompt_service import (
@@ -398,11 +398,35 @@ async def test_chat_service_includes_long_term_memory():
     await chat_service.send_message("What should I do next?")
 
     assert memory_service.relevant_memory_queries == [
-        {"query": "What should I do next?", "limit": 8}
+        {"query": "What should I do next?", "limit": 8},
+        {"query": PROFILE_MEMORY_QUERY, "limit": 4},
     ]
     assert ai_service.messages[0]["role"] == "system"
     assert "Relevant long-term memory" in ai_service.messages[0]["content"]
     assert "- preference: I prefer concise answers" in ai_service.messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_chat_service_includes_profile_memory_for_new_chat_openers():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.long_term_memory.append(
+        {
+            "id": "memory-location",
+            "memory_type": "fact",
+            "content": "I am in Massachusetts.",
+            "importance": 3,
+        }
+    )
+    chat_service = ChatService(ai_service, FileService(), memory_service)
+
+    await chat_service.send_message("Hey")
+
+    assert memory_service.relevant_memory_queries == [
+        {"query": "Hey", "limit": 8},
+        {"query": PROFILE_MEMORY_QUERY, "limit": 4},
+    ]
+    assert "- fact: I am in Massachusetts." in ai_service.messages[0]["content"]
 
 
 @pytest.mark.asyncio

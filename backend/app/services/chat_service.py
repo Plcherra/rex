@@ -10,6 +10,12 @@ from app.services.memory_extraction_service import MemoryExtractionService
 from app.services.prompt_service import PromptService
 from app.services.time_context_service import TimeContextService
 
+PROFILE_MEMORY_QUERY = (
+    "user profile location timezone where I live state city home current time "
+    "important identity facts"
+)
+PROFILE_MEMORY_LIMIT = 4
+
 
 class ConversationNotFoundError(Exception):
     pass
@@ -255,19 +261,56 @@ class ChatService:
             query=message,
             limit=8,
         )
+        profile_memory_task = self.memory_service.get_relevant_memories(
+            query=PROFILE_MEMORY_QUERY,
+            limit=PROFILE_MEMORY_LIMIT,
+        )
         structured_context_task = self._fetch_structured_context(message)
         if conversation_id is None:
-            long_term_memory, structured_context = await asyncio.gather(
+            (
+                long_term_memory,
+                profile_memory,
+                structured_context,
+            ) = await asyncio.gather(
                 long_term_memory_task,
+                profile_memory_task,
                 structured_context_task,
             )
-            return [], long_term_memory, structured_context
+            return (
+                [],
+                self._merge_memories(long_term_memory, profile_memory),
+                structured_context,
+            )
 
-        return await asyncio.gather(
+        (
+            conversation_history,
+            long_term_memory,
+            profile_memory,
+            structured_context,
+        ) = await asyncio.gather(
             self.memory_service.get_recent_messages(conversation_id, limit=20),
             long_term_memory_task,
+            profile_memory_task,
             structured_context_task,
         )
+        return (
+            conversation_history,
+            self._merge_memories(long_term_memory, profile_memory),
+            structured_context,
+        )
+
+    def _merge_memories(self, *memory_groups: list[dict]) -> list[dict]:
+        merged: list[dict] = []
+        seen_ids: set[str] = set()
+        for memories in memory_groups:
+            for memory in memories:
+                memory_id = str(memory.get("id") or "")
+                if memory_id and memory_id in seen_ids:
+                    continue
+                if memory_id:
+                    seen_ids.add(memory_id)
+                merged.append(memory)
+        return merged[:8]
 
     async def _fetch_structured_context(self, message: str) -> dict:
         get_structured_context = getattr(

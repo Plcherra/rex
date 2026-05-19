@@ -123,6 +123,31 @@ void main() {
     },
   );
 
+  test('VoiceCallController accumulates live transcript segments', () async {
+    final container = voiceCallTestContainer();
+    addTearDown(container.dispose);
+
+    final controller = container.read(voiceCallProvider.notifier);
+    expect(await controller.startCall(conversationId: 'conversation-1'), true);
+
+    controller.updateTranscript('I am planning something', isFinal: true);
+    controller.updateTranscript('for next week');
+
+    expect(
+      container.read(voiceCallProvider).currentTranscript,
+      'I am planning something for next week',
+    );
+    expect(container.read(voiceCallProvider).phase, VoiceCallPhase.listening);
+
+    controller.startThinking(finalTranscript: 'a date on Friday');
+
+    expect(
+      container.read(voiceCallProvider).currentTranscript,
+      'I am planning something for next week a date on Friday',
+    );
+    expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
+  });
+
   test('VoiceCallController returns to listening after speaking', () async {
     final container = voiceCallTestContainer();
     addTearDown(container.dispose);

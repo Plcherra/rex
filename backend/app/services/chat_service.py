@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Optional, Protocol
 
@@ -86,15 +87,9 @@ class ChatService:
         conversation_id = await self._existing_conversation_id(conversation_id)
         file_text = await self.file_service.read_text_file(file) if file else None
 
-        conversation_history = []
-        if conversation_id is not None:
-            conversation_history = await self.memory_service.get_recent_messages(
-                conversation_id,
-                limit=20,
-            )
-        long_term_memory = await self.memory_service.get_relevant_memories(
-            query=message,
-            limit=8,
+        conversation_history, long_term_memory = await self._fetch_prompt_context(
+            message=message,
+            conversation_id=conversation_id,
         )
 
         if conversation_id is None:
@@ -174,15 +169,9 @@ class ChatService:
         conversation_id = await self._existing_conversation_id(conversation_id)
         file_text = await self.file_service.read_text_file(file) if file else None
 
-        conversation_history = []
-        if conversation_id is not None:
-            conversation_history = await self.memory_service.get_recent_messages(
-                conversation_id,
-                limit=20,
-            )
-        long_term_memory = await self.memory_service.get_relevant_memories(
-            query=message,
-            limit=8,
+        conversation_history, long_term_memory = await self._fetch_prompt_context(
+            message=message,
+            conversation_id=conversation_id,
         )
 
         if conversation_id is None:
@@ -242,6 +231,23 @@ class ChatService:
             raise ConversationNotFoundError()
 
         return conversation_id
+
+    async def _fetch_prompt_context(
+        self,
+        message: str,
+        conversation_id: Optional[str],
+    ) -> tuple[list[dict], list[dict]]:
+        long_term_memory_task = self.memory_service.get_relevant_memories(
+            query=message,
+            limit=8,
+        )
+        if conversation_id is None:
+            return [], await long_term_memory_task
+
+        return await asyncio.gather(
+            self.memory_service.get_recent_messages(conversation_id, limit=20),
+            long_term_memory_task,
+        )
 
     def _build_prompt_messages(
         self,

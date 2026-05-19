@@ -61,6 +61,8 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   StreamingAudioPlaybackQueue? _activeStreamingPlaybackQueue;
   VoiceAudioSessionService? _activeAudioSessionService;
   BackgroundVoiceService? _activeBackgroundVoiceService;
+  var _finalTranscriptBuffer = '';
+  var _partialTranscriptBuffer = '';
   var _isStartingCall = false;
 
   @override
@@ -106,6 +108,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
 
     _isStartingCall = true;
     final generation = ++_callGeneration;
+    _clearVisibleTranscript();
     final startedAt = ref.read(voiceCallNowProvider)();
     final activeConversationId =
         conversationId ?? ref.read(chatProvider).conversationId;
@@ -163,14 +166,20 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     );
   }
 
-  void updateTranscript(String transcript) {
+  void updateTranscript(String transcript, {bool isFinal = false}) {
     if (!state.isCallActive) {
       return;
     }
 
+    if (isFinal) {
+      _appendFinalTranscript(transcript);
+    } else {
+      _partialTranscriptBuffer = transcript.trim();
+    }
+
     state = state.copyWith(
       phase: VoiceCallPhase.listening,
-      currentTranscript: transcript,
+      currentTranscript: _visibleTranscript(),
       clearError: true,
     );
   }
@@ -196,9 +205,13 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       return;
     }
 
+    if (finalTranscript != null) {
+      _appendFinalTranscript(finalTranscript);
+    }
+
     state = state.copyWith(
       phase: VoiceCallPhase.thinking,
-      currentTranscript: finalTranscript,
+      currentTranscript: _visibleTranscript(),
       clearError: true,
     );
   }
@@ -225,6 +238,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       clearCurrentTranscript: true,
       clearError: true,
     );
+    _clearVisibleTranscript();
     _startListeningCycle(_callGeneration);
   }
 
@@ -268,6 +282,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       clearCurrentTranscript: true,
       clearError: true,
     );
+    _clearVisibleTranscript();
     _startListeningCycle(generation);
   }
 
@@ -305,6 +320,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       clearCurrentTranscript: true,
       clearError: true,
     );
+    _clearVisibleTranscript();
     _startListeningCycle(_callGeneration);
   }
 
@@ -348,6 +364,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       callEndedAt: ref.read(voiceCallNowProvider)(),
       clearError: true,
     );
+    _clearVisibleTranscript();
   }
 
   void reset() {
@@ -362,6 +379,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     unawaited(_playbackService.stop());
     unawaited(_backgroundVoiceService.stop());
     unawaited(_audioSessionService.setActive(false));
+    _clearVisibleTranscript();
     state = const VoiceCallState();
   }
 
@@ -599,11 +617,16 @@ class VoiceCallController extends Notifier<VoiceCallState> {
           case 'transcript.partial':
             updateTranscript(event.transcript ?? state.currentTranscript);
           case 'transcript.final':
-            assistantText = '';
-            responseAudioStarted = false;
-            startThinking(finalTranscript: event.transcript);
             if (event.speechFinal) {
+              assistantText = '';
+              responseAudioStarted = false;
+              startThinking(finalTranscript: event.transcript);
               unawaited(_activeStreamingCaptureService?.cancel());
+            } else {
+              updateTranscript(
+                event.transcript ?? state.currentTranscript,
+                isFinal: true,
+              );
             }
           case 'conversation.updated':
             state = state.copyWith(
@@ -691,6 +714,57 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   }
 
   bool _isCurrentCall(int generation) => generation == _callGeneration;
+
+  void _clearVisibleTranscript() {
+    _finalTranscriptBuffer = '';
+    _partialTranscriptBuffer = '';
+  }
+
+  void _appendFinalTranscript(String? transcript) {
+    final next = transcript?.trim() ?? '';
+    if (next.isEmpty) {
+      return;
+    }
+
+    final previousPartial = _partialTranscriptBuffer.trim();
+    _partialTranscriptBuffer = '';
+    if (previousPartial.isNotEmpty && !next.contains(previousPartial)) {
+      _appendTranscriptSegment(previousPartial);
+    }
+    _appendTranscriptSegment(next);
+  }
+
+  void _appendTranscriptSegment(String next) {
+    if (_finalTranscriptBuffer.isEmpty) {
+      _finalTranscriptBuffer = next;
+      return;
+    }
+    if (_finalTranscriptBuffer == next || _finalTranscriptBuffer.endsWith(next)) {
+      return;
+    }
+    if (next.startsWith(_finalTranscriptBuffer)) {
+      _finalTranscriptBuffer = next;
+      return;
+    }
+    _finalTranscriptBuffer = '$_finalTranscriptBuffer $next';
+  }
+
+  String _visibleTranscript() {
+    final finalText = _finalTranscriptBuffer.trim();
+    final partialText = _partialTranscriptBuffer.trim();
+    if (finalText.isEmpty) {
+      return partialText;
+    }
+    if (partialText.isEmpty ||
+        finalText == partialText ||
+        finalText.endsWith(partialText)) {
+      return finalText;
+    }
+    if (partialText.startsWith(finalText)) {
+      return partialText;
+    }
+    return '$finalText $partialText';
+  }
 
   String _permissionMessage(MicrophonePermissionDecision decision) {
     return switch (decision) {

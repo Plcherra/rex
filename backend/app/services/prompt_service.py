@@ -1,10 +1,11 @@
-from typing import Optional
+from typing import Any, Optional
 
 from app.services.time_context_service import TimeContextService
 
 MAX_CONTEXT_CHARACTERS = 24000
 MAX_MEMORY_CONTEXT_CHARACTERS = 2000
 MAX_STRUCTURED_MEMORY_CONTEXT_CHARACTERS = 3000
+MAX_ACCOUNTABILITY_CONTEXT_CHARACTERS = 2200
 REX_PERSONALITY_PROMPT = """
 Rex is a private personal AI assistant with long-term memory. It is being built first as the founder's personal daily driver: an uncensored, voice-first, time-aware, memory-powered life co-pilot that knows the ongoing story and gives direct, useful feedback without generic corporate filler.
 
@@ -29,6 +30,7 @@ PERSONALITY_CONTEXT_PREFIX = "Rex personality and behavior:\n"
 TIME_CONTEXT_PREFIX = "Current time context:\n"
 CONVERSATION_CONTEXT_PREFIX = "Conversation context:\n"
 STRUCTURED_MEMORY_PREFIX = "Relevant structured memory:\n"
+ACCOUNTABILITY_CONTEXT_PREFIX = "Accountability context:\n"
 LONG_TERM_MEMORY_PREFIX = "Relevant long-term memory:\n"
 
 
@@ -45,6 +47,7 @@ class PromptService:
         recent_messages: Optional[list[dict]] = None,
         relevant_memories: Optional[list[dict]] = None,
         structured_context: Optional[dict] = None,
+        accountability_signals: Optional[list[Any]] = None,
         file_context: Optional[str] = None,
         conversation_metadata: Optional[dict] = None,
         time_context: Optional[dict] = None,
@@ -58,6 +61,7 @@ class PromptService:
         system_sections = self._system_sections(
             relevant_memories=relevant_memories or [],
             structured_context=structured_context or {},
+            accountability_signals=accountability_signals or [],
             conversation_metadata=conversation_metadata,
             time_context=time_context,
         )
@@ -83,6 +87,7 @@ class PromptService:
         self,
         relevant_memories: list[dict],
         structured_context: dict,
+        accountability_signals: list[Any],
         conversation_metadata: Optional[dict],
         time_context: Optional[dict],
     ) -> list[str]:
@@ -102,6 +107,10 @@ class PromptService:
         if structured_section:
             sections.append(structured_section)
 
+        accountability_section = self._accountability_section(accountability_signals)
+        if accountability_section:
+            sections.append(accountability_section)
+
         memory_section = self._long_term_memory_section(
             relevant_memories,
             time_context,
@@ -110,6 +119,82 @@ class PromptService:
             sections.append(memory_section)
 
         return sections
+
+    def _accountability_section(
+        self,
+        accountability_signals: list[Any],
+    ) -> Optional[str]:
+        if not accountability_signals:
+            return None
+
+        lines = [
+            "Use this as private coaching context. Mention it naturally only when it helps."
+        ]
+        used_characters = len(lines[0]) + 1
+        for signal in accountability_signals:
+            line = self._accountability_line(signal)
+            if not line:
+                continue
+            remaining_characters = (
+                MAX_ACCOUNTABILITY_CONTEXT_CHARACTERS - used_characters
+            )
+            if remaining_characters <= 0:
+                break
+            if len(line) > remaining_characters:
+                if remaining_characters < 40:
+                    break
+                line = f"{line[: remaining_characters - 22].rstrip()} [truncated]"
+
+            lines.append(line)
+            used_characters += len(line) + 1
+
+        if len(lines) == 1:
+            return None
+        return f"{ACCOUNTABILITY_CONTEXT_PREFIX}{chr(10).join(lines)}"
+
+    def _accountability_line(self, signal: Any) -> Optional[str]:
+        signal_type = self._signal_value(signal, "signal_type")
+        title = self._signal_value(signal, "title")
+        reason = self._signal_value(signal, "reason")
+        if not signal_type or not title or not reason:
+            return None
+
+        severity = self._signal_value(signal, "severity") or "medium"
+        confidence = self._signal_value(signal, "confidence")
+        suggested_prompt = self._signal_value(signal, "suggested_prompt")
+        recommended_action = self._signal_value(signal, "recommended_action")
+        source_refs = self._signal_value(signal, "source_refs") or []
+
+        line = f"- {signal_type}/{severity}: {title} - {reason}"
+        if confidence is not None:
+            line = f"{line} (confidence: {confidence})"
+        source_summary = self._accountability_source_summary(source_refs)
+        if source_summary:
+            line = f"{line} (sources: {source_summary})"
+        if suggested_prompt:
+            line = f"{line} Suggested framing: {suggested_prompt}"
+        if recommended_action:
+            line = f"{line} Action: {recommended_action}"
+        return line
+
+    def _accountability_source_summary(self, source_refs: list[Any]) -> Optional[str]:
+        summaries = []
+        for source in source_refs[:3]:
+            source_type = self._signal_value(source, "source_type")
+            title = self._signal_value(source, "title")
+            excerpt = self._signal_value(source, "excerpt")
+            label = str(source_type or "source")
+            if title:
+                label = f"{label}:{title}"
+            if excerpt:
+                label = f"{label} - {str(excerpt)[:80]}"
+            summaries.append(label)
+        return "; ".join(summaries) if summaries else None
+
+    def _signal_value(self, value: Any, field: str) -> Any:
+        if isinstance(value, dict):
+            return value.get(field)
+        return getattr(value, field, None)
 
     def _time_context_section(self, time_context: Optional[dict]) -> Optional[str]:
         if not time_context:

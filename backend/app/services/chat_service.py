@@ -5,6 +5,7 @@ from typing import Optional, Protocol
 from fastapi import UploadFile
 
 from app.services.ai_service import AIService
+from app.services.accountability_service import AccountabilityService
 from app.services.file_service import FileService
 from app.services.memory_extraction_service import MemoryExtractionService
 from app.services.prompt_service import PromptService
@@ -79,6 +80,7 @@ class ChatService:
         memory_extraction_service: Optional[MemoryExtractionService] = None,
         prompt_service: Optional[PromptService] = None,
         time_context_service: Optional[TimeContextService] = None,
+        accountability_service: Optional[AccountabilityService] = None,
     ) -> None:
         self.ai_service = ai_service
         self.file_service = file_service
@@ -86,6 +88,7 @@ class ChatService:
         self.memory_extraction_service = memory_extraction_service
         self.prompt_service = prompt_service or PromptService()
         self.time_context_service = time_context_service or TimeContextService()
+        self.accountability_service = accountability_service or AccountabilityService()
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def send_message(
@@ -109,13 +112,23 @@ class ChatService:
         if conversation_id is None:
             conversation_id = await self.memory_service.create_conversation()
 
+        time_context = self._current_time_context(conversation_history)
+        accountability_signals = await self._accountability_signals(
+            message=message,
+            time_context=time_context,
+            long_term_memory=long_term_memory,
+            structured_context=structured_context,
+        )
+
         ai_messages = self._build_prompt_messages(
             message=message,
             conversation_id=conversation_id,
             conversation_history=conversation_history,
             long_term_memory=long_term_memory,
             structured_context=structured_context,
+            accountability_signals=accountability_signals,
             file_text=file_text,
+            time_context=time_context,
         )
 
         user_message = await self.memory_service.save_message(
@@ -196,13 +209,23 @@ class ChatService:
         if conversation_id is None:
             conversation_id = await self.memory_service.create_conversation()
 
+        time_context = self._current_time_context(conversation_history)
+        accountability_signals = await self._accountability_signals(
+            message=message,
+            time_context=time_context,
+            long_term_memory=long_term_memory,
+            structured_context=structured_context,
+        )
+
         ai_messages = self._build_prompt_messages(
             message=message,
             conversation_id=conversation_id,
             conversation_history=conversation_history,
             long_term_memory=long_term_memory,
             structured_context=structured_context,
+            accountability_signals=accountability_signals,
             file_text=file_text,
+            time_context=time_context,
         )
 
         user_message = await self.memory_service.save_message(
@@ -333,7 +356,9 @@ class ChatService:
         conversation_history: list[dict],
         long_term_memory: list[dict],
         structured_context: dict,
+        accountability_signals: list,
         file_text: Optional[str],
+        time_context: dict,
     ) -> list[dict]:
         last_message_timestamp = self._last_message_timestamp(conversation_history)
         return self.prompt_service.build_messages(
@@ -341,16 +366,45 @@ class ChatService:
             recent_messages=conversation_history,
             relevant_memories=long_term_memory,
             structured_context=structured_context,
+            accountability_signals=accountability_signals,
             file_context=file_text,
             conversation_metadata={
                 "id": conversation_id,
                 "timestamp": self._conversation_timestamp(conversation_history),
                 "last_message_timestamp": last_message_timestamp,
             },
-            time_context=self.time_context_service.current_context(
-                previous_timestamp=last_message_timestamp,
-            ),
+            time_context=time_context,
         )
+
+    def _current_time_context(self, conversation_history: list[dict]) -> dict:
+        return self.time_context_service.current_context(
+            previous_timestamp=self._last_message_timestamp(conversation_history),
+        )
+
+    async def _accountability_signals(
+        self,
+        *,
+        message: str,
+        time_context: dict,
+        long_term_memory: list[dict],
+        structured_context: dict,
+    ) -> list:
+        if self.accountability_service is None:
+            return []
+
+        try:
+            return await self.accountability_service.analyze_signals(
+                message=message,
+                time_context=time_context,
+                personal_rules=structured_context.get("personal_rules") or [],
+                commitments=structured_context.get("commitments") or [],
+                plans=structured_context.get("plans") or [],
+                plan_milestones=structured_context.get("plan_milestones") or [],
+                entity_events=structured_context.get("entity_events") or [],
+                relevant_memories=long_term_memory,
+            )
+        except Exception:
+            return []
 
     def _last_message_timestamp(self, conversation_history: list[dict]) -> Optional[str]:
         if not conversation_history:

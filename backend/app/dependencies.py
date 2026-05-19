@@ -2,6 +2,7 @@ from fastapi import Depends
 
 from app.config import get_settings
 from app.services.ai_service import AIService
+from app.services.accountability_service import AccountabilityService
 from app.services.chat_service import ChatService
 from app.services.commitment_service import CommitmentService
 from app.services.deepgram_service import DeepgramService
@@ -48,6 +49,10 @@ def get_commitment_service(
     return CommitmentService(memory_service)
 
 
+def get_accountability_service() -> AccountabilityService:
+    return AccountabilityService()
+
+
 def get_deepgram_service() -> DeepgramService:
     return DeepgramService()
 
@@ -71,4 +76,5 @@ def get_chat_service(
         memory_service,
         MemoryExtractionService(ai_service, memory_service),
         time_context_service=TimeContextService(timezone_name=settings.app_timezone),
+        accountability_service=get_accountability_service(),
     )

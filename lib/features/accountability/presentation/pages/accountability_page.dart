@@ -1,0 +1,708 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'package:rex/core/providers.dart';
+import 'package:rex/features/accountability/data/accountability_models.dart';
+
+class AccountabilityPage extends ConsumerStatefulWidget {
+  const AccountabilityPage({super.key});
+
+  @override
+  ConsumerState<AccountabilityPage> createState() => _AccountabilityPageState();
+}
+
+class _AccountabilityPageState extends ConsumerState<AccountabilityPage> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(
+      () => ref.read(accountabilityProvider.notifier).loadOverview(),
+    );
+  }
+
+  Future<void> _refresh() {
+    return ref.read(accountabilityProvider.notifier).loadOverview();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(accountabilityProvider);
+    final overview = state.overview;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Accountability'),
+        actions: [
+          IconButton(
+            onPressed: state.isLoading ? null : _refresh,
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh accountability',
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+                  if (state.errorMessage != null)
+                    _ErrorBanner(message: state.errorMessage!),
+                  if (state.isLoading && overview == null)
+                    const _InitialLoading()
+                  else if (overview == null || overview.isEmpty)
+                    const _EmptyAccountabilityState()
+                  else ...[
+                    _OverviewSummary(overview: overview),
+                    const SizedBox(height: 20),
+                    _SignalSection(signals: overview.signals),
+                    const SizedBox(height: 20),
+                    _RuleSection(rules: overview.activeRules),
+                    const SizedBox(height: 20),
+                    _CommitmentSection(commitments: overview.openCommitments),
+                    const SizedBox(height: 20),
+                    _PlanSection(
+                      plans: overview.activePlans,
+                      milestones: overview.openMilestones,
+                    ),
+                  ],
+                ]),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewSummary extends StatelessWidget {
+  const _OverviewSummary({required this.overview});
+
+  final AccountabilityOverview overview;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        _SummaryPill(
+          icon: Icons.warning_amber_rounded,
+          label: 'Signals',
+          value: overview.signals.length,
+        ),
+        _SummaryPill(
+          icon: Icons.rule_rounded,
+          label: 'Rules',
+          value: overview.activeRules.length,
+        ),
+        _SummaryPill(
+          icon: Icons.check_circle_outline_rounded,
+          label: 'Commitments',
+          value: overview.openCommitments.length,
+        ),
+        _SummaryPill(
+          icon: Icons.flag_rounded,
+          label: 'Plans',
+          value: overview.activePlans.length,
+        ),
+      ],
+    );
+  }
+}
+
+class _SummaryPill extends StatelessWidget {
+  const _SummaryPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: scheme.primary),
+            const SizedBox(width: 7),
+            Text(
+              '$value $label',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: scheme.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SignalSection extends StatelessWidget {
+  const _SignalSection({required this.signals});
+
+  final List<AccountabilitySignal> signals;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Current Signals',
+      emptyText: 'No active accountability signals right now.',
+      children: signals.map((signal) => _SignalTile(signal: signal)).toList(),
+    );
+  }
+}
+
+class _RuleSection extends StatelessWidget {
+  const _RuleSection({required this.rules});
+
+  final List<PersonalRule> rules;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Active Rules',
+      emptyText: 'No active personal rules yet.',
+      children: rules.map((rule) => _RuleTile(rule: rule)).toList(),
+    );
+  }
+}
+
+class _CommitmentSection extends StatelessWidget {
+  const _CommitmentSection({required this.commitments});
+
+  final List<Commitment> commitments;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Open Commitments',
+      emptyText: 'No open commitments right now.',
+      children: commitments
+          .map((commitment) => _CommitmentTile(commitment: commitment))
+          .toList(),
+    );
+  }
+}
+
+class _PlanSection extends StatelessWidget {
+  const _PlanSection({required this.plans, required this.milestones});
+
+  final List<PlanRecord> plans;
+  final List<PlanMilestone> milestones;
+
+  @override
+  Widget build(BuildContext context) {
+    final planTiles = plans
+        .map(
+          (plan) => _PlanTile(
+            plan: plan,
+            milestones: milestones
+                .where((milestone) => milestone.planId == plan.id)
+                .toList(growable: false),
+          ),
+        )
+        .toList(growable: false);
+    final orphanMilestones = milestones
+        .where((milestone) => !plans.any((plan) => plan.id == milestone.planId))
+        .map((milestone) => _MilestoneTile(milestone: milestone))
+        .toList(growable: false);
+
+    return _Section(
+      title: 'Plan Progress',
+      emptyText: 'No active plans or open milestones yet.',
+      children: [...planTiles, ...orphanMilestones],
+    );
+  }
+}
+
+class _Section extends StatelessWidget {
+  const _Section({
+    required this.title,
+    required this.emptyText,
+    required this.children,
+  });
+
+  final String title;
+  final String emptyText;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (children.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              emptyText,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: scheme.outlineVariant),
+                bottom: BorderSide(color: scheme.outlineVariant),
+              ),
+            ),
+            child: Column(
+              children: [
+                for (var index = 0; index < children.length; index++) ...[
+                  children[index],
+                  if (index != children.length - 1) const Divider(height: 1),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _SignalTile extends StatelessWidget {
+  const _SignalTile({required this.signal});
+
+  final AccountabilitySignal signal;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final accent = _severityColor(scheme, signal.severity);
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+      leading: CircleAvatar(
+        backgroundColor: accent.withValues(alpha: 0.16),
+        foregroundColor: accent,
+        child: Icon(_signalIcon(signal.signalType), size: 20),
+      ),
+      title: Text(
+        signal.title,
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(signal.summary.isEmpty ? signal.reason : signal.summary),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: [
+                _MetaChip(label: signal.signalType.label),
+                _MetaChip(label: signal.severity.label),
+                if (signal.sourceRefs.isNotEmpty)
+                  _MetaChip(label: _sourceLabel(signal.sourceRefs.first)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RuleTile extends StatelessWidget {
+  const _RuleTile({required this.rule});
+
+  final PersonalRule rule;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+      leading: const _TileIcon(icon: Icons.rule_rounded),
+      title: Text(rule.title),
+      subtitle: _RecordSubtitle(
+        text: rule.ruleText,
+        chips: [
+          rule.ruleType.accountabilityLabel,
+          'Priority ${rule.priority}',
+          rule.enforcementStyle.accountabilityLabel,
+        ],
+      ),
+    );
+  }
+}
+
+class _CommitmentTile extends StatelessWidget {
+  const _CommitmentTile({required this.commitment});
+
+  final Commitment commitment;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+      leading: const _TileIcon(icon: Icons.check_circle_outline_rounded),
+      title: Text(commitment.title),
+      subtitle: _RecordSubtitle(
+        text: commitment.commitmentText,
+        chips: [
+          commitment.commitmentType.accountabilityLabel,
+          commitment.status.accountabilityLabel,
+          if (commitment.dueAt != null) 'Due ${_shortDate(commitment.dueAt!)}',
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanTile extends StatelessWidget {
+  const _PlanTile({required this.plan, required this.milestones});
+
+  final PlanRecord plan;
+  final List<PlanMilestone> milestones;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = plan.desiredOutcome ?? plan.description ?? '';
+
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 0,
+            vertical: 6,
+          ),
+          leading: const _TileIcon(icon: Icons.flag_rounded),
+          title: Text(plan.title),
+          subtitle: _RecordSubtitle(
+            text: details,
+            chips: [
+              plan.planType.accountabilityLabel,
+              plan.status.accountabilityLabel,
+              if (plan.targetDate != null)
+                'Target ${_shortDate(plan.targetDate!)}',
+            ],
+          ),
+        ),
+        if (milestones.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 44, bottom: 8),
+            child: Column(
+              children: milestones
+                  .map((milestone) => _MilestoneTile(milestone: milestone))
+                  .toList(growable: false),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MilestoneTile extends StatelessWidget {
+  const _MilestoneTile({required this.milestone});
+
+  final PlanMilestone milestone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.subdirectory_arrow_right_rounded,
+            size: 18,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  milestone.title,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: [
+                    _MetaChip(
+                      label: milestone.milestoneType.accountabilityLabel,
+                    ),
+                    _MetaChip(label: milestone.status.accountabilityLabel),
+                    if (milestone.targetDate != null)
+                      _MetaChip(
+                        label: 'Due ${_shortDate(milestone.targetDate!)}',
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecordSubtitle extends StatelessWidget {
+  const _RecordSubtitle({required this.text, required this.chips});
+
+  final String text;
+  final List<String> chips;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (text.trim().isNotEmpty)
+            Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          if (text.trim().isNotEmpty) const SizedBox(height: 8),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: chips
+                .where((chip) => chip.trim().isNotEmpty)
+                .map((chip) => _MetaChip(label: chip))
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TileIcon extends StatelessWidget {
+  const _TileIcon({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return CircleAvatar(
+      backgroundColor: scheme.primaryContainer,
+      foregroundColor: scheme.onPrimaryContainer,
+      child: Icon(icon, size: 20),
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          label,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InitialLoading extends StatelessWidget {
+  const _InitialLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 320,
+      child: Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+class _EmptyAccountabilityState extends StatelessWidget {
+  const _EmptyAccountabilityState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      height: 360,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.fact_check_outlined, size: 40, color: scheme.primary),
+            const SizedBox(height: 14),
+            Text(
+              'Nothing to review yet',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Rules, commitments, plans, and risks will appear here.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.errorContainer,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                Icons.error_outline_rounded,
+                color: scheme.onErrorContainer,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+IconData _signalIcon(AccountabilitySignalType type) {
+  switch (type) {
+    case AccountabilitySignalType.ruleViolation:
+      return Icons.rule_rounded;
+    case AccountabilitySignalType.missedCommitment:
+      return Icons.event_busy_rounded;
+    case AccountabilitySignalType.planDrift:
+      return Icons.route_rounded;
+    case AccountabilitySignalType.repeatedPattern:
+      return Icons.repeat_rounded;
+    case AccountabilitySignalType.upcomingDeadline:
+      return Icons.event_rounded;
+    case AccountabilitySignalType.budgetRisk:
+      return Icons.savings_rounded;
+    case AccountabilitySignalType.positiveFollowThrough:
+      return Icons.check_circle_rounded;
+    case AccountabilitySignalType.unknown:
+      return Icons.info_outline_rounded;
+  }
+}
+
+Color _severityColor(ColorScheme scheme, AccountabilitySeverity severity) {
+  switch (severity) {
+    case AccountabilitySeverity.critical:
+    case AccountabilitySeverity.high:
+      return scheme.error;
+    case AccountabilitySeverity.medium:
+      return scheme.tertiary;
+    case AccountabilitySeverity.low:
+    case AccountabilitySeverity.info:
+    case AccountabilitySeverity.unknown:
+      return scheme.primary;
+  }
+}
+
+String _sourceLabel(AccountabilitySourceRef source) {
+  return source.title?.trim().isNotEmpty == true
+      ? source.title!
+      : source.sourceType.name.accountabilityLabel;
+}
+
+String _shortDate(DateTime dateTime) {
+  final local = dateTime.toLocal();
+  return '${local.month}/${local.day}/${local.year}';
+}

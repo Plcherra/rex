@@ -122,6 +122,10 @@ class RuleService:
         return updated or existing
 
 
+def is_active_rule(rule: dict[str, Any]) -> bool:
+    return rule.get("active") is not False and rule.get("status", "active") == "active"
+
+
 def _payload(request: Any) -> dict[str, Any]:
     if hasattr(request, "model_dump"):
         return request.model_dump(exclude_none=True)

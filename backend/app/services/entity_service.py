@@ -260,6 +260,17 @@ def _normalize_entity_name(value: Any) -> str:
     return normalized or _normalize_key(value)
 
 
+def is_active_entity_event(event: dict[str, Any]) -> bool:
+    return event.get("active") is not False
+
+
+def entity_event_accountability_text(event: dict[str, Any]) -> str:
+    return " ".join(
+        str(event.get(field) or "")
+        for field in ("title", "content", "event_type")
+    )
+
+
 def _entity_match_keys(entity: dict[str, Any]) -> set[str]:
     raw_values = [
         entity.get("normalized_name"),

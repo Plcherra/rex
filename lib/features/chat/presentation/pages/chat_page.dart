@@ -11,6 +11,7 @@ import 'package:rex/features/chat/domain/chat_message.dart';
 import 'package:rex/features/chat/presentation/pages/conversation_list_page.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_input_bar.dart';
 import 'package:rex/features/chat/presentation/widgets/chat_message_bubble.dart';
+import 'package:rex/features/accountability/presentation/pages/accountability_page.dart';
 import 'package:rex/features/memory/presentation/pages/memory_page.dart';
 import 'package:rex/features/voice/presentation/pages/voice_call_page.dart';
 
@@ -218,6 +219,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             },
             icon: const Icon(Icons.psychology_alt_rounded),
             tooltip: 'Memory',
+          ),
+          IconButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const AccountabilityPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.fact_check_rounded),
+            tooltip: 'Accountability',
           ),
           IconButton(
             onPressed: () {

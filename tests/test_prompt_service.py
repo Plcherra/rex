@@ -1,4 +1,5 @@
 from app.services.prompt_service import (
+    ACCOUNTABILITY_CONTEXT_PREFIX,
     CONVERSATION_CONTEXT_PREFIX,
     FILE_CONTEXT_PREFIX,
     LONG_TERM_MEMORY_PREFIX,
@@ -210,6 +211,54 @@ def test_prompt_service_injects_structured_memory_before_generic_memory():
     )
     assert "- commitment/deadline Review visa paperwork" in system_content
     assert "plan: Visa runway" in system_content
+
+
+def test_prompt_service_injects_accountability_before_generic_memory():
+    service = PromptService(TimeContextService(timezone_name="America/New_York"))
+
+    messages = service.build_messages(
+        user_message="I ordered DoorDash again.",
+        relevant_memories=[
+            {
+                "memory_type": "event",
+                "content": "I committed to stop ordering DoorDash in May.",
+            }
+        ],
+        accountability_signals=[
+            {
+                "signal_type": "rule_violation",
+                "severity": "high",
+                "confidence": 0.87,
+                "title": "Possible rule violation: Avoid DoorDash",
+                "reason": "The message matched active DoorDash rule triggers.",
+                "source_refs": [
+                    {
+                        "source_type": "personal_rule",
+                        "title": "Avoid DoorDash",
+                        "excerpt": "Do not order DoorDash while the budget is slipping.",
+                    }
+                ],
+                "suggested_prompt": (
+                    "You said DoorDash was off-limits while the budget is slipping."
+                ),
+                "recommended_action": "Hold the user to the rule.",
+            }
+        ],
+    )
+
+    system_content = messages[0]["content"]
+    assert ACCOUNTABILITY_CONTEXT_PREFIX in system_content
+    assert system_content.index(ACCOUNTABILITY_CONTEXT_PREFIX) < system_content.index(
+        LONG_TERM_MEMORY_PREFIX
+    )
+    assert (
+        "- rule_violation/high: Possible rule violation: Avoid DoorDash"
+        in system_content
+    )
+    assert "confidence: 0.87" in system_content
+    assert "sources: personal_rule:Avoid DoorDash" in system_content
+    assert "Suggested framing: You said DoorDash was off-limits" in system_content
+    assert "Action: Hold the user to the rule." in system_content
 
 
 def test_prompt_service_limits_structured_memory_context_budget():

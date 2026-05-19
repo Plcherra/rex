@@ -21,7 +21,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
 
 ## Checklist (10 Actionable Steps)
 
-1. [ ] **Define accountability signal types and metadata**
+1. [x] **Define accountability signal types and metadata**
    - Exact files to create or modify: `backend/app/models/accountability.py`, `backend/app/services/accountability_service.py`, optionally `backend/supabase_schema.sql`
    - What must be implemented: Define the core accountability concepts Rex can detect: rule violation, missed commitment, plan drift, repeated pattern, upcoming deadline, budget risk, and positive follow-through. Include metadata for why the signal was generated, which source records caused it, confidence, severity, and suggested prompt wording.
    - Success criteria: Accountability signals have a stable model that can be returned from services, injected into prompts, and eventually shown in Flutter without guessing at raw memory text.
@@ -29,7 +29,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: add accountability signal models`
    - Rough time estimate: 3-4 hours
 
-2. [ ] **Create the backend `AccountabilityService` skeleton**
+2. [x] **Create the backend `AccountabilityService` skeleton**
    - Exact files to create or modify: `backend/app/services/accountability_service.py`, `backend/app/dependencies.py`
    - What must be implemented: Add a service that accepts the current user message, current time context, active personal rules, open commitments, active plans, recent entity events, and relevant memories, then returns a list of accountability signals.
    - Success criteria: The service is dependency-injectable, testable without Grok or Supabase, and does not change existing chat behavior until prompt integration is added.
@@ -37,7 +37,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: add accountability service skeleton`
    - Rough time estimate: 3-5 hours
 
-3. [ ] **Implement personal rule violation detection**
+3. [x] **Implement personal rule violation detection**
    - Exact files to create or modify: `backend/app/services/accountability_service.py`, `backend/app/services/rule_service.py`, `tests/test_accountability_service.py`
    - What must be implemented: Detect likely violations of active personal rules from the current message and recent context. Start with simple rule categories for transport, delivery food, coffee, groceries, rent, subscriptions, and spending caps.
    - Success criteria: Messages like “I ordered DoorDash again” or “I took Uber home” can trigger a structured rule-violation signal when matching active rules exist, while unrelated mentions do not create false positives.
@@ -45,7 +45,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: detect personal rule violations`
    - Rough time estimate: 5-8 hours
 
-4. [ ] **Implement commitment tracking and missed-commitment logic**
+4. [x] **Implement commitment tracking and missed-commitment logic**
    - Exact files to create or modify: `backend/app/services/accountability_service.py`, `backend/app/services/commitment_service.py`, `backend/app/services/time_context_service.py`, `tests/test_accountability_service.py`
    - What must be implemented: Compare open commitments against current time and the user’s latest message. Detect missed commitments, due-today commitments, completed commitments, and commitments that need follow-up.
    - Success criteria: Rex can identify practical cases like “I’ll work out tomorrow morning” becoming overdue the next afternoon, and can mark or suggest completion when the user reports follow-through.
@@ -53,7 +53,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: detect missed commitments`
    - Rough time estimate: 5-8 hours
 
-5. [ ] **Implement plan progress and deadline drift logic**
+5. [x] **Implement plan progress and deadline drift logic**
    - Exact files to create or modify: `backend/app/services/accountability_service.py`, `backend/app/services/plan_service.py`, `backend/app/services/time_context_service.py`, `tests/test_accountability_service.py`
    - What must be implemented: Compare active plans and milestones against current time, target dates, status, and recent updates. Generate signals for upcoming milestones, overdue milestones, stalled plans, and progress updates.
    - Success criteria: Rex can surface context like “your move-out income target is 6 weeks away and this update affects it” without the founder manually re-explaining the plan.
@@ -61,7 +61,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: add plan progress accountability`
    - Rough time estimate: 5-9 hours
 
-6. [ ] **Add repeated-pattern detection from recent events and memories**
+6. [x] **Add repeated-pattern detection from recent events and memories**
    - Exact files to create or modify: `backend/app/services/accountability_service.py`, `backend/app/services/memory_service.py`, `backend/app/services/entity_service.py`, `tests/test_accountability_service.py`
    - What must be implemented: Detect repeated behavior patterns from recent memories, entity events, rules, and commitments. Start with simple keyword/category counts over a configurable lookback window before adding heavier semantic logic.
    - Success criteria: Rex can identify repeated behavior like recurring delivery spending, repeated Uber use, repeated missed workouts, or repeated dating-context anxiety when enough recent evidence exists.
@@ -69,7 +69,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: detect recurring accountability patterns`
    - Rough time estimate: 6-10 hours
 
-7. [ ] **Inject accountability signals into prompts**
+7. [x] **Inject accountability signals into prompts**
    - Exact files to create or modify: `backend/app/services/prompt_service.py`, `backend/app/services/chat_service.py`, `backend/app/services/accountability_service.py`, `tests/test_prompt_service.py`
    - What must be implemented: Call `AccountabilityService` during chat orchestration and add a compact accountability section to the Grok prompt with signal type, severity, reason, source age, and suggested framing. Keep the final response natural and direct, not robotic.
    - Success criteria: Accountability context appears in both streaming and non-streaming chat prompts, stays under prompt budget, and existing memory/context sections remain backward compatible.
@@ -77,7 +77,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: inject accountability context into prompts`
    - Rough time estimate: 4-7 hours
 
-8. [ ] **Expose accountability data through backend routes**
+8. [x] **Expose accountability data through backend routes**
    - Exact files to create or modify: `backend/app/routes/accountability.py`, `backend/app/main.py`, `backend/app/models/accountability.py`, `tests/test_accountability_routes.py`
    - What must be implemented: Add private founder-focused endpoints for listing current accountability signals, open commitments, active rule risks, plan risks, and recent pattern detections. Include filters for active, dismissed, severity, and source type if useful.
    - Success criteria: Flutter can fetch accountability context without scraping chat messages, and route tests cover success, empty, validation, and service-error paths without real Grok or Supabase calls.
@@ -85,7 +85,7 @@ Action Plan 3 (Entity, Rule, and Plan Memory Schema) must be 100% complete.
    - Suggested git commit message: `feat: add accountability routes`
    - Rough time estimate: 5-8 hours
 
-9. [ ] **Build Flutter UI sections for rules, commitments, and plans**
+9. [x] **Build Flutter UI sections for rules, commitments, and plans**
    - Exact files to create or modify: `lib/features/accountability/data/accountability_api.dart`, `lib/features/accountability/data/accountability_models.dart`, `lib/features/accountability/application/accountability_controller.dart`, `lib/features/accountability/presentation/pages/accountability_page.dart`, `lib/features/chat/presentation/pages/chat_page.dart`, `lib/core/providers.dart`
    - What must be implemented: Add a clean founder-facing accountability page showing active rules, open commitments, plan progress, and recent signals. Add navigation from the chat screen without disrupting the current chat and memory flows.
    - Success criteria: The user can see what Rex is tracking, why it matters, and which rules/commitments/plans need attention. Empty, loading, and error states are handled cleanly.

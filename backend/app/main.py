@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.routes.accountability import router as accountability_router
 from app.routes.chat import router as chat_router
 from app.routes.commitments import router as commitments_router
 from app.routes.conversations import router as conversations_router
@@ -91,5 +92,6 @@ app.include_router(entities_router)
 app.include_router(rules_router)
 app.include_router(plans_router)
 app.include_router(commitments_router)
+app.include_router(accountability_router)
 app.include_router(voice_router)
 app.include_router(voice_stream_router)

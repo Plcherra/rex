@@ -1248,3 +1248,14 @@ class SupabaseMemoryService:
 
         age_days = max((datetime.now(timezone.utc) - parsed).days, 0)
         return 1 / (1 + (age_days / 30))
+
+
+def is_active_memory(memory: dict) -> bool:
+    return memory.get("active") is not False
+
+
+def memory_accountability_text(memory: dict) -> str:
+    return " ".join(
+        str(memory.get(field) or "")
+        for field in ("content", "memory_type", "relevance_reason")
+    )

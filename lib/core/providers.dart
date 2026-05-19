@@ -1,3 +1,7 @@
+export 'package:rex/features/accountability/application/accountability_controller.dart'
+    show accountabilityProvider;
+export 'package:rex/features/accountability/data/accountability_api.dart'
+    show accountabilityApiProvider;
 export 'package:rex/features/chat/application/chat_controller.dart'
     show chatApiProvider, chatProvider;
 export 'package:rex/features/chat/application/conversation_controller.dart'

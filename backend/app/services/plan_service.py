@@ -190,6 +190,20 @@ def _payload(request: Any) -> dict[str, Any]:
     return {key: value for key, value in dict(request).items() if value is not None}
 
 
+def is_active_plan(plan: dict[str, Any]) -> bool:
+    return (
+        plan.get("active") is not False
+        and plan.get("status", "active") == "active"
+    )
+
+
+def is_open_milestone(milestone: dict[str, Any]) -> bool:
+    return (
+        milestone.get("active") is not False
+        and milestone.get("status", "open") in {"open", "in_progress"}
+    )
+
+
 def _clean_required(value: Any, field_name: str) -> str:
     cleaned = _clean_optional(value)
     if not cleaned:

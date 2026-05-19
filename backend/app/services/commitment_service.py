@@ -133,6 +133,13 @@ class CommitmentService:
         return updated or existing
 
 
+def is_open_commitment(commitment: dict[str, Any]) -> bool:
+    return (
+        commitment.get("active") is not False
+        and commitment.get("status", "open") in {"open", "in_progress"}
+    )
+
+
 def _payload(request: Any) -> dict[str, Any]:
     if hasattr(request, "model_dump"):
         return request.model_dump(exclude_none=True)

@@ -10,6 +10,7 @@ from app.services.chat_service import ChatService, PROFILE_MEMORY_QUERY
 from app.services.file_service import FileService
 from app.services.memory_service import SupabaseMemoryService, MemoryServiceError
 from app.services.prompt_service import (
+    ACCOUNTABILITY_CONTEXT_PREFIX,
     FILE_CONTEXT_PREFIX,
     LONG_TERM_MEMORY_PREFIX,
     STRUCTURED_MEMORY_PREFIX,
@@ -145,6 +146,19 @@ class FakeMemoryExtractionService:
         if self.should_fail:
             raise RuntimeError("extraction failed")
         return []
+
+
+class FakeAccountabilityService:
+    def __init__(self, signals=None, should_fail=False):
+        self.signals = signals or []
+        self.should_fail = should_fail
+        self.calls = []
+
+    async def analyze_signals(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.should_fail:
+            raise RuntimeError("accountability failed")
+        return self.signals
 
 
 class BlockingMemoryExtractionService:
@@ -455,6 +469,115 @@ async def test_chat_service_includes_structured_memory_context():
     assert "- entity/person Clara - dating interest from work" in (
         ai_service.messages[0]["content"]
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_injects_accountability_context():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.structured_context = {
+        "personal_rules": [
+            {
+                "id": "rule-doordash",
+                "rule_type": "food_delivery",
+                "title": "Avoid DoorDash",
+                "rule_text": "Do not order DoorDash while budget is slipping.",
+                "priority": 5,
+                "status": "active",
+                "active": True,
+            }
+        ]
+    }
+    memory_service.long_term_memory.append(
+        {
+            "id": "memory-doordash",
+            "memory_type": "event",
+            "content": "I committed to stop ordering DoorDash in May.",
+            "active": True,
+        }
+    )
+    accountability_service = FakeAccountabilityService(
+        signals=[
+            {
+                "signal_type": "rule_violation",
+                "severity": "high",
+                "title": "Possible rule violation: Avoid DoorDash",
+                "reason": "DoorDash matched an active rule.",
+                "suggested_prompt": "This sounds like the same pattern again.",
+            }
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        accountability_service=accountability_service,
+    )
+
+    await chat_service.send_message("I ordered DoorDash again.")
+
+    assert len(accountability_service.calls) == 1
+    call = accountability_service.calls[0]
+    assert call["message"] == "I ordered DoorDash again."
+    assert call["personal_rules"] == memory_service.structured_context["personal_rules"]
+    assert call["relevant_memories"][0]["id"] == "memory-doordash"
+    system_content = ai_service.messages[0]["content"]
+    assert ACCOUNTABILITY_CONTEXT_PREFIX in system_content
+    assert "rule_violation/high: Possible rule violation" in system_content
+    assert "This sounds like the same pattern again." in system_content
+
+
+@pytest.mark.asyncio
+async def test_chat_service_injects_accountability_context_for_streaming_chat():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    accountability_service = FakeAccountabilityService(
+        signals=[
+            {
+                "signal_type": "repeated_pattern",
+                "severity": "medium",
+                "title": "Repeated pattern: delivery food",
+                "reason": "Found related recent records.",
+            }
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        accountability_service=accountability_service,
+    )
+
+    events = [
+        event
+        async for event in chat_service.stream_message(
+            "I ordered DoorDash again.",
+            file=None,
+        )
+    ]
+
+    assert events[-1]["event"] == "done"
+    assert len(accountability_service.calls) == 1
+    system_content = ai_service.messages[0]["content"]
+    assert ACCOUNTABILITY_CONTEXT_PREFIX in system_content
+    assert "repeated_pattern/medium: Repeated pattern: delivery food" in system_content
+
+
+@pytest.mark.asyncio
+async def test_chat_service_ignores_accountability_failures():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        accountability_service=FakeAccountabilityService(should_fail=True),
+    )
+
+    result = await chat_service.send_message("Hello Rex")
+
+    assert result["response"] == "Rex response"
+    assert ACCOUNTABILITY_CONTEXT_PREFIX not in ai_service.messages[0]["content"]
 
 
 @pytest.mark.asyncio

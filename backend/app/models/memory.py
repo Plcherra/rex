@@ -24,6 +24,10 @@ class MemoryResponse(BaseModel):
     source_message_id: Optional[str] = None
     importance: int
     active: bool
+    superseded_by: Optional[str] = None
+    confidence: Optional[float] = None
+    correction_group: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     last_accessed_at: Optional[str] = None
@@ -36,6 +40,10 @@ class MemoryUpdateRequest(BaseModel):
     content: Optional[str] = Field(default=None, min_length=1)
     importance: Optional[int] = Field(default=None, ge=1, le=5)
     active: Optional[bool] = None
+    superseded_by: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    correction_group: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 class MemoryCorrectionResponse(BaseModel):

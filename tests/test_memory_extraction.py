@@ -64,6 +64,10 @@ class FakeMemoryStore:
         content=None,
         importance=None,
         active=None,
+        superseded_by=None,
+        confidence=None,
+        correction_group=None,
+        metadata=None,
     ):
         for memory in self.existing_memories:
             if memory["id"] != memory_id:
@@ -76,6 +80,14 @@ class FakeMemoryStore:
                 memory["importance"] = importance
             if active is not None:
                 memory["active"] = active
+            if superseded_by is not None:
+                memory["superseded_by"] = superseded_by
+            if confidence is not None:
+                memory["confidence"] = confidence
+            if correction_group is not None:
+                memory["correction_group"] = correction_group
+            if metadata is not None:
+                memory["metadata"] = metadata
             self.updated_memories.append(memory.copy())
             return memory
         return None
@@ -1008,10 +1020,19 @@ async def test_memory_extraction_deactivates_extra_stale_correction_matches():
     )
 
     assert memory_store.updated_memories[0]["id"] == "memory-stale-1"
-    assert memory_store.deactivated_memory_ids == ["memory-stale-2"]
+    assert memory_store.updated_memories[0]["correction_group"] == (
+        "correction:al->melissa"
+    )
+    assert memory_store.updated_memories[1]["id"] == "memory-stale-2"
+    assert memory_store.updated_memories[1]["active"] is False
+    assert memory_store.updated_memories[1]["superseded_by"] == "memory-stale-1"
+    assert memory_store.deactivated_memory_ids == []
     assert memory_store.created_memory_corrections[0]["metadata"][
         "stale_memory_ids"
     ] == ["memory-stale-1", "memory-stale-2"]
+    assert memory_store.created_memory_corrections[0]["metadata"][
+        "correction_group"
+    ] == "correction:al->melissa"
 
 
 @pytest.mark.asyncio

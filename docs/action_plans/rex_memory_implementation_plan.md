@@ -8,6 +8,44 @@ The priority is not to build a perfect memory graph immediately. The priority is
 
 The phases are ordered to deliver value early. Phase 1 is intentionally small enough to complete in 1-2 days and directly targets the current `Al` vs `Melissa` failure mode.
 
+## Completion Checklist
+
+Use this as the source of truth for what is implemented, what still needs manual validation, and what still needs a deploy/backfill action.
+
+### Implementation Phases
+
+- [x] Phase 1 - Stabilize explicit corrections
+- [x] Phase 2 - Add correction audit trail
+- [x] Phase 3 - Make people first-class
+- [x] Phase 4 - Connect corrections to people
+- [x] Phase 5 - Link plans to people and dates
+- [x] Phase 6 - Improve retrieval ranking
+- [x] Phase 7 - Add structured Memory UI actions
+- [x] Phase 8 - Add safe structured-memory backfill tooling
+- [x] Phase 9 - Add manual daily-use validation checklist
+- [x] Phase 10 - Add guardrails and regression coverage
+
+### Still Missing Before Calling This Fully Complete
+
+- [ ] Deploy the latest backend changes to the VPS.
+- [ ] Run the structured-memory backfill in dry-run mode on the VPS.
+- [ ] Review the dry-run output and confirm it only proposes obvious records.
+- [ ] Run the structured-memory backfill with `--apply` if the dry-run output is clean.
+- [ ] Restart the backend after deployment/backfill.
+- [ ] Rebuild and install the latest release app on the phone.
+- [ ] Run the manual validation checklist in `docs/action_plans/rex_memory_manual_test.md`.
+- [ ] Confirm Rex remembers `Melissa`, not stale `Al` / `AI`, in both chat and voice.
+- [ ] Confirm Memory UI shows the corrected person, linked plan, location, and no duplicate active wrong records.
+- [ ] Confirm Accountability UI still loads rules, commitments, plans, and signals.
+
+### Validation Commands
+
+```bash
+PYTHONPATH=backend python3 -m pytest -q tests
+flutter analyze
+flutter test
+```
+
 ## Phase 1 - Stabilize Explicit Corrections
 
 **Priority:** High

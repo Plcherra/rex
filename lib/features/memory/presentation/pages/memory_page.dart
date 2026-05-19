@@ -101,6 +101,187 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     _showSnackBar(deactivated ? 'Memory deactivated' : _currentError());
   }
 
+  Future<void> _editPerson(PersonMemoryItem person) async {
+    final result = await showDialog<_StructuredEditResult>(
+      context: context,
+      builder: (context) => _StructuredEditDialog(
+        title: 'Edit person',
+        primaryLabel: 'Name',
+        primaryValue: person.displayName,
+        detailLabel: 'Summary',
+        detailValue: person.summary,
+        extraLabel: 'Relationship',
+        extraValue: person.relationship,
+        aliasesValue: person.aliases.join(', '),
+        importanceLabel: 'Importance',
+        importance: person.importance,
+        status: person.status,
+        active: person.active,
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+
+    final saved = await ref
+        .read(memoryProvider.notifier)
+        .updatePerson(
+          person.id,
+          displayName: result.primary,
+          summary: result.detail,
+          relationship: result.extra,
+          aliases: result.aliases,
+          importance: result.importance,
+          status: result.status,
+          active: result.active,
+        );
+    if (mounted) {
+      _showSnackBar(saved ? 'Person updated' : _currentError());
+    }
+  }
+
+  Future<void> _editRule(RuleMemoryItem rule) async {
+    final result = await showDialog<_StructuredEditResult>(
+      context: context,
+      builder: (context) => _StructuredEditDialog(
+        title: 'Edit rule',
+        primaryLabel: 'Title',
+        primaryValue: rule.title,
+        detailLabel: 'Rule text',
+        detailValue: rule.ruleText,
+        extraLabel: 'Trigger keywords',
+        extraValue: rule.triggerKeywords.join(', '),
+        importanceLabel: 'Priority',
+        importance: rule.priority,
+        status: rule.status,
+        active: rule.active,
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+
+    final saved = await ref
+        .read(memoryProvider.notifier)
+        .updateRule(
+          rule.id,
+          title: result.primary,
+          ruleText: result.detail,
+          triggerKeywords: result.extraList,
+          priority: result.importance,
+          status: result.status,
+          active: result.active,
+        );
+    if (mounted) {
+      _showSnackBar(saved ? 'Rule updated' : _currentError());
+    }
+  }
+
+  Future<void> _editPlan(PlanMemoryItem plan) async {
+    final result = await showDialog<_StructuredEditResult>(
+      context: context,
+      builder: (context) => _StructuredEditDialog(
+        title: 'Edit plan',
+        primaryLabel: 'Title',
+        primaryValue: plan.title,
+        detailLabel: 'Description',
+        detailValue: plan.description,
+        extraLabel: 'Desired outcome',
+        extraValue: plan.desiredOutcome,
+        importanceLabel: 'Priority',
+        importance: plan.priority,
+        status: plan.status,
+        active: plan.active,
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+
+    final saved = await ref
+        .read(memoryProvider.notifier)
+        .updatePlan(
+          plan.id,
+          title: result.primary,
+          description: result.detail,
+          desiredOutcome: result.extra,
+          priority: result.importance,
+          status: result.status,
+          active: result.active,
+        );
+    if (mounted) {
+      _showSnackBar(saved ? 'Plan updated' : _currentError());
+    }
+  }
+
+  Future<void> _editCommitment(CommitmentMemoryItem commitment) async {
+    final result = await showDialog<_StructuredEditResult>(
+      context: context,
+      builder: (context) => _StructuredEditDialog(
+        title: 'Edit commitment',
+        primaryLabel: 'Title',
+        primaryValue: commitment.title,
+        detailLabel: 'Commitment',
+        detailValue: commitment.commitmentText,
+        importanceLabel: 'Priority',
+        importance: commitment.priority,
+        status: commitment.status,
+        active: commitment.active,
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+
+    final saved = await ref
+        .read(memoryProvider.notifier)
+        .updateCommitment(
+          commitment.id,
+          title: result.primary,
+          commitmentText: result.detail,
+          priority: result.importance,
+          status: result.status,
+          active: result.active,
+        );
+    if (mounted) {
+      _showSnackBar(saved ? 'Commitment updated' : _currentError());
+    }
+  }
+
+  Future<void> _deactivateStructuredMemory(
+    MemoryLayer layer,
+    String id,
+    String label,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Deactivate $label?'),
+        content: Text('Rex will stop treating this $label as active context.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Deactivate'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    final deactivated = await ref
+        .read(memoryProvider.notifier)
+        .deactivateStructuredMemory(layer, id);
+    if (mounted) {
+      _showSnackBar(deactivated ? '$label deactivated' : _currentError());
+    }
+  }
+
   void _showSnackBar(String message) {
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
@@ -233,6 +414,11 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
                 state: state,
                 onEditMemory: _editMemory,
                 onDeactivateMemory: _deactivateMemory,
+                onEditPerson: _editPerson,
+                onEditRule: _editRule,
+                onEditPlan: _editPlan,
+                onEditCommitment: _editCommitment,
+                onDeactivateStructuredMemory: _deactivateStructuredMemory,
               ),
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
@@ -247,11 +433,22 @@ class _MemoryLayerList extends StatelessWidget {
     required this.state,
     required this.onEditMemory,
     required this.onDeactivateMemory,
+    required this.onEditPerson,
+    required this.onEditRule,
+    required this.onEditPlan,
+    required this.onEditCommitment,
+    required this.onDeactivateStructuredMemory,
   });
 
   final MemoryState state;
   final ValueChanged<MemoryItem> onEditMemory;
   final ValueChanged<MemoryItem> onDeactivateMemory;
+  final ValueChanged<PersonMemoryItem> onEditPerson;
+  final ValueChanged<RuleMemoryItem> onEditRule;
+  final ValueChanged<PlanMemoryItem> onEditPlan;
+  final ValueChanged<CommitmentMemoryItem> onEditCommitment;
+  final void Function(MemoryLayer layer, String id, String label)
+  onDeactivateStructuredMemory;
 
   @override
   Widget build(BuildContext context) {
@@ -275,29 +472,77 @@ class _MemoryLayerList extends StatelessWidget {
         return SliverList.separated(
           itemCount: state.people.length,
           separatorBuilder: (context, index) => const Divider(height: 1),
-          itemBuilder: (context, index) =>
-              _PersonMemoryTile(person: state.people[index]),
+          itemBuilder: (context, index) {
+            final person = state.people[index];
+            return _PersonMemoryTile(
+              person: person,
+              onEdit: () => onEditPerson(person),
+              onDeactivate: person.active
+                  ? () => onDeactivateStructuredMemory(
+                      MemoryLayer.people,
+                      person.id,
+                      'person',
+                    )
+                  : null,
+            );
+          },
         );
       case MemoryLayer.rules:
         return SliverList.separated(
           itemCount: state.rules.length,
           separatorBuilder: (context, index) => const Divider(height: 1),
-          itemBuilder: (context, index) =>
-              _RuleMemoryTile(rule: state.rules[index]),
+          itemBuilder: (context, index) {
+            final rule = state.rules[index];
+            return _RuleMemoryTile(
+              rule: rule,
+              onEdit: () => onEditRule(rule),
+              onDeactivate: rule.active
+                  ? () => onDeactivateStructuredMemory(
+                      MemoryLayer.rules,
+                      rule.id,
+                      'rule',
+                    )
+                  : null,
+            );
+          },
         );
       case MemoryLayer.plans:
         return SliverList.separated(
           itemCount: state.plans.length,
           separatorBuilder: (context, index) => const Divider(height: 1),
-          itemBuilder: (context, index) =>
-              _PlanMemoryTile(plan: state.plans[index]),
+          itemBuilder: (context, index) {
+            final plan = state.plans[index];
+            return _PlanMemoryTile(
+              plan: plan,
+              onEdit: () => onEditPlan(plan),
+              onDeactivate: plan.active
+                  ? () => onDeactivateStructuredMemory(
+                      MemoryLayer.plans,
+                      plan.id,
+                      'plan',
+                    )
+                  : null,
+            );
+          },
         );
       case MemoryLayer.commitments:
         return SliverList.separated(
           itemCount: state.commitments.length,
           separatorBuilder: (context, index) => const Divider(height: 1),
-          itemBuilder: (context, index) =>
-              _CommitmentMemoryTile(commitment: state.commitments[index]),
+          itemBuilder: (context, index) {
+            final commitment = state.commitments[index];
+            return _CommitmentMemoryTile(
+              commitment: commitment,
+              onEdit: () => onEditCommitment(commitment),
+              onDeactivate: commitment.active
+                  ? () => onDeactivateStructuredMemory(
+                      MemoryLayer.commitments,
+                      commitment.id,
+                      'commitment',
+                    )
+                  : null,
+            );
+          },
         );
     }
   }
@@ -394,9 +639,15 @@ class _MemoryTile extends StatelessWidget {
 }
 
 class _PersonMemoryTile extends StatelessWidget {
-  const _PersonMemoryTile({required this.person});
+  const _PersonMemoryTile({
+    required this.person,
+    required this.onEdit,
+    required this.onDeactivate,
+  });
 
   final PersonMemoryItem person;
+  final VoidCallback onEdit;
+  final VoidCallback? onDeactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -411,16 +662,26 @@ class _PersonMemoryTile extends StatelessWidget {
         if (person.aliases.isNotEmpty)
           _MemoryMetaChip(label: 'Also ${person.aliases.join(', ')}'),
         _MemoryMetaChip(label: 'Importance ${person.importance}'),
+        _MemoryMetaChip(label: person.status.memoryRecordLabel),
+        _MemoryMetaChip(label: 'ID ${_shortId(person.id)}'),
         if (!person.active) const _MemoryMetaChip(label: 'Inactive'),
       ],
+      onEdit: onEdit,
+      onDeactivate: onDeactivate,
     );
   }
 }
 
 class _RuleMemoryTile extends StatelessWidget {
-  const _RuleMemoryTile({required this.rule});
+  const _RuleMemoryTile({
+    required this.rule,
+    required this.onEdit,
+    required this.onDeactivate,
+  });
 
   final RuleMemoryItem rule;
+  final VoidCallback onEdit;
+  final VoidCallback? onDeactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -433,16 +694,26 @@ class _RuleMemoryTile extends StatelessWidget {
         _MemoryMetaChip(label: rule.ruleType.memoryRecordLabel),
         _MemoryMetaChip(label: rule.status.memoryRecordLabel),
         _MemoryMetaChip(label: 'Priority ${rule.priority}'),
+        if (rule.triggerKeywords.isNotEmpty)
+          _MemoryMetaChip(label: rule.triggerKeywords.join(', ')),
         if (!rule.active) const _MemoryMetaChip(label: 'Inactive'),
       ],
+      onEdit: onEdit,
+      onDeactivate: onDeactivate,
     );
   }
 }
 
 class _PlanMemoryTile extends StatelessWidget {
-  const _PlanMemoryTile({required this.plan});
+  const _PlanMemoryTile({
+    required this.plan,
+    required this.onEdit,
+    required this.onDeactivate,
+  });
 
   final PlanMemoryItem plan;
+  final VoidCallback onEdit;
+  final VoidCallback? onDeactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -457,16 +728,26 @@ class _PlanMemoryTile extends StatelessWidget {
         _MemoryMetaChip(label: 'Priority ${plan.priority}'),
         if (plan.targetDate != null)
           _MemoryMetaChip(label: 'Target ${_shortDate(plan.targetDate!)}'),
+        if (plan.primaryEntityId != null)
+          _MemoryMetaChip(label: 'Person ${_shortId(plan.primaryEntityId!)}'),
         if (!plan.active) const _MemoryMetaChip(label: 'Inactive'),
       ],
+      onEdit: onEdit,
+      onDeactivate: onDeactivate,
     );
   }
 }
 
 class _CommitmentMemoryTile extends StatelessWidget {
-  const _CommitmentMemoryTile({required this.commitment});
+  const _CommitmentMemoryTile({
+    required this.commitment,
+    required this.onEdit,
+    required this.onDeactivate,
+  });
 
   final CommitmentMemoryItem commitment;
+  final VoidCallback onEdit;
+  final VoidCallback? onDeactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -481,8 +762,14 @@ class _CommitmentMemoryTile extends StatelessWidget {
         _MemoryMetaChip(label: 'Priority ${commitment.priority}'),
         if (commitment.dueAt != null)
           _MemoryMetaChip(label: 'Due ${_shortDate(commitment.dueAt!)}'),
+        if (commitment.planId != null)
+          _MemoryMetaChip(label: 'Plan ${_shortId(commitment.planId!)}'),
+        if (commitment.entityId != null)
+          _MemoryMetaChip(label: 'Person ${_shortId(commitment.entityId!)}'),
         if (!commitment.active) const _MemoryMetaChip(label: 'Inactive'),
       ],
+      onEdit: onEdit,
+      onDeactivate: onDeactivate,
     );
   }
 }
@@ -494,6 +781,8 @@ class _StructuredMemoryTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.chips,
+    required this.onEdit,
+    required this.onDeactivate,
   });
 
   final IconData icon;
@@ -501,6 +790,8 @@ class _StructuredMemoryTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final List<Widget> chips;
+  final VoidCallback onEdit;
+  final VoidCallback? onDeactivate;
 
   @override
   Widget build(BuildContext context) {
@@ -545,6 +836,37 @@ class _StructuredMemoryTile extends StatelessWidget {
       titleTextStyle: theme.textTheme.bodyLarge?.copyWith(
         color: active ? scheme.onSurface : scheme.onSurfaceVariant,
       ),
+      trailing: PopupMenuButton<_MemoryAction>(
+        tooltip: 'Memory actions',
+        onSelected: (action) {
+          switch (action) {
+            case _MemoryAction.edit:
+              onEdit();
+            case _MemoryAction.deactivate:
+              onDeactivate?.call();
+          }
+        },
+        itemBuilder: (context) => [
+          const PopupMenuItem(
+            value: _MemoryAction.edit,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.edit_outlined),
+              title: Text('Edit'),
+            ),
+          ),
+          if (onDeactivate != null)
+            const PopupMenuItem(
+              value: _MemoryAction.deactivate,
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.visibility_off_outlined),
+                title: Text('Deactivate'),
+              ),
+            ),
+        ],
+      ),
+      onTap: onEdit,
     );
   }
 }
@@ -651,6 +973,179 @@ String _shortDate(DateTime value) {
   final month = local.month.toString().padLeft(2, '0');
   final day = local.day.toString().padLeft(2, '0');
   return '$month/$day/${local.year}';
+}
+
+String _shortId(String value) {
+  if (value.length <= 8) {
+    return value;
+  }
+  return value.substring(0, 8);
+}
+
+class _StructuredEditDialog extends StatefulWidget {
+  const _StructuredEditDialog({
+    required this.title,
+    required this.primaryLabel,
+    required this.primaryValue,
+    required this.detailLabel,
+    required this.importanceLabel,
+    required this.importance,
+    required this.status,
+    required this.active,
+    this.detailValue,
+    this.extraLabel,
+    this.extraValue,
+    this.aliasesValue,
+  });
+
+  final String title;
+  final String primaryLabel;
+  final String primaryValue;
+  final String detailLabel;
+  final String? detailValue;
+  final String? extraLabel;
+  final String? extraValue;
+  final String? aliasesValue;
+  final String importanceLabel;
+  final int importance;
+  final String status;
+  final bool active;
+
+  @override
+  State<_StructuredEditDialog> createState() => _StructuredEditDialogState();
+}
+
+class _StructuredEditDialogState extends State<_StructuredEditDialog> {
+  late final TextEditingController _primaryController;
+  late final TextEditingController _detailController;
+  late final TextEditingController _extraController;
+  late final TextEditingController _aliasesController;
+  late final TextEditingController _statusController;
+  late double _importance;
+  late bool _active;
+
+  @override
+  void initState() {
+    super.initState();
+    _primaryController = TextEditingController(text: widget.primaryValue);
+    _detailController = TextEditingController(text: widget.detailValue ?? '');
+    _extraController = TextEditingController(text: widget.extraValue ?? '');
+    _aliasesController = TextEditingController(text: widget.aliasesValue ?? '');
+    _statusController = TextEditingController(text: widget.status);
+    _importance = widget.importance.toDouble();
+    _active = widget.active;
+  }
+
+  @override
+  void dispose() {
+    _primaryController.dispose();
+    _detailController.dispose();
+    _extraController.dispose();
+    _aliasesController.dispose();
+    _statusController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _primaryController,
+              decoration: InputDecoration(labelText: widget.primaryLabel),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _detailController,
+              minLines: 2,
+              maxLines: 5,
+              decoration: InputDecoration(
+                labelText: widget.detailLabel,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            if (widget.extraLabel != null) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _extraController,
+                minLines: 1,
+                maxLines: 4,
+                decoration: InputDecoration(labelText: widget.extraLabel),
+              ),
+            ],
+            if (widget.aliasesValue != null) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _aliasesController,
+                decoration: const InputDecoration(
+                  labelText: 'Aliases',
+                  helperText: 'Comma-separated',
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _statusController,
+              decoration: const InputDecoration(labelText: 'Status'),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Text(widget.importanceLabel),
+                Expanded(
+                  child: Slider(
+                    value: _importance,
+                    min: 1,
+                    max: 5,
+                    divisions: 4,
+                    label: _importance.round().toString(),
+                    onChanged: (value) => setState(() => _importance = value),
+                  ),
+                ),
+                Text(_importance.round().toString()),
+              ],
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Active'),
+              value: _active,
+              onChanged: (value) => setState(() => _active = value),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
+  }
+
+  void _submit() {
+    final primary = _primaryController.text.trim();
+    if (primary.isEmpty) {
+      return;
+    }
+
+    Navigator.of(context).pop(
+      _StructuredEditResult(
+        primary: primary,
+        detail: _nullableText(_detailController.text),
+        extra: _nullableText(_extraController.text),
+        aliases: _splitCommaText(_aliasesController.text),
+        importance: _importance.round(),
+        status: _statusController.text.trim(),
+        active: _active,
+      ),
+    );
+  }
 }
 
 class _MemoryEditDialog extends StatefulWidget {
@@ -784,3 +1279,38 @@ class _MemoryEditResult {
 }
 
 enum _MemoryAction { edit, deactivate }
+
+class _StructuredEditResult {
+  const _StructuredEditResult({
+    required this.primary,
+    required this.importance,
+    required this.status,
+    required this.active,
+    this.detail,
+    this.extra,
+    this.aliases = const [],
+  });
+
+  final String primary;
+  final String? detail;
+  final String? extra;
+  final List<String> aliases;
+  final int importance;
+  final String status;
+  final bool active;
+
+  List<String> get extraList => _splitCommaText(extra ?? '');
+}
+
+String? _nullableText(String value) {
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+List<String> _splitCommaText(String value) {
+  return value
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+}

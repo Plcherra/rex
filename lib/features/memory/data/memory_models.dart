@@ -66,6 +66,7 @@ class PersonMemoryItem {
     required this.summary,
     required this.aliases,
     required this.importance,
+    required this.status,
     required this.active,
   });
 
@@ -77,6 +78,7 @@ class PersonMemoryItem {
       summary: _string(json['summary']),
       aliases: _stringList(json['aliases']),
       importance: _int(json['importance']) ?? 3,
+      status: _string(json['status']) ?? 'active',
       active: _bool(json['active']) ?? true,
     );
   }
@@ -87,6 +89,7 @@ class PersonMemoryItem {
   final String? summary;
   final List<String> aliases;
   final int importance;
+  final String status;
   final bool active;
 }
 
@@ -96,6 +99,7 @@ class RuleMemoryItem {
     required this.ruleType,
     required this.title,
     required this.ruleText,
+    required this.triggerKeywords,
     required this.priority,
     required this.status,
     required this.active,
@@ -107,6 +111,7 @@ class RuleMemoryItem {
       ruleType: _string(json['rule_type']) ?? 'other',
       title: _string(json['title']) ?? 'Rule',
       ruleText: _string(json['rule_text']) ?? '',
+      triggerKeywords: _stringList(json['trigger_keywords']),
       priority: _int(json['priority']) ?? 3,
       status: _string(json['status']) ?? 'active',
       active: _bool(json['active']) ?? true,
@@ -117,6 +122,7 @@ class RuleMemoryItem {
   final String ruleType;
   final String title;
   final String ruleText;
+  final List<String> triggerKeywords;
   final int priority;
   final String status;
   final bool active;
@@ -133,6 +139,7 @@ class PlanMemoryItem {
     required this.status,
     required this.active,
     required this.targetDate,
+    required this.primaryEntityId,
   });
 
   factory PlanMemoryItem.fromJson(Map<String, dynamic> json) {
@@ -146,6 +153,7 @@ class PlanMemoryItem {
       status: _string(json['status']) ?? 'active',
       active: _bool(json['active']) ?? true,
       targetDate: _dateTime(json['target_date']),
+      primaryEntityId: _string(json['primary_entity_id']),
     );
   }
 
@@ -158,6 +166,7 @@ class PlanMemoryItem {
   final String status;
   final bool active;
   final DateTime? targetDate;
+  final String? primaryEntityId;
 }
 
 class CommitmentMemoryItem {
@@ -170,6 +179,8 @@ class CommitmentMemoryItem {
     required this.status,
     required this.active,
     required this.dueAt,
+    required this.planId,
+    required this.entityId,
   });
 
   factory CommitmentMemoryItem.fromJson(Map<String, dynamic> json) {
@@ -182,6 +193,8 @@ class CommitmentMemoryItem {
       status: _string(json['status']) ?? 'open',
       active: _bool(json['active']) ?? true,
       dueAt: _dateTime(json['due_at']),
+      planId: _string(json['plan_id']),
+      entityId: _string(json['entity_id']),
     );
   }
 
@@ -193,6 +206,8 @@ class CommitmentMemoryItem {
   final String status;
   final bool active;
   final DateTime? dueAt;
+  final String? planId;
+  final String? entityId;
 }
 
 extension MemoryRecordLabel on String {

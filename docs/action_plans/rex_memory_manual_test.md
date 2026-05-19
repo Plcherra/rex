@@ -150,7 +150,7 @@ Run:
 curl -s "https://api.rexpilot.com/memory?limit=100&active=true" | python3 -m json.tool
 curl -s "https://api.rexpilot.com/entities" | python3 -m json.tool
 curl -s "https://api.rexpilot.com/plans" | python3 -m json.tool
-curl -s "https://api.rexpilot.com/corrections" | python3 -m json.tool
+curl -s "https://api.rexpilot.com/memory/corrections" | python3 -m json.tool
 ```
 
 **Pass criteria:**

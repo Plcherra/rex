@@ -572,6 +572,16 @@ class MemoryExtractionService:
             "deactivate_long_term_memory",
             None,
         )
+        correction_group = self._correction_group(correction)
+        corrected_metadata = {
+            **(stale_memories[0].get("metadata") or {}),
+            "correction": {
+                "old_values": sorted(correction["wrong"]),
+                "new_values": sorted(correction["corrected"]),
+                "previous_content": stale_memories[0].get("content"),
+                "source_message_id": user_message_id,
+            },
+        }
 
         updated_memory = None
         if update_method is not None:
@@ -582,11 +592,38 @@ class MemoryExtractionService:
                     content=normalized["content"],
                     importance=normalized["importance"],
                     active=True,
+                    confidence=0.9,
+                    correction_group=correction_group,
+                    metadata=corrected_metadata,
                 )
             except Exception:
                 updated_memory = None
 
-        if deactivate_method is not None:
+        if updated_memory is not None and update_method is not None:
+            for stale_memory in stale_memories[1:]:
+                try:
+                    await update_method(
+                        stale_memory["id"],
+                        active=False,
+                        superseded_by=updated_memory.get("id"),
+                        correction_group=correction_group,
+                        metadata={
+                            **(stale_memory.get("metadata") or {}),
+                            "superseded_by_correction": {
+                                "replacement_memory_id": updated_memory.get("id"),
+                                "old_values": sorted(correction["wrong"]),
+                                "new_values": sorted(correction["corrected"]),
+                                "source_message_id": user_message_id,
+                            },
+                        },
+                    )
+                except Exception:
+                    if deactivate_method is not None:
+                        try:
+                            await deactivate_method(stale_memory["id"])
+                        except Exception:
+                            continue
+        elif deactivate_method is not None:
             start_index = 1 if updated_memory is not None else 0
             for stale_memory in stale_memories[start_index:]:
                 try:
@@ -658,6 +695,7 @@ class MemoryExtractionService:
             "applied": True,
             "confidence": 0.9,
             "metadata": {
+                "correction_group": self._correction_group(correction),
                 "updated_memory_id": updated_memory.get("id"),
                 "stale_memory_ids": [
                     memory.get("id")
@@ -672,6 +710,11 @@ class MemoryExtractionService:
             await create_correction(payload)
         except Exception:
             return
+
+    def _correction_group(self, correction: dict[str, set[str]]) -> str:
+        wrong = "-".join(sorted(correction["wrong"])) or "unknown"
+        corrected = "-".join(sorted(correction["corrected"])) or "unknown"
+        return f"correction:{wrong}->{corrected}"
 
     async def _save_person_correction_context(
         self,

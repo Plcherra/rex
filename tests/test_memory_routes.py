@@ -26,6 +26,10 @@ class FakeMemoryManagementService:
                 "source_message_id": "message-1",
                 "importance": 4,
                 "active": True,
+                "superseded_by": None,
+                "confidence": 0.75,
+                "correction_group": None,
+                "metadata": {},
                 "created_at": "2026-05-11T10:00:00Z",
                 "updated_at": "2026-05-11T10:00:00Z",
                 "last_accessed_at": "2026-05-11T10:00:00Z",
@@ -38,12 +42,33 @@ class FakeMemoryManagementService:
                 "source_message_id": None,
                 "importance": 3,
                 "active": False,
+                "superseded_by": None,
+                "confidence": 0.75,
+                "correction_group": None,
+                "metadata": {},
                 "created_at": "2026-05-10T10:00:00Z",
                 "updated_at": "2026-05-10T10:00:00Z",
                 "last_accessed_at": "2026-05-10T10:00:00Z",
             },
         ]
+        self.corrections = [
+            {
+                "id": "correction-1",
+                "correction_type": "entity_name",
+                "old_value": "al",
+                "new_value": "melissa",
+                "target_table": "long_term_memory",
+                "target_id": "memory-1",
+                "source_conversation_id": "conversation-1",
+                "source_message_id": "message-1",
+                "applied": True,
+                "confidence": 0.9,
+                "metadata": {"correction_group": "correction:al->melissa"},
+                "created_at": "2026-05-19T10:00:00Z",
+            }
+        ]
         self.list_calls = []
+        self.correction_list_calls = []
 
     def _raise_if_configured(self):
         if self.error is not None:
@@ -79,6 +104,51 @@ class FakeMemoryManagementService:
         self._raise_if_configured()
         memory = await self.update_long_term_memory(memory_id, active=False)
         return memory is not None
+
+    async def list_memory_corrections(
+        self,
+        limit=50,
+        correction_type=None,
+        applied=None,
+        target_table=None,
+        target_id=None,
+    ):
+        self._raise_if_configured()
+        self.correction_list_calls.append(
+            {
+                "limit": limit,
+                "correction_type": correction_type,
+                "applied": applied,
+                "target_table": target_table,
+                "target_id": target_id,
+            }
+        )
+        results = self.corrections
+        if correction_type is not None:
+            results = [
+                correction
+                for correction in results
+                if correction["correction_type"] == correction_type
+            ]
+        if applied is not None:
+            results = [
+                correction
+                for correction in results
+                if correction["applied"] is applied
+            ]
+        if target_table is not None:
+            results = [
+                correction
+                for correction in results
+                if correction["target_table"] == target_table
+            ]
+        if target_id is not None:
+            results = [
+                correction
+                for correction in results
+                if correction["target_id"] == target_id
+            ]
+        return results[:limit]
 
 
 def override_memory_service(fake_memory_service):
@@ -137,6 +207,53 @@ def test_patch_memory_updates_content_and_importance(client):
     data = response.json()
     assert data["content"] == "I prefer blunt advice."
     assert data["importance"] == 5
+
+
+def test_patch_memory_updates_audit_fields(client):
+    override_memory_service(FakeMemoryManagementService())
+
+    response = client.patch(
+        "/memory/memory-1",
+        json={
+            "active": False,
+            "superseded_by": "memory-2",
+            "confidence": 0.9,
+            "correction_group": "correction:al->melissa",
+            "metadata": {"reason": "manual correction"},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["active"] is False
+    assert data["superseded_by"] == "memory-2"
+    assert data["confidence"] == 0.9
+    assert data["correction_group"] == "correction:al->melissa"
+    assert data["metadata"] == {"reason": "manual correction"}
+
+
+def test_list_memory_corrections_supports_filters(client):
+    fake_memory_service = FakeMemoryManagementService()
+    override_memory_service(fake_memory_service)
+
+    response = client.get(
+        "/memory/corrections?correction_type=entity_name"
+        "&applied=true&target_table=long_term_memory&target_id=memory-1"
+        "&limit=10"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [correction["id"] for correction in data] == ["correction-1"]
+    assert fake_memory_service.correction_list_calls == [
+        {
+            "limit": 10,
+            "correction_type": "entity_name",
+            "applied": True,
+            "target_table": "long_term_memory",
+            "target_id": "memory-1",
+        }
+    ]
 
 
 def test_patch_memory_validates_importance(client):

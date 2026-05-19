@@ -225,6 +225,159 @@ class MemoryController extends Notifier<MemoryState> {
     }
   }
 
+  Future<bool> updatePerson(
+    String personId, {
+    String? displayName,
+    String? relationship,
+    String? summary,
+    List<String>? aliases,
+    int? importance,
+    String? status,
+    bool? active,
+  }) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await ref
+          .read(memoryApiProvider)
+          .updatePerson(
+            personId,
+            displayName: displayName,
+            relationship: relationship,
+            summary: summary,
+            aliases: aliases,
+            importance: importance,
+            status: status,
+            active: active,
+          );
+      await loadMemories(layer: MemoryLayer.people);
+      state = state.copyWith(isSaving: false, clearError: true);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.toString());
+      return false;
+    }
+  }
+
+  Future<bool> updateRule(
+    String ruleId, {
+    String? title,
+    String? ruleText,
+    List<String>? triggerKeywords,
+    int? priority,
+    String? status,
+    bool? active,
+  }) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await ref
+          .read(memoryApiProvider)
+          .updateRule(
+            ruleId,
+            title: title,
+            ruleText: ruleText,
+            triggerKeywords: triggerKeywords,
+            priority: priority,
+            status: status,
+            active: active,
+          );
+      await loadMemories(layer: MemoryLayer.rules);
+      state = state.copyWith(isSaving: false, clearError: true);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.toString());
+      return false;
+    }
+  }
+
+  Future<bool> updatePlan(
+    String planId, {
+    String? title,
+    String? description,
+    String? desiredOutcome,
+    int? priority,
+    String? status,
+    bool? active,
+    DateTime? targetDate,
+  }) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await ref
+          .read(memoryApiProvider)
+          .updatePlan(
+            planId,
+            title: title,
+            description: description,
+            desiredOutcome: desiredOutcome,
+            priority: priority,
+            status: status,
+            active: active,
+            targetDate: targetDate,
+          );
+      await loadMemories(layer: MemoryLayer.plans);
+      state = state.copyWith(isSaving: false, clearError: true);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.toString());
+      return false;
+    }
+  }
+
+  Future<bool> updateCommitment(
+    String commitmentId, {
+    String? title,
+    String? commitmentText,
+    int? priority,
+    String? status,
+    bool? active,
+    DateTime? dueAt,
+  }) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await ref
+          .read(memoryApiProvider)
+          .updateCommitment(
+            commitmentId,
+            title: title,
+            commitmentText: commitmentText,
+            priority: priority,
+            status: status,
+            active: active,
+            dueAt: dueAt,
+          );
+      await loadMemories(layer: MemoryLayer.commitments);
+      state = state.copyWith(isSaving: false, clearError: true);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.toString());
+      return false;
+    }
+  }
+
+  Future<bool> deactivateStructuredMemory(MemoryLayer layer, String id) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      final api = ref.read(memoryApiProvider);
+      switch (layer) {
+        case MemoryLayer.people:
+          await api.deactivatePerson(id);
+        case MemoryLayer.rules:
+          await api.deactivateRule(id);
+        case MemoryLayer.plans:
+          await api.deactivatePlan(id);
+        case MemoryLayer.commitments:
+          await api.deactivateCommitment(id);
+        case MemoryLayer.longTerm:
+          await api.deactivateMemory(id);
+      }
+      await loadMemories(layer: layer);
+      state = state.copyWith(isSaving: false, clearError: true);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.toString());
+      return false;
+    }
+  }
+
   bool _matchesCurrentFilters(MemoryItem memory) {
     if (state.activeOnly && !memory.active) {
       return false;

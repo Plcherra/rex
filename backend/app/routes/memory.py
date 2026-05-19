@@ -3,7 +3,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.dependencies import get_memory_service
-from app.models.memory import MemoryResponse, MemoryType, MemoryUpdateRequest
+from app.models.memory import (
+    MemoryCorrectionResponse,
+    MemoryCorrectionType,
+    MemoryResponse,
+    MemoryType,
+    MemoryUpdateRequest,
+)
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
 
@@ -27,6 +33,29 @@ async def list_memory(
         raise _memory_http_error(error) from error
 
     return [MemoryResponse(**memory) for memory in memories]
+
+
+@router.get("/corrections", response_model=list[MemoryCorrectionResponse])
+async def list_memory_corrections(
+    correction_type: Optional[MemoryCorrectionType] = Query(default=None),
+    applied: Optional[bool] = Query(default=None),
+    target_table: Optional[str] = Query(default=None),
+    target_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    memory_service: SupabaseMemoryService = Depends(get_memory_service),
+) -> list[MemoryCorrectionResponse]:
+    try:
+        corrections = await memory_service.list_memory_corrections(
+            limit=limit,
+            correction_type=correction_type,
+            applied=applied,
+            target_table=target_table,
+            target_id=target_id,
+        )
+    except MemoryServiceError as error:
+        raise _memory_http_error(error) from error
+
+    return [MemoryCorrectionResponse(**correction) for correction in corrections]
 
 
 @router.patch("/{memory_id}", response_model=MemoryResponse)

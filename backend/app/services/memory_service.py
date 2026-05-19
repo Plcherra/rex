@@ -23,7 +23,8 @@ VALID_MEMORY_CORRECTION_TYPES = {
 }
 LONG_TERM_MEMORY_SELECT = (
     "id,memory_type,content,source_conversation_id,source_message_id,"
-    "importance,active,created_at,updated_at,last_accessed_at"
+    "importance,active,superseded_by,confidence,correction_group,metadata,"
+    "created_at,updated_at,last_accessed_at"
 )
 MEMORY_CORRECTION_SELECT = (
     "id,correction_type,old_value,new_value,target_table,target_id,"
@@ -331,6 +332,9 @@ class SupabaseMemoryService:
         source_conversation_id: Optional[str] = None,
         source_message_id: Optional[str] = None,
         importance: int = 3,
+        confidence: float = 0.75,
+        correction_group: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> dict:
         rows = await self._request(
             "POST",
@@ -341,14 +345,11 @@ class SupabaseMemoryService:
                 "source_conversation_id": source_conversation_id,
                 "source_message_id": source_message_id,
                 "importance": importance,
+                "confidence": confidence,
+                "correction_group": correction_group,
+                "metadata": metadata or {},
             },
-            query={
-                "select": (
-                    "id,memory_type,content,source_conversation_id,"
-                    "source_message_id,importance,active,created_at,"
-                    "updated_at,last_accessed_at"
-                )
-            },
+            query={"select": LONG_TERM_MEMORY_SELECT},
             prefer="return=representation",
         )
         return self._first_row(rows)
@@ -564,6 +565,10 @@ class SupabaseMemoryService:
         content: Optional[str] = None,
         importance: Optional[int] = None,
         active: Optional[bool] = None,
+        superseded_by: Optional[str] = None,
+        confidence: Optional[float] = None,
+        correction_group: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> Optional[dict]:
         self._validate_memory_type(memory_type)
         updates: dict = {}
@@ -580,6 +585,19 @@ class SupabaseMemoryService:
             updates["importance"] = importance
         if active is not None:
             updates["active"] = active
+        if superseded_by is not None:
+            updates["superseded_by"] = superseded_by
+        if confidence is not None:
+            if confidence < 0 or confidence > 1:
+                raise MemoryServiceError(
+                    "Memory confidence must be between 0 and 1.",
+                    400,
+                )
+            updates["confidence"] = confidence
+        if correction_group is not None:
+            updates["correction_group"] = correction_group
+        if metadata is not None:
+            updates["metadata"] = metadata
 
         if not updates:
             raise MemoryServiceError(

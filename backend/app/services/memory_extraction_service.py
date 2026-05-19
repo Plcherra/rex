@@ -120,6 +120,13 @@ Good memory examples:
 - personal rules: no Uber, no DoorDash, coffee rules, grocery caps, rent rules
 - commitments: "I will work out tomorrow", "I'll apply by Friday"
 - multi-step plans: moving countries, income targets, immigration timelines
+- corrections to prior memory: "her name is Melissa, not Al", "I live in Massachusetts, not Europe"
+
+Correction rules:
+- If the user corrects stale or wrong information, treat the corrected value as high-priority durable memory.
+- When the user says "not X, actually Y", do not save X as current truth. Save Y clearly and include the correction in the memory content.
+- For corrected person names, create or update the corrected person entity and add a relationship_update entity event that says the earlier name or label was wrong.
+- For corrected plans, save the updated plan details with the corrected person/place/date and avoid reinforcing stale plan wording.
 
 Do not extract:
 - one-off emotions without durable context

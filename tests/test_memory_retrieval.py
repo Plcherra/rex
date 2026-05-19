@@ -264,6 +264,66 @@ async def test_get_relevant_memories_keeps_high_priority_preferences_available()
 
 
 @pytest.mark.asyncio
+async def test_get_relevant_memories_retrieves_location_when_user_asks_where_they_live():
+    service = InMemoryRetrievalService(
+        [
+            {
+                "id": "memory-location",
+                "memory_type": "fact",
+                "content": "I am in Massachusetts.",
+                "importance": 3,
+                "active": True,
+                "created_at": "2026-05-18T20:00:00Z",
+                "last_accessed_at": "2026-05-18T20:00:00Z",
+            },
+            {
+                "id": "memory-app",
+                "memory_type": "fact",
+                "content": "I am building Rex as my first personal app.",
+                "importance": 4,
+                "active": True,
+                "created_at": "2026-05-18T19:00:00Z",
+                "last_accessed_at": "2026-05-18T19:00:00Z",
+            },
+        ]
+    )
+
+    memories = await service.get_relevant_memories(
+        "Do you remember where I live?",
+        limit=2,
+    )
+
+    assert memories
+    assert memories[0]["id"] == "memory-location"
+    assert "location" in memories[0]["relevance_reason"]
+
+
+@pytest.mark.asyncio
+async def test_get_relevant_memories_retrieves_timezone_context_from_state_question():
+    service = InMemoryRetrievalService(
+        [
+            {
+                "id": "memory-timezone",
+                "memory_type": "fact",
+                "content": "I live in Massachusetts and use Eastern time.",
+                "importance": 4,
+                "active": True,
+                "created_at": "2026-05-18T20:00:00Z",
+                "last_accessed_at": "2026-05-18T20:00:00Z",
+            }
+        ]
+    )
+
+    memories = await service.get_relevant_memories(
+        "What state or timezone am I in?",
+        limit=1,
+    )
+
+    assert [memory["id"] for memory in memories] == ["memory-timezone"]
+    assert "location" in memories[0]["relevance_reason"]
+
+
+@pytest.mark.asyncio
 async def test_get_structured_memory_context_ranks_records_and_links_children():
     service = InMemoryRetrievalService(
         [],

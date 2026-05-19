@@ -72,6 +72,10 @@ def readiness_check() -> dict:
             "language_code": settings.google_tts_language_code,
             "audio_encoding": settings.google_tts_audio_encoding,
         },
+        "time": {
+            "configured": bool(settings.app_timezone),
+            "timezone": settings.app_timezone,
+        },
     }
     return {
         "status": "ready" if all(check["configured"] for check in checks.values()) else "degraded",

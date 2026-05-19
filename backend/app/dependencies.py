@@ -1,5 +1,6 @@
 from fastapi import Depends
 
+from app.config import get_settings
 from app.services.ai_service import AIService
 from app.services.chat_service import ChatService
 from app.services.commitment_service import CommitmentService
@@ -12,6 +13,7 @@ from app.services.memory_extraction_service import MemoryExtractionService
 from app.services.memory_service import SupabaseMemoryService
 from app.services.plan_service import PlanService
 from app.services.rule_service import RuleService
+from app.services.time_context_service import TimeContextService
 
 
 def get_ai_service() -> AIService:
@@ -62,9 +64,11 @@ def get_chat_service(
     ai_service: AIService = Depends(get_ai_service),
     memory_service: SupabaseMemoryService = Depends(get_memory_service),
 ) -> ChatService:
+    settings = get_settings()
     return ChatService(
         ai_service,
         FileService(),
         memory_service,
         MemoryExtractionService(ai_service, memory_service),
+        time_context_service=TimeContextService(timezone_name=settings.app_timezone),
     )

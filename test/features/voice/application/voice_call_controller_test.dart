@@ -477,6 +477,34 @@ void main() {
   );
 
   test(
+    'VoiceCallController stops local streaming capture when backend starts answering',
+    () async {
+      final streamingCaptureService = FakePendingStreamingAudioCaptureService();
+      final streamingSession = FakeStreamingVoiceSession();
+      final streamingApi = FakeStreamingVoiceApi(session: streamingSession);
+      final container = voiceCallTestContainer(
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+
+      streamingSession.emitAssistantStarted();
+      await pumpEventQueue();
+
+      expect(streamingCaptureService.cancelCount, 1);
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
+    },
+  );
+
+  test(
     'VoiceCallController interrupts streaming playback and notifies backend',
     () async {
       final streamingCaptureService = FakeStreamingAudioCaptureService();
@@ -669,7 +697,7 @@ void main() {
 
 ProviderContainer voiceCallTestContainer({
   FakeAudioCaptureService? captureService,
-  FakeStreamingAudioCaptureService? streamingAudioCaptureService,
+  StreamingAudioCaptureService? streamingAudioCaptureService,
   FakeAudioPlaybackService? playbackService,
   FakeBargeInDetectionService? bargeInDetectionService,
   FakeCloudVoiceApi? cloudVoiceApi,
@@ -695,7 +723,7 @@ ProviderContainer voiceCallTestContainer({
 
 List<Override> voiceCallTestOverrides({
   FakeAudioCaptureService? captureService,
-  FakeStreamingAudioCaptureService? streamingAudioCaptureService,
+  StreamingAudioCaptureService? streamingAudioCaptureService,
   FakeAudioPlaybackService? playbackService,
   FakeBargeInDetectionService? bargeInDetectionService,
   FakeCloudVoiceApi? cloudVoiceApi,
@@ -810,6 +838,35 @@ class FakeStreamingAudioCaptureService implements StreamingAudioCaptureService {
     await onAudioChunk(Uint8List.fromList([1, 2, 3]));
     onSpeechEnded();
     return true;
+  }
+}
+
+class FakePendingStreamingAudioCaptureService
+    implements StreamingAudioCaptureService {
+  var cancelCount = 0;
+  var captureCount = 0;
+  Completer<bool>? _completer;
+
+  @override
+  Future<void> cancel() async {
+    cancelCount++;
+    if (_completer != null && !_completer!.isCompleted) {
+      _completer!.complete(false);
+    }
+  }
+
+  @override
+  Future<bool> streamUtterance({
+    required VoiceCaptureConfig config,
+    required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
+    required AudioChunkCallback onAudioChunk,
+  }) async {
+    captureCount++;
+    onSpeechStart();
+    await onAudioChunk(Uint8List.fromList([1, 2, 3]));
+    _completer = Completer<bool>();
+    return _completer!.future;
   }
 }
 
@@ -1058,6 +1115,14 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
           'response_text': answer,
         }),
       );
+  }
+
+  void emitAssistantStarted() {
+    _controller.add(
+      const VoiceStreamEvent('assistant.started', {
+        'event': 'assistant.started',
+      }),
+    );
   }
 
   @override

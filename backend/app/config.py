@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_environment: str = "development"
+    app_timezone: str = "America/New_York"
     cors_allowed_origins: str = ""
 
     grok_api_key: Optional[str] = None

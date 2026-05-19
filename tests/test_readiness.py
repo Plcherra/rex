@@ -28,6 +28,7 @@ def test_readiness_reports_missing_cloud_voice_config(monkeypatch):
     assert payload["checks"]["supabase"]["configured"] is True
     assert payload["checks"]["deepgram"]["configured"] is False
     assert payload["checks"]["google_tts"]["configured"] is False
+    assert payload["checks"]["time"]["timezone"] == "America/New_York"
     assert "DEEPGRAM_API_KEY" in payload["checks"]["deepgram"]["required"]
 
 
@@ -55,3 +56,4 @@ def test_readiness_reports_ready_when_all_required_services_are_configured(monke
     assert payload["checks"]["deepgram"]["model"] == "nova-3"
     assert payload["checks"]["google_tts"]["configured"] is True
     assert payload["checks"]["google_tts"]["audio_encoding"] == "MP3"
+    assert payload["checks"]["time"]["configured"] is True

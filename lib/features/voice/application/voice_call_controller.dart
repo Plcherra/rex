@@ -656,6 +656,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
               clearError: true,
             );
           case 'assistant.started':
+            unawaited(_activeStreamingCaptureService?.cancel());
             if (state.phase != VoiceCallPhase.thinking) {
               startThinking(finalTranscript: state.currentTranscript);
             }

@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+import app.services.voice_stream_session as voice_stream_session_module
 from app.dependencies import (
     get_chat_service,
     get_deepgram_streaming_service,
@@ -12,6 +14,7 @@ from app.dependencies import (
 from app.main import app
 from app.services.deepgram_service import DeepgramServiceError
 from app.services.google_tts_service import GoogleTTSServiceError
+from app.services.voice_stream_session import VoiceStreamSession
 
 
 @pytest.fixture
@@ -150,6 +153,34 @@ class FakeGoogleTTSService:
         }
 
 
+class FakeWebSocket:
+    def __init__(self):
+        self.events = []
+
+    async def send_json(self, payload):
+        self.events.append(payload)
+
+
+class FakeLiveTranscription:
+    def __init__(self):
+        self.closed = False
+
+    async def finish(self):
+        return {
+            "transcript": "Hey Rex",
+            "confidence": 0.91,
+            "duration_seconds": 1.2,
+            "metadata": {"transport": "websocket-live"},
+        }
+
+    async def close(self):
+        self.closed = True
+
+
+class FakeLiveDeepgramStreamingService:
+    settings = SimpleNamespace(deepgram_endpointing_ms=3000)
+
+
 def override_services(
     deepgram_streaming_service=None,
     chat_service=None,
@@ -247,6 +278,35 @@ def test_voice_stream_completes_streaming_turn(client):
     assert chat.metadata_calls[0]["conversation_id"] == "conversation-existing"
     assert chat.metadata_calls[0]["user_message_id"] == "user-message-1"
     assert chat.metadata_calls[0]["assistant_message_id"] == "assistant-message-1"
+
+
+@pytest.mark.asyncio
+async def test_voice_stream_live_transcript_idle_starts_turn(monkeypatch):
+    async def instant_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(voice_stream_session_module.asyncio, "sleep", instant_sleep)
+    websocket = FakeWebSocket()
+    chat = FakeChatService()
+    session = VoiceStreamSession(
+        websocket=websocket,
+        deepgram_streaming_service=FakeLiveDeepgramStreamingService(),
+        chat_service=chat,
+        google_tts_service=FakeGoogleTTSService(),
+    )
+    session.conversation_id = "conversation-existing"
+    session._live_transcription = FakeLiveTranscription()
+    transcript_timestamp = 10.0
+    session._last_live_transcript_at = transcript_timestamp
+
+    await session._process_live_utterance_after_transcript_idle(
+        transcript_timestamp,
+    )
+    assert session._active_turn_task is not None
+    await session._active_turn_task
+
+    assert chat.stream_calls[0]["message"] == "Hey Rex"
+    assert any(event["event"] == "assistant.done" for event in websocket.events)
 
 
 def test_voice_stream_creates_conversation_when_missing_id(client):

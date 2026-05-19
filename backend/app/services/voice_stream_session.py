@@ -36,6 +36,8 @@ class VoiceStreamSession:
         self._audio_chunks_received = 0
         self._active_turn_task: Optional[asyncio.Task[None]] = None
         self._live_transcription: Optional[Any] = None
+        self._live_endpoint_task: Optional[asyncio.Task[None]] = None
+        self._last_live_transcript_at: Optional[float] = None
 
     async def run(self) -> None:
         await self.websocket.accept()
@@ -60,6 +62,7 @@ class VoiceStreamSession:
         except WebSocketDisconnect:
             return
         finally:
+            await self._cancel_live_endpoint_check()
             await self._cancel_active_turn()
 
     async def _receive_audio_chunk(self, chunk: bytes) -> None:
@@ -113,6 +116,7 @@ class VoiceStreamSession:
                     code="turn_in_progress",
                 )
                 return True
+            await self._cancel_live_endpoint_check()
             if self._live_transcription is not None:
                 self._active_turn_task = asyncio.create_task(
                     self._process_live_utterance()
@@ -124,6 +128,7 @@ class VoiceStreamSession:
         if event == "user.interrupt":
             self._audio_chunks.clear()
             self._audio_started_at = None
+            await self._cancel_live_endpoint_check()
             await self._close_live_transcription()
             await self._cancel_active_turn()
             await self._send_event("session.interrupted", session_id=self._session_id)
@@ -131,6 +136,7 @@ class VoiceStreamSession:
 
         if event == "session.end":
             await self._cancel_active_turn()
+            await self._cancel_live_endpoint_check()
             await self._close_live_transcription()
             await self._send_event("session.ended", session_id=self._session_id)
             await self.websocket.close()
@@ -206,6 +212,7 @@ class VoiceStreamSession:
                 self._active_turn_task = None
 
     async def _process_live_utterance(self) -> None:
+        await self._cancel_live_endpoint_check()
         live_transcription = self._live_transcription
         self._live_transcription = None
         audio_started_at = self._audio_started_at
@@ -425,6 +432,9 @@ class VoiceStreamSession:
 
     async def _handle_live_transcript_event(self, event: dict[str, Any]) -> None:
         await self._send_transcript_event(event)
+        transcript = str(event.get("transcript") or "").strip()
+        if transcript:
+            self._schedule_live_endpoint_check()
         if (
             event.get("event") == "transcript.final"
             and event.get("speech_final")
@@ -438,10 +448,51 @@ class VoiceStreamSession:
             )
 
     async def _close_live_transcription(self) -> None:
+        await self._cancel_live_endpoint_check()
         live_transcription = self._live_transcription
         self._live_transcription = None
         if live_transcription is not None:
             await live_transcription.close()
+
+    def _schedule_live_endpoint_check(self) -> None:
+        self._last_live_transcript_at = time.perf_counter()
+        task = self._live_endpoint_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._live_endpoint_task = asyncio.create_task(
+            self._process_live_utterance_after_transcript_idle(
+                self._last_live_transcript_at
+            )
+        )
+
+    async def _process_live_utterance_after_transcript_idle(
+        self,
+        transcript_timestamp: float,
+    ) -> None:
+        settings = getattr(self.deepgram_streaming_service, "settings", None)
+        endpointing_ms = getattr(settings, "deepgram_endpointing_ms", 3000)
+        endpointing_seconds = endpointing_ms / 1000
+        await asyncio.sleep(max(3.4, endpointing_seconds + 0.5))
+        if self._last_live_transcript_at != transcript_timestamp:
+            return
+        if self._live_transcription is None:
+            return
+        if self._active_turn_task is not None and not self._active_turn_task.done():
+            return
+        self._active_turn_task = asyncio.create_task(self._process_live_utterance())
+
+    async def _cancel_live_endpoint_check(self) -> None:
+        task = self._live_endpoint_task
+        if task is None or task.done():
+            self._live_endpoint_task = None
+            return
+        if task is asyncio.current_task():
+            self._live_endpoint_task = None
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        self._live_endpoint_task = None
 
     def _audio_bytes_received(self) -> int:
         if self._supports_live_transcription():

@@ -142,8 +142,8 @@ class PackageStreamingAudioCaptureService
     milliseconds: 3000,
   );
   static const _minimumStreamingSpeechDuration = Duration(milliseconds: 500);
-  static const _streamingSpeechStartThresholdDb = -48.0;
-  static const _streamingSilenceThresholdDb = -60.0;
+  static const _streamingSpeechStartThresholdDb = -46.0;
+  static const _streamingSilenceThresholdDb = -52.0;
 
   PackageStreamingAudioCaptureService({
     AudioRecorder? recorder,

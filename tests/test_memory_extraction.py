@@ -493,6 +493,94 @@ async def test_memory_extraction_saves_structured_candidates():
 
 
 @pytest.mark.asyncio
+async def test_memory_extraction_preserves_person_descriptor_aliases():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [],
+          "structured_memories": {
+            "entities": [
+              {
+                "entity_type": "person",
+                "display_name": "Melissa",
+                "relationship": "Girl from work",
+                "summary": "Melissa is the coworker involved in the next-week date plan.",
+                "importance": 4,
+                "rationale": "Named person in recurring dating context."
+              }
+            ]
+          }
+        }
+        """
+    )
+    memory_store = FakeMemoryStore()
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "Her name is Melissa. She is the girl from work.",
+        },
+        {"id": "message-2", "content": "I will remember Melissa."},
+    )
+
+    assert [item["structured_type"] for item in saved] == ["entity"]
+    assert memory_store.created_entities[0]["display_name"] == "Melissa"
+    assert memory_store.created_entities[0]["normalized_name"] == "melissa"
+    assert memory_store.created_entities[0]["aliases"] == ["girl from work", "coworker"]
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_links_plan_to_named_person_entity():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [],
+          "structured_memories": {
+            "entities": [
+              {
+                "id": "entity-melissa",
+                "entity_type": "person",
+                "display_name": "Melissa",
+                "relationship": "Dating interest",
+                "importance": 4,
+                "rationale": "Named person."
+              }
+            ],
+            "plans": [
+              {
+                "plan_type": "dating",
+                "title": "Ask Melissa out for dinner",
+                "description": "Plan dinner with Melissa next Monday.",
+                "desired_outcome": "Successful date with Melissa.",
+                "entity_name": "Melissa",
+                "priority": 4,
+                "rationale": "Dating plan tied to a person."
+              }
+            ]
+          }
+        }
+        """
+    )
+    memory_store = FakeMemoryStore()
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {
+            "id": "message-1",
+            "content": "I want to ask Melissa out for dinner next Monday.",
+        },
+        {"id": "message-2", "content": "Let's make the plan concrete."},
+    )
+
+    assert [item["structured_type"] for item in saved] == ["entity", "plan"]
+    assert memory_store.created_plans[0]["primary_entity_id"] == "entity-1"
+    assert memory_store.created_plans[0]["title"] == "Ask Melissa out for dinner"
+
+
+@pytest.mark.asyncio
 async def test_memory_extraction_saves_corrected_person_name_as_current_truth():
     ai_service = FakeExtractionAIService(
         """
@@ -632,6 +720,89 @@ async def test_memory_extraction_updates_stale_memory_when_correction_matches():
     assert memory_store.created_memory_corrections[0]["new_value"] == "melissa"
     assert saved[0]["id"] == "memory-stale"
     assert saved[0]["extraction_action"] == "updated_correction"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_creates_person_context_for_unstructured_correction():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [
+            {
+              "memory_type": "fact",
+              "content": "The person for the next-week date plan is Melissa, not Al.",
+              "importance": 4,
+              "rationale": "The user corrected the stale person name."
+            }
+          ],
+          "structured_memories": {}
+        }
+        """
+    )
+    memory_store = FakeMemoryStore(
+        existing_memories=[
+            {
+                "id": "memory-existing",
+                "memory_type": "event",
+                "content": "I am planning to ask Al out for dinner Monday.",
+                "importance": 3,
+                "active": True,
+            }
+        ]
+    )
+    memory_store.created_plans.append(
+        {
+            "id": "plan-existing",
+            "plan_type": "dating",
+            "title": "Ask Al out for dinner",
+            "description": "Dinner with Al on Monday near my house.",
+            "desired_outcome": "Successful date with Al.",
+            "priority": 4,
+            "status": "active",
+            "active": True,
+            "metadata": {},
+        }
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {"id": "message-1", "content": "Her name is not Al. It is Melissa."},
+        {"id": "message-2", "content": "Got it."},
+    )
+
+    assert [item["extraction_kind"] for item in saved] == ["long_term_memory"]
+    assert memory_store.updated_memories[0]["content"] == (
+        "The person for the next-week date plan is Melissa, not Al."
+    )
+    assert memory_store.created_entities[0]["display_name"] == "Melissa"
+    assert memory_store.created_entities[0]["normalized_name"] == "melissa"
+    assert memory_store.created_entities[0]["aliases"] == []
+    assert memory_store.created_entities[0]["metadata"] == {
+        "correction_source": "explicit_person_correction",
+        "wrong_names": ["al"],
+    }
+    assert memory_store.created_entity_events[0]["entity_id"] == "entity-1"
+    assert memory_store.created_entity_events[0]["event_type"] == (
+        "relationship_update"
+    )
+    assert memory_store.created_entity_events[0]["content"] == (
+        "The prior name Al was wrong; the correct name is Melissa."
+    )
+    assert memory_store.created_plans[0]["primary_entity_id"] == "entity-1"
+    assert memory_store.created_plans[0]["title"] == "Ask Melissa out for dinner"
+    assert memory_store.created_plans[0]["description"] == (
+        "Dinner with Melissa on Monday near my house."
+    )
+    assert memory_store.created_plans[0]["desired_outcome"] == (
+        "Successful date with Melissa."
+    )
+    assert memory_store.created_plans[0]["metadata"] == {
+        "person_correction": {
+            "corrected_name": "melissa",
+            "wrong_names": ["al"],
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -969,7 +1140,7 @@ async def test_memory_extraction_deduplicates_and_links_structured_candidates():
             "entity_type": "person",
             "display_name": "Clara",
             "normalized_name": "clara",
-            "aliases": ["Clara"],
+            "aliases": ["Clara", "Clara from work"],
             "importance": 4,
             "active": True,
             "metadata": {"extraction_rationale": "Named person."},
@@ -1003,6 +1174,12 @@ async def test_memory_extraction_filters_low_value_structured_candidates():
                 "display_name": "someone",
                 "importance": 5,
                 "rationale": "Too vague."
+              },
+              {
+                "entity_type": "person",
+                "display_name": "girl from work",
+                "importance": 5,
+                "rationale": "Descriptor without a name."
               },
               {
                 "entity_type": "person",

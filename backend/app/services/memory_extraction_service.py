@@ -81,6 +81,8 @@ Schema:
         "title": "short plan name",
         "description": "what the plan is",
         "desired_outcome": "what success looks like",
+        "primary_entity_id": "only include if already known",
+        "entity_name": "specific person name if this plan is about someone and ID is unknown",
         "priority": 1 | 2 | 3 | 4 | 5,
         "rationale": "why this plan matters"
       }
@@ -260,6 +262,7 @@ class MemoryExtractionService:
                 if user_message.get("id")
                 else None,
                 source_text=str(user_message.get("content", "")),
+                structured_memories=extraction_payload["structured_memories"],
             )
             if corrected_memory is not None:
                 saved_memories.append(corrected_memory)
@@ -468,6 +471,7 @@ class MemoryExtractionService:
                 )
 
         for candidate in structured_memories.get("plans", []):
+            await self._resolve_entity_reference(candidate, entity_ids_by_key)
             normalized = self._normalize_plan_candidate(
                 candidate,
                 conversation_id=conversation_id,
@@ -543,6 +547,7 @@ class MemoryExtractionService:
         conversation_id: str,
         user_message_id: Optional[str],
         source_text: str = "",
+        structured_memories: Optional[dict[str, list[dict]]] = None,
     ) -> Optional[dict]:
         correction_source = f"{normalized['content']} {source_text}".strip()
         correction = self._correction_terms(correction_source)
@@ -599,6 +604,14 @@ class MemoryExtractionService:
             stale_memories=stale_memories,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
+        )
+        await self._save_person_correction_context(
+            correction=correction,
+            normalized=normalized,
+            source_text=source_text,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            structured_memories=structured_memories or {},
         )
 
         return {
@@ -659,6 +672,252 @@ class MemoryExtractionService:
             await create_correction(payload)
         except Exception:
             return
+
+    async def _save_person_correction_context(
+        self,
+        *,
+        correction: dict[str, set[str]],
+        normalized: dict,
+        source_text: str,
+        conversation_id: str,
+        user_message_id: Optional[str],
+        structured_memories: dict[str, list[dict]],
+    ) -> None:
+        if not self._looks_like_person_name_correction(
+            normalized["content"],
+            source_text,
+        ):
+            return
+        corrected_name = self._person_name_from_correction(correction)
+        if not corrected_name:
+            return
+        structured_event_exists = self._structured_memories_cover_person_correction(
+            structured_memories,
+            correction,
+            corrected_name,
+        )
+
+        wrong_names = sorted(correction["wrong"])
+        wrong_display = ", ".join(name.title() for name in wrong_names)
+        corrected_display = corrected_name.title()
+        summary = (
+            f"{corrected_display} is the corrected person reference"
+            + (f" replacing {wrong_display}." if wrong_display else ".")
+        )
+
+        try:
+            entity = await self.entity_service.create_entity(
+                EntityCreateRequest(
+                    entity_type="person",
+                    display_name=corrected_display,
+                    normalized_name=corrected_name,
+                    summary=summary,
+                    source_conversation_id=conversation_id,
+                    source_message_id=user_message_id,
+                    importance=max(int(normalized.get("importance", 3)), 4),
+                    metadata={
+                        "correction_source": "explicit_person_correction",
+                        "wrong_names": wrong_names,
+                    },
+                )
+            )
+        except Exception:
+            return
+
+        entity_id = self._clean_text(entity.get("id"))
+        if not entity_id:
+            return
+
+        if not structured_event_exists:
+            content = (
+                f"The prior name {wrong_display} was wrong; "
+                f"the correct name is {corrected_display}."
+                if wrong_display
+                else f"The correct person name is {corrected_display}."
+            )
+            try:
+                await self.entity_service.create_entity_event(
+                    EntityEventCreateRequest(
+                        entity_id=entity_id,
+                        event_type="relationship_update",
+                        title="Corrected name",
+                        content=content,
+                        source_conversation_id=conversation_id,
+                        source_message_id=user_message_id,
+                        importance=max(int(normalized.get("importance", 3)), 4),
+                        metadata={
+                            "correction_type": "entity_name",
+                            "wrong_names": wrong_names,
+                            "corrected_name": corrected_name,
+                        },
+                    )
+                )
+            except Exception:
+                return
+
+        await self._link_corrected_person_to_plans(
+            entity_id=entity_id,
+            corrected_name=corrected_name,
+            wrong_names=wrong_names,
+        )
+
+    async def _link_corrected_person_to_plans(
+        self,
+        *,
+        entity_id: str,
+        corrected_name: str,
+        wrong_names: list[str],
+    ) -> None:
+        list_plans = getattr(self.memory_service, "list_plans", None)
+        update_plan = getattr(self.memory_service, "update_plan", None)
+        if list_plans is None or update_plan is None:
+            return
+        try:
+            plans = await list_plans(active=True, limit=100)
+        except Exception:
+            return
+
+        for plan in plans:
+            updates = self._corrected_person_plan_updates(
+                plan,
+                entity_id=entity_id,
+                corrected_name=corrected_name,
+                wrong_names=wrong_names,
+            )
+            if not updates:
+                continue
+            try:
+                await update_plan(plan["id"], **updates)
+            except Exception:
+                continue
+
+    def _corrected_person_plan_updates(
+        self,
+        plan: dict[str, Any],
+        *,
+        entity_id: str,
+        corrected_name: str,
+        wrong_names: list[str],
+    ) -> dict[str, Any]:
+        text = self._normalized_text(
+            " ".join(
+                str(plan.get(field) or "")
+                for field in ("title", "description", "desired_outcome")
+            )
+        )
+        if not any(wrong in set(text.split()) for wrong in wrong_names):
+            return {}
+
+        corrected_display = corrected_name.title()
+        updates: dict[str, Any] = {"primary_entity_id": entity_id}
+        for field in ("title", "description", "desired_outcome"):
+            corrected_value = self._replace_terms(
+                plan.get(field),
+                replacements={
+                    wrong: corrected_display
+                    for wrong in wrong_names
+                },
+            )
+            if corrected_value is not None and corrected_value != plan.get(field):
+                updates[field] = corrected_value
+
+        metadata = {
+            **(plan.get("metadata") or {}),
+            "person_correction": {
+                "corrected_name": corrected_name,
+                "wrong_names": wrong_names,
+            },
+        }
+        if metadata != (plan.get("metadata") or {}):
+            updates["metadata"] = metadata
+
+        return updates
+
+    def _replace_terms(
+        self,
+        value: Any,
+        *,
+        replacements: dict[str, str],
+    ) -> Optional[str]:
+        cleaned = self._clean_text(value)
+        if cleaned is None:
+            return None
+        updated = cleaned
+        for wrong, corrected in replacements.items():
+            updated = re.sub(
+                rf"\b{re.escape(wrong)}\b",
+                corrected,
+                updated,
+                flags=re.I,
+            )
+        return updated
+
+    def _looks_like_person_name_correction(
+        self,
+        content: str,
+        source_text: str,
+    ) -> bool:
+        normalized = self._normalized_text(f"{content} {source_text}")
+        tokens = set(normalized.split())
+        return bool(
+            tokens
+            & {
+                "name",
+                "named",
+                "person",
+                "woman",
+                "girl",
+                "guy",
+                "man",
+                "her",
+                "his",
+            }
+        )
+
+    def _person_name_from_correction(
+        self,
+        correction: dict[str, set[str]],
+    ) -> Optional[str]:
+        ignored = {
+            "ai",
+            "al",
+            "girl",
+            "guy",
+            "her",
+            "him",
+            "his",
+            "name",
+            "person",
+            "woman",
+        }
+        candidates = [
+            term
+            for term in sorted(correction["corrected"])
+            if term not in ignored and re.fullmatch(r"[a-z][a-z0-9]{1,24}", term)
+        ]
+        if len(candidates) != 1:
+            return None
+        return candidates[0]
+
+    def _structured_memories_cover_person_correction(
+        self,
+        structured_memories: dict[str, list[dict]],
+        correction: dict[str, set[str]],
+        corrected_name: str,
+    ) -> bool:
+        wrong_terms = correction["wrong"]
+        for event in structured_memories.get("entity_events", []):
+            text = self._normalized_text(
+                " ".join(
+                    str(event.get(field) or "")
+                    for field in ("title", "content", "entity_name")
+                )
+            )
+            terms = set(text.split())
+            if corrected_name in terms and terms.intersection(wrong_terms):
+                return True
+
+        return False
 
     def _correction_type(self, content: str) -> str:
         terms = self._normalized_text(content).split()
@@ -806,6 +1065,9 @@ class MemoryExtractionService:
         title = self._clean_text(candidate.get("title"))
         description = self._clean_text(candidate.get("description"))
         desired_outcome = self._clean_text(candidate.get("desired_outcome"))
+        primary_entity_id = self._clean_text(
+            candidate.get("primary_entity_id") or candidate.get("entity_id")
+        )
         rationale = self._clean_text(candidate.get("rationale"))
 
         if priority is None or priority < MIN_IMPORTANCE_TO_SAVE:
@@ -821,6 +1083,7 @@ class MemoryExtractionService:
                 title=title,
                 description=description,
                 desired_outcome=desired_outcome,
+                primary_entity_id=primary_entity_id,
                 source_conversation_id=conversation_id,
                 source_message_id=user_message_id,
                 priority=priority,
@@ -1109,8 +1372,18 @@ class MemoryExtractionService:
             "somebody",
             "a girl",
             "the girl",
+            "girl from work",
+            "the girl from work",
             "a guy",
             "the guy",
+            "guy from work",
+            "the guy from work",
+            "coworker",
+            "a coworker",
+            "the coworker",
+            "date",
+            "my date",
+            "dating interest",
             "work",
             "money",
             "budget",
@@ -1182,10 +1455,13 @@ class MemoryExtractionService:
         )
         corrected_patterns = (
             r"\bis\s+named\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\b(?:her|his|their)\s+name\s+is\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
+            r"\bit\s+is\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
             r"\bcorrect\s+name\s+is\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
             r"\bcorrect\s+reference\s+(?:is|was)\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
             r"\bperson\s+(?:is|was|now)\s+([A-Za-z][A-Za-z0-9]{1,24})\b",
             r"\bis\s+([A-Za-z][A-Za-z0-9]{1,24}),?\s+corrected\s+from\b",
+            r"\bis\s+([A-Za-z][A-Za-z0-9]{1,24}),?\s+not\b",
         )
 
         for pattern in pair_patterns:
@@ -1217,6 +1493,7 @@ class MemoryExtractionService:
             "from",
             "name",
             "named",
+            "not",
             "person",
             "prior",
             "real",

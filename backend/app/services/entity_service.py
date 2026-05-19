@@ -32,6 +32,13 @@ ENTITY_DESCRIPTOR_SUFFIXES = (
     " from the gym",
 )
 
+PERSON_DESCRIPTOR_ALIASES = (
+    ("girl from work", r"\b(?:the |a |that )?girl from work\b"),
+    ("guy from work", r"\b(?:the |a |that )?guy from work\b"),
+    ("person from work", r"\b(?:the |a |that )?person from work\b"),
+    ("coworker", r"\bcoworker\b"),
+)
+
 
 class EntityServiceError(Exception):
     def __init__(self, detail: str, status_code: int = 400) -> None:
@@ -46,12 +53,30 @@ class EntityService:
 
     async def create_entity(self, request: EntityCreateRequest) -> dict[str, Any]:
         payload = _payload(request)
-        display_name = _clean_required(payload.get("display_name"), "display_name")
+        original_display_name = _clean_required(
+            payload.get("display_name"), "display_name"
+        )
+        original_normalized_name = _clean_optional(payload.get("normalized_name"))
+        original_aliases = _dedupe_strings(payload.get("aliases", []))
+        display_name = _canonical_display_name(
+            payload.get("entity_type"),
+            original_display_name,
+            original_normalized_name,
+            original_aliases,
+        )
         payload["display_name"] = display_name
         payload["normalized_name"] = _normalize_entity_name(
-            payload.get("normalized_name") or display_name
+            display_name if payload.get("entity_type") == "person" else (
+                original_normalized_name or display_name
+            )
         )
-        payload["aliases"] = _dedupe_strings(payload.get("aliases", []))
+        payload["aliases"] = _entity_aliases(
+            payload,
+            original_display_name=original_display_name,
+            original_normalized_name=original_normalized_name,
+            original_aliases=original_aliases,
+            display_name=display_name,
+        )
 
         try:
             existing = await self.memory_service.list_entities(
@@ -249,15 +274,117 @@ def _normalize_key(value: Any) -> str:
 
 def _normalize_entity_name(value: Any) -> str:
     normalized = _normalize_key(value)
+    stripped = _strip_entity_descriptors(normalized)
+    return stripped or normalized
+
+
+def _strip_entity_descriptors(normalized: str) -> str | None:
+    stripped = normalized
     for prefix in ENTITY_DESCRIPTOR_PREFIXES:
-        if normalized.startswith(prefix):
-            normalized = normalized[len(prefix) :].strip()
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :].strip()
             break
     for suffix in ENTITY_DESCRIPTOR_SUFFIXES:
-        if normalized.endswith(suffix):
-            normalized = normalized[: -len(suffix)].strip()
+        if stripped.endswith(suffix):
+            stripped = stripped[: -len(suffix)].strip()
             break
-    return normalized or _normalize_key(value)
+    if not stripped or _is_descriptor_fragment(stripped):
+        return None
+    return stripped
+
+
+def _canonical_display_name(
+    entity_type: str | None,
+    display_name: str,
+    normalized_name: str | None,
+    aliases: list[str],
+) -> str:
+    if entity_type != "person":
+        return display_name
+    for value in (display_name, normalized_name, *aliases):
+        canonical = _canonical_person_name(value)
+        if canonical:
+            return canonical
+    return display_name
+
+
+def _canonical_person_name(value: Any) -> str | None:
+    cleaned = _clean_optional(value)
+    if not cleaned:
+        return None
+    canonical = re.sub(
+        r"^(?:the |a |that )?(?:girl|guy|person|woman|man)\s+",
+        "",
+        cleaned,
+        flags=re.I,
+    ).strip()
+    canonical = re.sub(
+        r"\s+(?:from|at)\s+(?:work|school|church|the gym|gym)$",
+        "",
+        canonical,
+        flags=re.I,
+    ).strip()
+    if not canonical:
+        return None
+    normalized = _normalize_key(canonical)
+    if _is_descriptor_fragment(normalized):
+        return None
+    return canonical
+
+
+def _entity_aliases(
+    payload: dict[str, Any],
+    *,
+    original_display_name: str,
+    original_normalized_name: str | None,
+    original_aliases: list[str],
+    display_name: str,
+) -> list[str]:
+    aliases = [*original_aliases]
+    if payload.get("entity_type") == "person":
+        aliases.extend([original_display_name, original_normalized_name or ""])
+        aliases.extend(
+            _person_descriptor_aliases(
+                " ".join(
+                    str(payload.get(field) or "")
+                    for field in ("relationship", "summary")
+                )
+            )
+        )
+    aliases = _dedupe_strings(aliases)
+    return [alias for alias in aliases if alias.casefold() != display_name.casefold()]
+
+
+def _person_descriptor_aliases(text: str) -> list[str]:
+    aliases = []
+    for alias, pattern in PERSON_DESCRIPTOR_ALIASES:
+        if re.search(pattern, text, flags=re.I):
+            aliases.append(alias)
+    return aliases
+
+
+def _is_descriptor_fragment(value: str) -> bool:
+    return value in {
+        "girl",
+        "guy",
+        "person",
+        "woman",
+        "man",
+        "work",
+        "from work",
+        "at work",
+        "school",
+        "from school",
+        "at school",
+        "church",
+        "from church",
+        "gym",
+        "from gym",
+        "from the gym",
+        "dating interest",
+        "date",
+        "coworker",
+    }
 
 
 def is_active_entity_event(event: dict[str, Any]) -> bool:

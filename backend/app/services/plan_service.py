@@ -164,6 +164,7 @@ class PlanService:
         for field in (
             "description",
             "desired_outcome",
+            "primary_entity_id",
             "source_conversation_id",
             "source_message_id",
             "source_memory_id",

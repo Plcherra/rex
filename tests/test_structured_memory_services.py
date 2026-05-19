@@ -234,7 +234,7 @@ async def test_entity_service_deduplicates_descriptive_mentions_and_aliases():
     )
 
     assert row["id"] == "entity-1"
-    assert row["aliases"] == ["Clara", "Clara from work"]
+    assert row["aliases"] == ["Clara", "Clara from work", "the girl Clara"]
     assert row["summary"] == "Clara is someone the user knows from work."
     assert row["importance"] == 4
     assert repo.created_entities == []

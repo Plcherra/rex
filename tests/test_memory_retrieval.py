@@ -434,7 +434,7 @@ async def test_get_structured_memory_context_ranks_records_and_links_children():
                 "milestone_type": "deadline",
                 "title": "Prepare immigration documents",
                 "description": "Collect visa paperwork.",
-                "priority": 4,
+                "priority": 3,
                 "status": "open",
                 "active": True,
                 "target_date": "2026-06-01",
@@ -474,6 +474,64 @@ async def test_get_structured_memory_context_ranks_records_and_links_children():
         "commitment-visa-docs"
     ]
     assert "clara" in context["entities"][0]["relevance_reason"]
+
+
+@pytest.mark.asyncio
+async def test_structured_memory_context_includes_plans_linked_to_selected_person():
+    service = InMemoryRetrievalService(
+        memories=[],
+        entities=[
+            {
+                "id": "entity-melissa",
+                "entity_type": "person",
+                "display_name": "Melissa",
+                "normalized_name": "melissa",
+                "aliases": ["girl from work"],
+                "relationship": "Dating interest",
+                "summary": "Person connected to the next-week date plan.",
+                "importance": 4,
+                "status": "active",
+                "active": True,
+            }
+        ],
+        plans=[
+            {
+                "id": "plan-date",
+                "plan_type": "dating",
+                "title": "Dinner invitation",
+                "description": "Ask her out next Monday.",
+                "desired_outcome": "Successful date.",
+                "primary_entity_id": "entity-melissa",
+                "priority": 3,
+                "status": "active",
+                "active": True,
+            }
+        ],
+        plan_milestones=[
+            {
+                "id": "milestone-date-line",
+                "plan_id": "plan-date",
+                "milestone_type": "task",
+                "title": "Prepare the invitation",
+                "priority": 4,
+                "status": "open",
+                "active": True,
+            }
+        ],
+    )
+
+    context = await service.get_structured_memory_context(
+        "What do you remember about Melissa?",
+    )
+
+    assert [entity["id"] for entity in context["entities"]] == ["entity-melissa"]
+    assert [plan["id"] for plan in context["plans"]] == ["plan-date"]
+    assert context["plans"][0]["relevance_reason"] == (
+        "Included through linked structured memory."
+    )
+    assert [milestone["id"] for milestone in context["plan_milestones"]] == [
+        "milestone-date-line"
+    ]
 
 
 @pytest.mark.asyncio

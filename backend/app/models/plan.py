@@ -27,6 +27,7 @@ class PlanCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     description: Optional[str] = None
     desired_outcome: Optional[str] = None
+    primary_entity_id: Optional[str] = None
     source_conversation_id: Optional[str] = None
     source_message_id: Optional[str] = None
     source_memory_id: Optional[str] = None
@@ -45,6 +46,7 @@ class PlanUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1)
     description: Optional[str] = None
     desired_outcome: Optional[str] = None
+    primary_entity_id: Optional[str] = None
     priority: Optional[int] = Field(default=None, ge=1, le=5)
     status: Optional[PlanStatus] = None
     active: Optional[bool] = None
@@ -61,6 +63,7 @@ class PlanResponse(BaseModel):
     title: str
     description: Optional[str] = None
     desired_outcome: Optional[str] = None
+    primary_entity_id: Optional[str] = None
     source_conversation_id: Optional[str] = None
     source_message_id: Optional[str] = None
     source_memory_id: Optional[str] = None

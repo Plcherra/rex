@@ -221,6 +221,7 @@ create table if not exists public.plans (
   title text not null,
   description text,
   desired_outcome text,
+  primary_entity_id uuid references public.entities(id) on delete set null,
   source_conversation_id uuid references public.conversations(id) on delete set null,
   source_message_id uuid references public.messages(id) on delete set null,
   source_memory_id uuid references public.long_term_memory(id) on delete set null,
@@ -238,8 +239,14 @@ create table if not exists public.plans (
   updated_at timestamptz not null default now()
 );
 
+alter table if exists public.plans
+  add column if not exists primary_entity_id uuid references public.entities(id) on delete set null;
+
 create index if not exists plans_active_priority_idx
   on public.plans (active, priority desc, updated_at desc);
+
+create index if not exists plans_primary_entity_idx
+  on public.plans (primary_entity_id);
 
 create index if not exists plans_status_target_date_idx
   on public.plans (status, target_date);

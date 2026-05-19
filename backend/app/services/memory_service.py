@@ -51,7 +51,7 @@ PERSONAL_RULE_SELECT = (
     "active,starts_at,ends_at,last_checked_at,metadata,created_at,updated_at"
 )
 PLAN_SELECT = (
-    "id,plan_type,title,description,desired_outcome,source_conversation_id,"
+    "id,plan_type,title,description,desired_outcome,primary_entity_id,source_conversation_id,"
     "source_message_id,source_memory_id,priority,status,active,start_date,"
     "target_date,completed_at,last_reviewed_at,metadata,created_at,updated_at"
 )
@@ -470,10 +470,24 @@ class SupabaseMemoryService:
             for commitment in selected_commitments
             if commitment.get("entity_id")
         )
+        related_plans = self._related_records(
+            plans,
+            link_field="primary_entity_id",
+            selected_ids=selected_entity_ids,
+            weight_field="priority",
+            status_values={"active", "paused"},
+            limit=STRUCTURED_MEMORY_RELATED_LIMIT,
+        )
+        selected_plans = self._merge_related_records(selected_plans, related_plans)
         selected_plan_ids.update(
             str(commitment.get("plan_id"))
             for commitment in selected_commitments
             if commitment.get("plan_id")
+        )
+        selected_plan_ids.update(
+            str(plan.get("id"))
+            for plan in selected_plans
+            if plan.get("id")
         )
 
         related_entity_events = self._related_records(
@@ -1270,6 +1284,26 @@ class SupabaseMemoryService:
             reverse=True,
         )
         return related[:limit]
+
+    def _merge_related_records(
+        self,
+        selected: list[dict],
+        related: list[dict],
+    ) -> list[dict]:
+        seen_ids = {str(record.get("id")) for record in selected if record.get("id")}
+        merged = [*selected]
+        for record in related:
+            record_id = str(record.get("id") or "")
+            if not record_id or record_id in seen_ids:
+                continue
+            merged.append(
+                {
+                    **record,
+                    "relevance_reason": "Included through linked structured memory.",
+                }
+            )
+            seen_ids.add(record_id)
+        return merged
 
     def _expanded_terms(self, text: str) -> set[str]:
         terms = {

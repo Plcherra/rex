@@ -130,9 +130,9 @@ async def test_entity_create_update_deactivate_and_active_listing_flow():
         )
     )
 
-    assert created["display_name"] == "the girl Clara"
+    assert created["display_name"] == "Clara"
     assert created["normalized_name"] == "clara"
-    assert created["aliases"] == ["Clara", "C"]
+    assert created["aliases"] == ["C", "the girl Clara", "Clara from work"]
 
     listed = await service.list_entities(normalized_name=" Clara ")
     assert listed == [created]
@@ -182,11 +182,32 @@ async def test_entity_service_deduplicates_by_alias_and_descriptive_name():
     )
 
     assert row["id"] == "entity-existing"
-    assert row["aliases"] == ["Clara", "Clara from work"]
+    assert row["aliases"] == ["Clara", "Clara from work", "the girl Clara"]
     assert row["summary"] == "Clara is part of the current dating story."
     assert row["importance"] == 5
     assert row["metadata"] == {"source": "manual", "extracted": True}
     assert len(memory.entities) == 1
+
+
+@pytest.mark.asyncio
+async def test_entity_service_keeps_person_descriptors_as_aliases():
+    memory = FakeEntityMemoryService()
+    service = EntityService(memory)
+
+    row = await service.create_entity(
+        EntityCreateRequest(
+            entity_type="person",
+            display_name="Melissa",
+            normalized_name="Melissa",
+            relationship="Girl from work",
+            summary="Melissa is the coworker involved in the next-week date plan.",
+            importance=4,
+        )
+    )
+
+    assert row["display_name"] == "Melissa"
+    assert row["normalized_name"] == "melissa"
+    assert row["aliases"] == ["girl from work", "coworker"]
 
 
 @pytest.mark.asyncio

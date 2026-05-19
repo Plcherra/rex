@@ -149,6 +149,7 @@ async def test_plan_service_deduplicates_active_plan_by_title_and_type():
             "title": "Move abroad",
             "description": None,
             "desired_outcome": None,
+            "primary_entity_id": None,
             "priority": 2,
             "status": "active",
             "active": True,
@@ -162,6 +163,7 @@ async def test_plan_service_deduplicates_active_plan_by_title_and_type():
             plan_type="immigration",
             title=" move   abroad ",
             desired_outcome="Leave with enough financial runway.",
+            primary_entity_id="entity-1",
             priority=5,
             metadata={"extracted": True},
         )
@@ -169,6 +171,7 @@ async def test_plan_service_deduplicates_active_plan_by_title_and_type():
 
     assert row["id"] == "plan-existing"
     assert row["desired_outcome"] == "Leave with enough financial runway."
+    assert row["primary_entity_id"] == "entity-1"
     assert row["priority"] == 5
     assert row["metadata"] == {"source": "manual", "extracted": True}
     assert len(memory.plans) == 1

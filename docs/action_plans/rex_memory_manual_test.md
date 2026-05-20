@@ -1,198 +1,64 @@
-# Rex Memory Manual Test
+# Rex Memory Discipline Manual Test
 
-This checklist validates Rex memory against real daily-use behavior, not only unit tests. Run it after deploying backend changes, applying Supabase migrations, and installing the latest app build on the phone.
+Run these prompts through the mobile app after deploying memory discipline changes.
+After each prompt, refresh Memory and Accountability.
 
-Use one realistic conversation. Do not seed fake memories unless the step explicitly says to create a test memory through Rex.
+## 1. New Top-Level Plan
+Prompt:
+`I want to relocate to Europe next year and build enough remote income to make it realistic.`
 
-## Preflight
+Expected:
+- One active top-level plan exists for Europe relocation.
+- Accountability shows it as a primary plan.
 
-**Goal:** Confirm the app and backend are using the latest deployed memory code.
+## 2. Related Update
+Prompt:
+`For the Europe move, I need to reach $5k/month and save at least $600/month.`
 
-**Commands:**
+Expected:
+- No new top-level finance plan if the Europe plan already exists.
+- The income/savings items appear as milestones or checklist items under the Europe plan.
 
-```bash
-cd /opt/rex
-git pull
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-sudo systemctl restart rex-backend
-curl -s https://api.rexpilot.com/ready | python3 -m json.tool
-```
+## 3. Correction
+Prompt:
+`Correction: it is EchoDesk, not Echotask. Delete the wrong name going forward.`
 
-**Pass criteria:**
+Expected:
+- EchoDesk remains canonical.
+- Echotask does not remain as an active project name.
+- Rex briefly says what was updated or archived.
 
-- `/ready` returns `status: ready`.
-- `time.timezone` is `America/New_York`.
-- `supabase` is configured.
-- The app build uses `https://api.rexpilot.com`.
+## 4. Duplicate Goal
+Prompt:
+`Add a plan to make $5k/month from my apps.`
 
-## Test 1 - Explicit Person Correction
+Expected:
+- Rex attaches it to the existing Europe/work plan if related.
+- No duplicate top-level "$5k" plan is created.
 
-**Goal:** Rex updates wrong person memory instead of stacking another vague memory.
+## 5. Entity Spelling Fix
+Prompt:
+`Her name is Melissa, not Al. The date plan is with Melissa.`
 
-**Say or type:**
+Expected:
+- Melissa is the active person.
+- Al/AI is not the active person for that plan.
+- The date plan points to Melissa or says Melissa clearly.
 
-```text
-The person for my next-week date plan is Melissa, not Al.
-```
+## 6. Merge Request
+Prompt:
+`Merge the duplicate Melissa date plans into one clean plan.`
 
-Then ask:
+Expected:
+- One active Melissa dating plan remains.
+- Older duplicates are archived or converted to milestones.
+- Rex summarizes the cleanup.
 
-```text
-Who is the person connected to my next-week date plan?
-```
+## 7. Accountability Review
+Prompt:
+`Review my accountability context.`
 
-**Pass criteria:**
-
-- Rex answers Melissa.
-- Rex does not say the active plan is still with Al.
-- Memory UI shows a corrected/person-related memory for Melissa.
-- If the old Al memory still exists, it is inactive or clearly superseded by the Melissa correction.
-
-**Supabase/API checks:**
-
-```bash
-curl -s "https://api.rexpilot.com/memory?limit=100&active=true" | python3 -m json.tool
-curl -s "https://api.rexpilot.com/entities" | python3 -m json.tool
-curl -s "https://api.rexpilot.com/plans" | python3 -m json.tool
-```
-
-Look for:
-
-- A person/entity record for Melissa.
-- A dating plan with `primary_entity_id` linked to Melissa.
-- No active current-truth memory saying the plan is with Al.
-
-## Test 2 - Location And Timezone
-
-**Goal:** Rex uses the user's real configured timezone/location context when time or location matters.
-
-**Say or type:**
-
-```text
-Do you remember what state I live in, and what timezone that means for me?
-```
-
-**Pass criteria:**
-
-- Rex says Massachusetts if that memory exists.
-- Rex connects Massachusetts to Eastern time / `America/New_York`.
-- Rex does not say it is in CEST or Europe as the user's context.
-- If it is unsure about city, it says so without ignoring the state/timezone.
-
-## Test 3 - Plan Retrieval Through Person
-
-**Goal:** Rex retrieves the date plan whether the user asks by person or by plan.
-
-**Ask by person:**
-
-```text
-What do you remember about Melissa?
-```
-
-**Ask by plan:**
-
-```text
-What is my next-week date plan?
-```
-
-**Pass criteria:**
-
-- Both questions retrieve the same dating plan context.
-- Rex mentions Melissa when discussing the plan.
-- Rex does not ask for the person's name again if Melissa is already stored.
-- The Accountability page plan section shows the plan linked to the correct person when available.
-
-## Test 4 - Personal Rule And Accountability Signal
-
-**Goal:** Rex notices a likely rule violation only when a matching active rule exists.
-
-First create a rule if one does not exist:
-
-```text
-Remember this as a personal rule: I should not order DoorDash while I am trying to control spending.
-```
-
-Then test:
-
-```text
-I ordered DoorDash again tonight.
-```
-
-**Pass criteria:**
-
-- Rex recognizes this as a budget/food-delivery rule violation.
-- Tone is direct but useful, not generic.
-- Accountability page shows at least one relevant signal or active rule.
-- An unrelated sentence like `I walked past a restaurant` should not trigger the DoorDash rule.
-
-## Test 5 - Memory UI Layers
-
-**Goal:** The app makes the memory model inspectable.
-
-Open Memory and Accountability pages.
-
-**Pass criteria:**
-
-- Memory page shows flat memories under Notes/Facts/Preferences/Events.
-- People layer shows Melissa as a person if she has been saved.
-- Plans layer shows the dating plan.
-- Accountability page shows active rules, open commitments, plan progress, and current signals.
-- Empty states are calm and clear when a section has no records.
-
-## Test 6 - Stale Active Record Check
-
-**Goal:** Verify old wrong facts are not still treated as current truth.
-
-Run:
-
-```bash
-curl -s "https://api.rexpilot.com/memory?limit=100&active=true" | python3 -m json.tool
-curl -s "https://api.rexpilot.com/entities" | python3 -m json.tool
-curl -s "https://api.rexpilot.com/plans" | python3 -m json.tool
-curl -s "https://api.rexpilot.com/memory/corrections" | python3 -m json.tool
-```
-
-**Pass criteria:**
-
-- Current active records prefer Melissa over Al.
-- Any remaining Al reference is historical, inactive, or clearly marked as corrected.
-- The active plan does not have `Al` in title, description, or desired outcome.
-- Correction rows show `old_value` around `al` and `new_value` around `melissa` when the correction was processed.
-
-## Result Log
-
-Fill this after testing.
-
-```text
-Date:
-App build:
-Backend commit:
-
-Test 1 - Person correction:
-Pass/Fail:
-Notes:
-
-Test 2 - Location/timezone:
-Pass/Fail:
-Notes:
-
-Test 3 - Plan retrieval:
-Pass/Fail:
-Notes:
-
-Test 4 - Rule/accountability:
-Pass/Fail:
-Notes:
-
-Test 5 - UI layers:
-Pass/Fail:
-Notes:
-
-Test 6 - Stale row check:
-Pass/Fail:
-Notes:
-
-Bugs found:
-Next fixes:
-```
+Expected:
+- Rex references a small number of high-level plans.
+- Accountability screen shows top-level plans with nested milestones/tasks.
+- Rules and signals remain separate from plans.

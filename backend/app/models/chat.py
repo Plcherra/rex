@@ -14,3 +14,5 @@ class ChatResponse(BaseModel):
     conversation_id: str
     response: str
     messages: list[dict]
+    memory_correction: Optional[dict] = None
+    memory_changes: Optional[dict] = None

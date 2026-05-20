@@ -11,6 +11,7 @@ from app.services.entity_service import EntityService
 from app.services.file_service import FileService
 from app.services.google_tts_service import GoogleTTSService
 from app.services.memory_extraction_service import MemoryExtractionService
+from app.services.memory_correction_service import MemoryCorrectionService
 from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.memory_service import SupabaseMemoryService
 from app.services.plan_service import PlanService
@@ -60,6 +61,12 @@ def get_memory_discipline_service(
     return MemoryDisciplineService(memory_service)
 
 
+def get_memory_correction_service(
+    memory_service: SupabaseMemoryService = Depends(get_memory_service),
+) -> MemoryCorrectionService:
+    return MemoryCorrectionService(memory_service)
+
+
 def get_deepgram_service() -> DeepgramService:
     return DeepgramService()
 
@@ -78,14 +85,22 @@ def get_chat_service(
     memory_discipline_service: MemoryDisciplineService = Depends(
         get_memory_discipline_service
     ),
+    memory_correction_service: MemoryCorrectionService = Depends(
+        get_memory_correction_service
+    ),
 ) -> ChatService:
     settings = get_settings()
     return ChatService(
         ai_service,
         FileService(),
         memory_service,
-        MemoryExtractionService(ai_service, memory_service),
+        MemoryExtractionService(
+            ai_service,
+            memory_service,
+            memory_discipline_service,
+        ),
         time_context_service=TimeContextService(timezone_name=settings.app_timezone),
         accountability_service=get_accountability_service(),
         memory_discipline_service=memory_discipline_service,
+        memory_correction_service=memory_correction_service,
     )

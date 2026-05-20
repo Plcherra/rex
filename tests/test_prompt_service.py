@@ -3,6 +3,7 @@ from app.services.prompt_service import (
     CONVERSATION_CONTEXT_PREFIX,
     FILE_CONTEXT_PREFIX,
     LONG_TERM_MEMORY_PREFIX,
+    MEMORY_DISCIPLINE_PROMPT,
     PERSONALITY_CONTEXT_PREFIX,
     PromptService,
     REX_PERSONALITY_PROMPT,
@@ -10,6 +11,11 @@ from app.services.prompt_service import (
     TIME_CONTEXT_PREFIX,
 )
 from app.services.time_context_service import TimeContextService
+
+BASE_SYSTEM_PROMPT = (
+    f"{PERSONALITY_CONTEXT_PREFIX}{REX_PERSONALITY_PROMPT}"
+    f"\n\n{MEMORY_DISCIPLINE_PROMPT}"
+)
 
 
 def test_prompt_service_always_includes_rex_personality():
@@ -20,7 +26,7 @@ def test_prompt_service_always_includes_rex_personality():
     assert messages == [
         {
             "role": "system",
-            "content": f"{PERSONALITY_CONTEXT_PREFIX}{REX_PERSONALITY_PROMPT}",
+            "content": BASE_SYSTEM_PROMPT,
         },
         {"role": "user", "content": "Hello Rex"},
     ]
@@ -31,6 +37,7 @@ def test_prompt_service_always_includes_rex_personality():
         messages[0]["content"]
     )
     assert "holds the user accountable" in messages[0]["content"]
+    assert "Memory Discipline rules:" in messages[0]["content"]
 
 
 def test_prompt_service_sanitizes_recent_message_history():
@@ -59,7 +66,7 @@ def test_prompt_service_sanitizes_recent_message_history():
     assert messages == [
         {
             "role": "system",
-            "content": f"{PERSONALITY_CONTEXT_PREFIX}{REX_PERSONALITY_PROMPT}",
+            "content": BASE_SYSTEM_PROMPT,
         },
         {"role": "user", "content": "Earlier user message"},
         {"role": "assistant", "content": "Earlier assistant response"},
@@ -508,7 +515,7 @@ def test_prompt_service_trims_large_context_to_recent_messages():
     assert messages == [
         {
             "role": "system",
-            "content": f"{PERSONALITY_CONTEXT_PREFIX}{REX_PERSONALITY_PROMPT}",
+            "content": BASE_SYSTEM_PROMPT,
         },
         {"role": "assistant", "content": "recent answer"},
         {"role": "user", "content": "latest question"},

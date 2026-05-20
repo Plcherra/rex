@@ -1,112 +1,41 @@
-# Rex Memory Regression Cases
+# Rex Memory Discipline Regression Cases
 
-These are the high-value failures that should stay covered as the memory system evolves. The goal is not to test every wording. The goal is to protect the real daily-use behaviors that broke before.
+These cases capture the failure modes that created plan spam and entity drift.
+They should stay covered by automated tests before changing memory extraction,
+discipline, correction, or accountability code.
 
-## 1. Explicit Person Correction
+## Corrected Entity Names
+- Input: "It is Melissa, not Al."
+- Expected: active Melissa entity is updated or created; stale Al/AI entity is archived or marked obsolete.
+- Never: keep Al/AI as the active current person for the date plan.
 
-**Scenario:** Rex has an old memory saying the date plan is with `Al`. The user later says the person is `Melissa`, not `Al` or `AI`.
+## Duplicate Dating Plan
+- Input: "Date with Melissa next week" when "Ask Melissa out for dinner" already exists.
+- Expected: update the existing Melissa plan or add a milestone/checklist item under it.
+- Never: create another top-level Melissa dating plan.
 
-**Expected behavior:**
+## Overlapping Income Plans
+- Input: "$5k/month revenue", "$600 savings", or "location-independent income" when "Relocate to Europe next year" exists.
+- Expected: attach as milestones/tasks under the Europe relocation plan when related.
+- Never: create many separate top-level finance plans that describe the same larger goal.
 
-- Create or update a `person` entity for Melissa.
-- Link the relevant dating plan to Melissa.
-- Mark stale flat memories as superseded or inactive.
-- Record a correction audit row.
-- Prompt context should prefer Melissa and exclude stale active-looking `Al` rows.
+## App/Project Name Drift
+- Canonical names: EchoDesk and FlowForce.
+- Wrong variants: Flow, Flowfirst, Flowforte, Echotask, EchoTask.
+- Expected: rewrite wrong variants to canonical active entities.
+- Never: save wrong variants as active project names after correction.
 
-**Automated coverage:**
+## Duplicate Rules
+- Input: another "No Uber or DoorDash" or paycheck savings rule.
+- Expected: update the existing active rule.
+- Never: create multiple active copies of the same rule.
 
-- `tests/test_memory_extraction.py`
-- `tests/test_memory_retrieval.py`
-- `tests/test_prompt_service.py`
+## Task Misclassified As Plan
+- Input: "Email the first FlowForce lead tomorrow."
+- Expected: commitment/checklist item under the relevant app/work plan.
+- Never: create a top-level plan for a single next action.
 
-## 2. Location And Timezone Recall
-
-**Scenario:** The user asks Rex what time it is or says Rex is using the wrong timezone. Rex has a location memory like `I am in Massachusetts.`
-
-**Expected behavior:**
-
-- Prompt context includes the app timezone.
-- Relevant memory retrieval can surface Massachusetts/location context.
-- Rex should not answer from the VPS timezone.
-
-**Automated coverage:**
-
-- `tests/test_memory_retrieval.py`
-- `tests/test_prompt_service.py`
-
-## 3. Person-Linked Plans
-
-**Scenario:** The user asks about the next-week date plan without naming the person.
-
-**Expected behavior:**
-
-- Retrieval can select the plan.
-- Retrieval also includes the linked person.
-- Prompt line labels the plan with the person when available.
-
-**Automated coverage:**
-
-- `tests/test_memory_retrieval.py`
-- `tests/test_prompt_service.py`
-
-## 4. Stale Duplicate Suppression
-
-**Scenario:** Multiple long-term memories mention the same topic, but one is corrected and newer.
-
-**Expected behavior:**
-
-- Corrected memory gets the relevance boost.
-- Superseded or inactive rows are penalized or excluded.
-- Old conflicting names do not override explicit corrections.
-
-**Automated coverage:**
-
-- `tests/test_memory_extraction.py`
-- `tests/test_memory_retrieval.py`
-
-## 5. Structured UI Corrections
-
-**Scenario:** The Memory screen shows an incorrect person, rule, plan, or commitment.
-
-**Expected behavior:**
-
-- User can edit structured records.
-- User can deactivate structured records.
-- The UI exposes enough identifiers and linked record hints to understand what Rex is tracking.
-
-**Automated coverage:**
-
-- `flutter analyze`
-- `flutter test`
-
-## 6. Safe Backfill
-
-**Scenario:** Existing flat memories need to become structured records after the schema is already live.
-
-**Expected behavior:**
-
-- Backfill is never automatic on startup.
-- Dry-run is the default mode.
-- Ambiguous names like `Al` or `AI` are skipped unless corrected to a clear name.
-- Existing structured rows are merged through service-layer dedupe.
-
-**Automated coverage:**
-
-- `tests/test_structured_memory_backfill.py`
-
-## Validation Commands
-
-```bash
-PYTHONPATH=backend python3 -m pytest -q tests
-flutter analyze
-flutter test
-```
-
-## Manual Checks Before Deploy
-
-1. Ask Rex: `Do you remember where I live?`
-2. Ask Rex: `What date plan am I talking about for next week?`
-3. Correct a person name and verify the old name stops appearing.
-4. Open Memory and verify People, Plans, Rules, and Commitments are readable.
-5. Open Accountability and verify active rules/plans are not duplicated.
+## Correction Archives Stale Record
+- Input: "Delete the old one; the correct one is X."
+- Expected: stale record is archived/deactivated and the correct record is updated.
+- Never: leave both stale and corrected records active with equal authority.

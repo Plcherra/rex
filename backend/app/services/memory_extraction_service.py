@@ -5,12 +5,19 @@ from typing import Any, Optional, Protocol
 
 from app.models.commitment import CommitmentCreateRequest, CommitmentType
 from app.models.entity import EntityCreateRequest, EntityEventCreateRequest, EntityType
+from app.models.memory_discipline import (
+    MemoryCandidateKind,
+    MemoryDisciplineAction,
+    MemoryDisciplineCandidate,
+    MemoryDisciplineDecision,
+)
 from app.models.personal_rule import PersonalRuleCreateRequest, RuleType
 from app.models.plan import PlanCreateRequest, PlanMilestoneCreateRequest, PlanType
 from app.services.ai_service import AIService
 from app.services.commitment_service import CommitmentService
 from app.services.entity_normalization_service import EntityNormalizationService
 from app.services.entity_service import EntityService
+from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.plan_service import PlanService
 from app.services.rule_service import RuleService
 
@@ -155,6 +162,25 @@ Entity normalization rules:
 - Before creating a new entity, check whether the name is an alias, obsolete name, spelling variant, or correction of an existing active entity.
 - If an obsolete name appears in a new candidate, rewrite it to the canonical entity name and link to the canonical entity.
 
+Correction execution rules:
+- If the user explicitly corrects memory, do not just acknowledge it.
+- Apply the correction to active structured memory.
+- Archive or mark obsolete the wrong record when keeping it active would confuse future retrieval.
+- Update the correct record with the new durable detail.
+- Do not create a new duplicate record as the correction mechanism.
+- After applying the change, summarize exactly what was archived, updated, merged, or created.
+
+Memory Discipline rules:
+- Prefer updating existing memory over creating new memory.
+- Before saving a plan, goal, rule, task, or entity, consider whether it belongs to an active existing record.
+- Corrections from the user override prior memory.
+- A duplicate active plan/rule/entity is a memory quality error.
+- Use top-level plans only for durable major areas.
+- Use milestones for sub-goals, deadlines, and progress details.
+- Use commitments for concrete actions, habits, or checklist items.
+- Use entity events for relationship changes, interactions, or historical notes.
+- Never preserve stale wrong names as current truth.
+
 Do not extract:
 - one-off emotions without durable context
 - generic requests or instructions to answer the current question
@@ -245,7 +271,12 @@ class MemoryStore(Protocol):
 
 
 class MemoryExtractionService:
-    def __init__(self, ai_service: AIService, memory_service: MemoryStore) -> None:
+    def __init__(
+        self,
+        ai_service: AIService,
+        memory_service: MemoryStore,
+        memory_discipline_service: Optional[MemoryDisciplineService] = None,
+    ) -> None:
         self.ai_service = ai_service
         self.memory_service = memory_service
         self.entity_service = EntityService(memory_service)
@@ -253,6 +284,9 @@ class MemoryExtractionService:
         self.plan_service = PlanService(memory_service)
         self.commitment_service = CommitmentService(memory_service)
         self.entity_normalization_service = EntityNormalizationService()
+        self.memory_discipline_service = (
+            memory_discipline_service or MemoryDisciplineService(memory_service)
+        )
 
     async def extract_and_save(
         self,
@@ -439,19 +473,19 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_entity = await self._call_service_create(
-                self.entity_service.create_entity,
-                EntityCreateRequest(**normalized["payload"]),
+            saved_entity = await self._save_structured_candidate(
+                kind=MemoryCandidateKind.ENTITY,
+                payload=normalized["payload"],
+                structured_type="entity",
+                rationale=normalized["rationale"],
+                fallback=lambda: self._call_service_create(
+                    self.entity_service.create_entity,
+                    EntityCreateRequest(**normalized["payload"]),
+                ),
             )
             if saved_entity:
                 self._remember_entity_keys(saved_entity, entity_ids_by_key)
-                saved.append(
-                    self._saved_structured_result(
-                        saved_entity,
-                        "entity",
-                        normalized["rationale"],
-                    )
-                )
+                saved.append(saved_entity)
 
         for candidate in structured_memories.get("entity_events", []):
             await self._resolve_entity_reference(candidate, entity_ids_by_key)
@@ -483,18 +517,18 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_rule = await self._call_service_create(
-                self.rule_service.create_rule,
-                PersonalRuleCreateRequest(**normalized["payload"]),
+            saved_rule = await self._save_structured_candidate(
+                kind=MemoryCandidateKind.PERSONAL_RULE,
+                payload=normalized["payload"],
+                structured_type="personal_rule",
+                rationale=normalized["rationale"],
+                fallback=lambda: self._call_service_create(
+                    self.rule_service.create_rule,
+                    PersonalRuleCreateRequest(**normalized["payload"]),
+                ),
             )
             if saved_rule:
-                saved.append(
-                    self._saved_structured_result(
-                        saved_rule,
-                        "personal_rule",
-                        normalized["rationale"],
-                    )
-                )
+                saved.append(saved_rule)
 
         for candidate in structured_memories.get("plans", []):
             await self._resolve_entity_reference(candidate, entity_ids_by_key)
@@ -505,19 +539,20 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_plan = await self._call_service_create(
-                self.plan_service.create_plan,
-                PlanCreateRequest(**normalized["payload"]),
+            saved_plan = await self._save_structured_candidate(
+                kind=MemoryCandidateKind.PLAN,
+                payload=normalized["payload"],
+                structured_type="plan",
+                rationale=normalized["rationale"],
+                fallback=lambda: self._call_service_create(
+                    self.plan_service.create_plan,
+                    PlanCreateRequest(**normalized["payload"]),
+                ),
             )
             if saved_plan:
-                self._remember_plan_keys(saved_plan, plan_ids_by_key)
-                saved.append(
-                    self._saved_structured_result(
-                        saved_plan,
-                        "plan",
-                        normalized["rationale"],
-                    )
-                )
+                if saved_plan.get("structured_type") == "plan":
+                    self._remember_plan_keys(saved_plan, plan_ids_by_key)
+                saved.append(saved_plan)
 
         for candidate in structured_memories.get("plan_milestones", []):
             await self._resolve_plan_reference(candidate, plan_ids_by_key)
@@ -528,18 +563,18 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_milestone = await self._call_service_create(
-                self.plan_service.create_milestone,
-                PlanMilestoneCreateRequest(**normalized["payload"]),
+            saved_milestone = await self._save_structured_candidate(
+                kind=MemoryCandidateKind.PLAN_MILESTONE,
+                payload=normalized["payload"],
+                structured_type="plan_milestone",
+                rationale=normalized["rationale"],
+                fallback=lambda: self._call_service_create(
+                    self.plan_service.create_milestone,
+                    PlanMilestoneCreateRequest(**normalized["payload"]),
+                ),
             )
             if saved_milestone:
-                saved.append(
-                    self._saved_structured_result(
-                        saved_milestone,
-                        "plan_milestone",
-                        normalized["rationale"],
-                    )
-                )
+                saved.append(saved_milestone)
 
         for candidate in structured_memories.get("commitments", []):
             await self._resolve_entity_reference(candidate, entity_ids_by_key)
@@ -551,18 +586,18 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_commitment = await self._call_service_create(
-                self.commitment_service.create_commitment,
-                CommitmentCreateRequest(**normalized["payload"]),
+            saved_commitment = await self._save_structured_candidate(
+                kind=MemoryCandidateKind.COMMITMENT,
+                payload=normalized["payload"],
+                structured_type="commitment",
+                rationale=normalized["rationale"],
+                fallback=lambda: self._call_service_create(
+                    self.commitment_service.create_commitment,
+                    CommitmentCreateRequest(**normalized["payload"]),
+                ),
             )
             if saved_commitment:
-                saved.append(
-                    self._saved_structured_result(
-                        saved_commitment,
-                        "commitment",
-                        normalized["rationale"],
-                    )
-                )
+                saved.append(saved_commitment)
 
         return saved
 
@@ -1389,6 +1424,82 @@ class MemoryExtractionService:
         except Exception:
             return None
 
+    async def _save_structured_candidate(
+        self,
+        *,
+        kind: MemoryCandidateKind,
+        payload: dict,
+        structured_type: str,
+        rationale: str,
+        fallback: Any,
+    ) -> Optional[dict]:
+        if self.memory_discipline_service is None:
+            saved = await fallback()
+            if not saved:
+                return None
+            return self._saved_structured_result(
+                saved,
+                structured_type,
+                rationale,
+                extraction_action="create",
+            )
+
+        candidate = MemoryDisciplineCandidate(
+            kind=kind,
+            payload=payload,
+            source_conversation_id=payload.get("source_conversation_id"),
+            source_message_id=payload.get("source_message_id"),
+            source_memory_id=payload.get("source_memory_id"),
+        )
+        try:
+            decision = await self.memory_discipline_service.decide(candidate)
+        except Exception:
+            return None
+
+        if decision.action == self._create_action_for_kind(kind):
+            saved = await fallback()
+            if not saved:
+                return None
+            return self._saved_structured_result(
+                saved,
+                structured_type,
+                rationale,
+                extraction_action=decision.action.value,
+                discipline_decision=decision,
+            )
+
+        try:
+            applied = await self.memory_discipline_service.apply_decision(decision)
+        except Exception:
+            return None
+
+        if not applied.get("applied"):
+            return None
+
+        record = applied.get("record")
+        if not isinstance(record, dict):
+            return None
+
+        return self._saved_structured_result(
+            record,
+            self._structured_type_for_decision(decision, structured_type),
+            rationale,
+            extraction_action=applied.get("action") or decision.action.value,
+            discipline_decision=decision,
+        )
+
+    def _create_action_for_kind(
+        self,
+        kind: MemoryCandidateKind,
+    ) -> Optional[MemoryDisciplineAction]:
+        return {
+            MemoryCandidateKind.ENTITY: MemoryDisciplineAction.CREATE_ENTITY,
+            MemoryCandidateKind.PERSONAL_RULE: MemoryDisciplineAction.CREATE_RULE,
+            MemoryCandidateKind.PLAN: MemoryDisciplineAction.CREATE_PLAN,
+            MemoryCandidateKind.PLAN_MILESTONE: MemoryDisciplineAction.CREATE_MILESTONE,
+            MemoryCandidateKind.COMMITMENT: MemoryDisciplineAction.CREATE_COMMITMENT,
+        }.get(kind)
+
     async def _call_service_create(self, method: Any, request: Any) -> Optional[dict]:
         try:
             return await method(request)
@@ -1400,13 +1511,46 @@ class MemoryExtractionService:
         saved: dict,
         structured_type: str,
         rationale: str,
+        *,
+        extraction_action: str = "create",
+        discipline_decision: Optional[MemoryDisciplineDecision] = None,
     ) -> dict:
-        return {
+        result = {
             **saved,
             "extraction_kind": "structured_memory",
             "structured_type": structured_type,
+            "extraction_action": extraction_action,
             "extraction_rationale": rationale,
         }
+        if discipline_decision is not None:
+            result["discipline_decision"] = {
+                "action": discipline_decision.action.value,
+                "reason": discipline_decision.reason,
+                "confidence": discipline_decision.confidence,
+                "target_table": discipline_decision.target_table,
+                "target_id": discipline_decision.target_id,
+                "requires_confirmation": discipline_decision.requires_confirmation,
+            }
+        return result
+
+    def _structured_type_for_decision(
+        self,
+        decision: MemoryDisciplineDecision,
+        default_type: str,
+    ) -> str:
+        action_to_type = {
+            MemoryDisciplineAction.CREATE_ENTITY: "entity",
+            MemoryDisciplineAction.UPDATE_ENTITY: "entity",
+            MemoryDisciplineAction.CREATE_RULE: "personal_rule",
+            MemoryDisciplineAction.UPDATE_RULE: "personal_rule",
+            MemoryDisciplineAction.CREATE_PLAN: "plan",
+            MemoryDisciplineAction.UPDATE_PLAN: "plan",
+            MemoryDisciplineAction.CREATE_MILESTONE: "plan_milestone",
+            MemoryDisciplineAction.UPDATE_MILESTONE: "plan_milestone",
+            MemoryDisciplineAction.CREATE_COMMITMENT: "commitment",
+            MemoryDisciplineAction.UPDATE_COMMITMENT: "commitment",
+        }
+        return action_to_type.get(decision.action, default_type)
 
     def _clean_text(self, value: Any) -> Optional[str]:
         if value is None:

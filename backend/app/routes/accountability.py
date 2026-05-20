@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -140,6 +141,17 @@ async def accountability_overview(
     recent_patterns = [
         signal for signal in active_signals if signal.signal_type == "repeated_pattern"
     ]
+    open_commitments = _open_commitments(context["commitments"])
+    open_milestones = _open_milestones(context["plan_milestones"])
+    plan_hierarchy = _plan_hierarchy(
+        plans=context["plans"],
+        milestones=open_milestones,
+        commitments=open_commitments,
+    )
+    duplicate_warnings = _duplicate_warnings(
+        plans=context["plans"],
+        rules=context["personal_rules"],
+    )
 
     return AccountabilityOverviewResponse(
         signals=active_signals,
@@ -147,16 +159,20 @@ async def accountability_overview(
         plan_risks=plan_risks,
         recent_patterns=recent_patterns,
         active_rules=context["personal_rules"],
-        open_commitments=_open_commitments(context["commitments"]),
+        open_commitments=open_commitments,
         active_plans=context["plans"],
-        open_milestones=_open_milestones(context["plan_milestones"]),
+        open_milestones=open_milestones,
+        plan_hierarchy=plan_hierarchy,
+        duplicate_warnings=duplicate_warnings,
         metadata={
             "message": message,
             "signal_count": len(active_signals),
             "active_rule_count": len(context["personal_rules"]),
-            "open_commitment_count": len(_open_commitments(context["commitments"])),
+            "open_commitment_count": len(open_commitments),
             "active_plan_count": len(context["plans"]),
-            "open_milestone_count": len(_open_milestones(context["plan_milestones"])),
+            "open_milestone_count": len(open_milestones),
+            "open_task_count": len(open_commitments),
+            "duplicate_warning_count": len(duplicate_warnings),
         },
     )
 
@@ -283,3 +299,139 @@ def _open_milestones(milestones: list[dict]) -> list[dict]:
         if milestone.get("active") is not False
         and milestone.get("status", "open") in {"open", "in_progress"}
     ]
+
+
+def _plan_hierarchy(
+    *,
+    plans: list[dict],
+    milestones: list[dict],
+    commitments: list[dict],
+) -> list[dict]:
+    milestones_by_plan: dict[str, list[dict]] = {}
+    commitments_by_plan: dict[str, list[dict]] = {}
+    commitments_by_milestone: dict[str, list[dict]] = {}
+
+    for milestone in milestones:
+        plan_id = str(milestone.get("plan_id") or "")
+        if plan_id:
+            milestones_by_plan.setdefault(plan_id, []).append(milestone)
+
+    for commitment in commitments:
+        milestone_id = str(commitment.get("milestone_id") or "")
+        plan_id = str(commitment.get("plan_id") or "")
+        if milestone_id:
+            commitments_by_milestone.setdefault(milestone_id, []).append(commitment)
+        elif plan_id:
+            commitments_by_plan.setdefault(plan_id, []).append(commitment)
+
+    hierarchy = []
+    for plan in plans:
+        plan_id = str(plan.get("id") or "")
+        plan_milestones = []
+        for milestone in milestones_by_plan.get(plan_id, []):
+            milestone_id = str(milestone.get("id") or "")
+            plan_milestones.append(
+                {
+                    **milestone,
+                    "open_commitments": commitments_by_milestone.get(
+                        milestone_id,
+                        [],
+                    ),
+                }
+            )
+
+        hierarchy.append(
+            {
+                "plan": plan,
+                "open_milestones": plan_milestones,
+                "open_commitments": commitments_by_plan.get(plan_id, []),
+                "counts": {
+                    "open_milestones": len(plan_milestones),
+                    "open_commitments": len(commitments_by_plan.get(plan_id, []))
+                    + sum(
+                        len(item.get("open_commitments") or [])
+                        for item in plan_milestones
+                    ),
+                },
+            }
+        )
+    return hierarchy
+
+
+def _duplicate_warnings(
+    *,
+    plans: list[dict],
+    rules: list[dict],
+) -> list[dict]:
+    warnings = []
+    warnings.extend(
+        _duplicate_warning_group(
+            records=plans,
+            record_type="plan",
+            title_field="title",
+            text_fields=("title", "description", "desired_outcome"),
+        )
+    )
+    warnings.extend(
+        _duplicate_warning_group(
+            records=rules,
+            record_type="rule",
+            title_field="title",
+            text_fields=("title", "rule_text"),
+        )
+    )
+    return warnings
+
+
+def _duplicate_warning_group(
+    *,
+    records: list[dict],
+    record_type: str,
+    title_field: str,
+    text_fields: tuple[str, ...],
+) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for record in records:
+        if record.get("active") is False:
+            continue
+        key = _duplicate_key(record, text_fields)
+        if not key:
+            continue
+        groups.setdefault(key, []).append(record)
+
+    warnings = []
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        warnings.append(
+            {
+                "record_type": record_type,
+                "title": str(group[0].get(title_field) or record_type),
+                "record_ids": [str(record.get("id")) for record in group if record.get("id")],
+                "reason": "multiple_active_records_share_core_wording",
+            }
+        )
+    return warnings
+
+
+def _duplicate_key(record: dict, fields: tuple[str, ...]) -> str:
+    parts = [str(record.get(field) or "") for field in fields]
+    text = " ".join(parts).casefold()
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9$]+", text)
+        if len(token) > 2
+        and token
+        not in {
+            "active",
+            "and",
+            "for",
+            "from",
+            "goal",
+            "plan",
+            "the",
+            "this",
+            "with",
+        }
+    ]
+    return " ".join(tokens[:8])

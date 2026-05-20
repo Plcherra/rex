@@ -189,6 +189,22 @@ class FakeMemoryStore:
         self.created_milestones.append(milestone)
         return milestone
 
+    async def list_plan_milestones(
+        self,
+        limit=50,
+        plan_id=None,
+        status=None,
+        active=None,
+    ):
+        rows = self.created_milestones
+        if plan_id is not None:
+            rows = [row for row in rows if row.get("plan_id") == plan_id]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        if active is not None:
+            rows = [row for row in rows if row.get("active") is active]
+        return rows[:limit]
+
     async def create_commitment(self, payload):
         commitment = {
             "id": f"commitment-{len(self.created_commitments) + 1}",
@@ -265,6 +281,7 @@ async def test_memory_extraction_saves_valid_candidates():
     assert "structured_memories" in ai_service.messages[0]["content"]
     assert "Plan intelligence rules:" in ai_service.messages[0]["content"]
     assert "Entity normalization rules:" in ai_service.messages[0]["content"]
+    assert "Memory Discipline rules:" in ai_service.messages[0]["content"]
     assert len(saved) == 1
     assert saved[0]["memory_type"] == "preference"
     assert saved[0]["extraction_kind"] == "long_term_memory"
@@ -592,6 +609,56 @@ async def test_memory_extraction_links_plan_to_named_person_entity():
     assert [item["structured_type"] for item in saved] == ["entity", "plan"]
     assert memory_store.created_plans[0]["primary_entity_id"] == "entity-1"
     assert memory_store.created_plans[0]["title"] == "Ask Melissa out for dinner"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_routes_related_plan_to_existing_plan_milestone():
+    ai_service = FakeExtractionAIService(
+        """
+        {
+          "memories": [],
+          "structured_memories": {
+            "plans": [
+              {
+                "plan_type": "finance",
+                "title": "$5k monthly revenue target",
+                "description": "Reach $5k monthly revenue from EchoDesk and FlowForce.",
+                "desired_outcome": "Location-independent income for the Europe move.",
+                "priority": 5,
+                "rationale": "Income target belongs under the larger relocation goal."
+              }
+            ]
+          }
+        }
+        """
+    )
+    memory_store = FakeMemoryStore()
+    memory_store.created_plans.append(
+        {
+            "id": "plan-europe",
+            "plan_type": "personal",
+            "title": "Relocate to Europe next year",
+            "description": "Move to Europe with stable location-independent income.",
+            "desired_outcome": "Living in Europe sustainably.",
+            "priority": 5,
+            "status": "active",
+            "active": True,
+            "metadata": {},
+        }
+    )
+    service = MemoryExtractionService(ai_service, memory_store)
+
+    saved = await service.extract_and_save(
+        "conversation-1",
+        {"id": "message-1", "content": "I need $5k/month before Europe."},
+        {"id": "message-2", "content": "That belongs under your Europe plan."},
+    )
+
+    assert [item["structured_type"] for item in saved] == ["plan_milestone"]
+    assert len(memory_store.created_plans) == 1
+    assert memory_store.created_milestones[0]["plan_id"] == "plan-europe"
+    assert memory_store.created_milestones[0]["title"] == "$5k monthly revenue target"
+    assert saved[0]["extraction_action"] == "create_milestone"
 
 
 @pytest.mark.asyncio
@@ -1158,22 +1225,19 @@ async def test_memory_extraction_deduplicates_and_links_structured_candidates():
         "plan_milestone",
         "commitment",
     ]
-    assert memory_store.created_entities == [
-        {
-            "id": "entity-existing",
-            "entity_type": "person",
-            "display_name": "Clara",
-            "normalized_name": "clara",
-            "aliases": ["Clara", "Clara from work"],
-            "importance": 4,
-            "active": True,
-            "metadata": {"extraction_rationale": "Named person."},
-            "relationship": "Dating interest",
-            "summary": "Clara is someone the user knows from work.",
-            "source_conversation_id": "conversation-1",
-            "source_message_id": "message-1",
-        }
-    ]
+    assert len(memory_store.created_entities) == 1
+    updated_entity = memory_store.created_entities[0]
+    assert updated_entity["id"] == "entity-existing"
+    assert updated_entity["display_name"] == "Clara"
+    assert updated_entity["normalized_name"] == "clara"
+    assert updated_entity["aliases"] == ["Clara", "Clara from work"]
+    assert updated_entity["importance"] == 4
+    assert updated_entity["relationship"] == "Dating interest"
+    assert updated_entity["summary"] == "Clara is someone the user knows from work."
+    assert updated_entity["source_conversation_id"] == "conversation-1"
+    assert updated_entity["source_message_id"] == "message-1"
+    assert updated_entity["metadata"]["extraction_rationale"] == "Named person."
+    assert updated_entity["metadata"]["discipline_action"] == "update_entity"
     assert memory_store.created_entity_events[0]["entity_id"] == "entity-existing"
     assert memory_store.created_rules[0]["id"] == "rule-existing"
     assert memory_store.created_rules[0]["trigger_keywords"] == [

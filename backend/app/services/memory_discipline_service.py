@@ -292,6 +292,7 @@ class MemoryDisciplineService:
 
         update_method = _update_method_for_action(action)
         if update_method and target_id:
+            payload = self._merge_update_payload(decision, payload)
             updated = await getattr(self.memory_service, update_method)(
                 target_id,
                 **payload,
@@ -356,6 +357,69 @@ class MemoryDisciplineService:
             if related.id == decision.target_id:
                 return dict(related.record.get("metadata") or {})
         return {}
+
+    def _target_record(self, decision: MemoryDisciplineDecision) -> dict[str, Any]:
+        if not decision.target_id:
+            return {}
+        for related in decision.related_records:
+            if related.id == decision.target_id:
+                return dict(related.record)
+        return {}
+
+    def _merge_update_payload(
+        self,
+        decision: MemoryDisciplineDecision,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if decision.action != MemoryDisciplineAction.UPDATE_ENTITY:
+            return payload
+
+        target = self._target_record(decision)
+        if not target:
+            return payload
+
+        merged = dict(payload)
+        candidate_display = str(payload.get("display_name") or "").strip()
+        target_display = str(target.get("display_name") or "").strip()
+        candidate_normalized = normalize_text(
+            payload.get("normalized_name") or candidate_display
+        )
+        target_normalized = normalize_text(
+            target.get("normalized_name") or target_display
+        )
+
+        if target_display and target_normalized:
+            candidate_tokens = meaningful_tokens(candidate_normalized)
+            target_tokens = meaningful_tokens(target_normalized)
+            alias_values = {
+                normalize_text(alias)
+                for alias in target.get("aliases") or []
+                if normalize_text(alias)
+            }
+            if (
+                target_tokens
+                and target_tokens <= candidate_tokens
+                or candidate_normalized in alias_values
+            ):
+                merged["display_name"] = target_display
+                merged["normalized_name"] = target.get("normalized_name") or target_normalized
+
+        aliases = []
+        for value in [
+            *(target.get("aliases") or []),
+            *(payload.get("aliases") or []),
+        ]:
+            if value and str(value) not in aliases:
+                aliases.append(str(value))
+        if (
+            candidate_display
+            and target_display
+            and candidate_display.casefold() != target_display.casefold()
+            and candidate_display not in aliases
+        ):
+            aliases.append(candidate_display)
+        merged["aliases"] = aliases
+        return merged
 
     async def _safe_list(self, method_name: str, **kwargs: Any) -> list[dict]:
         method = getattr(self.memory_service, method_name, None)

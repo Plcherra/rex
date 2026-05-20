@@ -37,6 +37,8 @@ class AccountabilityOverview {
     required this.openCommitments,
     required this.activePlans,
     required this.openMilestones,
+    required this.planHierarchy,
+    required this.duplicateWarnings,
     required this.metadata,
   });
 
@@ -53,6 +55,14 @@ class AccountabilityOverview {
       openCommitments: _list(json['open_commitments'], Commitment.fromJson),
       activePlans: _list(json['active_plans'], PlanRecord.fromJson),
       openMilestones: _list(json['open_milestones'], PlanMilestone.fromJson),
+      planHierarchy: _list(
+        json['plan_hierarchy'],
+        PlanHierarchyItem.fromJson,
+      ),
+      duplicateWarnings: _list(
+        json['duplicate_warnings'],
+        DuplicateWarning.fromJson,
+      ),
       metadata: _map(json['metadata']),
     );
   }
@@ -65,6 +75,8 @@ class AccountabilityOverview {
   final List<Commitment> openCommitments;
   final List<PlanRecord> activePlans;
   final List<PlanMilestone> openMilestones;
+  final List<PlanHierarchyItem> planHierarchy;
+  final List<DuplicateWarning> duplicateWarnings;
   final Map<String, dynamic> metadata;
 
   bool get isEmpty =>
@@ -72,7 +84,18 @@ class AccountabilityOverview {
       activeRules.isEmpty &&
       openCommitments.isEmpty &&
       activePlans.isEmpty &&
-      openMilestones.isEmpty;
+      openMilestones.isEmpty &&
+      planHierarchy.isEmpty &&
+      duplicateWarnings.isEmpty;
+
+  int get activePlanCount =>
+      _int(metadata['active_plan_count']) ?? activePlans.length;
+
+  int get openMilestoneCount =>
+      _int(metadata['open_milestone_count']) ?? openMilestones.length;
+
+  int get openTaskCount =>
+      _int(metadata['open_task_count']) ?? openCommitments.length;
 }
 
 class AccountabilitySignal {
@@ -202,6 +225,7 @@ class Commitment {
     required this.title,
     required this.commitmentText,
     required this.planId,
+    required this.milestoneId,
     required this.entityId,
     required this.priority,
     required this.status,
@@ -217,6 +241,7 @@ class Commitment {
       title: _string(json['title']) ?? 'Commitment',
       commitmentText: _string(json['commitment_text']) ?? '',
       planId: _string(json['plan_id']),
+      milestoneId: _string(json['milestone_id']),
       entityId: _string(json['entity_id']),
       priority: _int(json['priority']) ?? 3,
       status: _string(json['status']) ?? 'open',
@@ -231,12 +256,65 @@ class Commitment {
   final String title;
   final String commitmentText;
   final String? planId;
+  final String? milestoneId;
   final String? entityId;
   final int priority;
   final String status;
   final bool active;
   final DateTime? dueAt;
   final DateTime? completedAt;
+}
+
+class PlanHierarchyItem {
+  const PlanHierarchyItem({
+    required this.plan,
+    required this.openMilestones,
+    required this.openCommitments,
+    required this.counts,
+  });
+
+  factory PlanHierarchyItem.fromJson(Map<String, dynamic> json) {
+    return PlanHierarchyItem(
+      plan: PlanRecord.fromJson(_map(json['plan'])),
+      openMilestones: _list(
+        json['open_milestones'],
+        PlanMilestone.fromJson,
+      ),
+      openCommitments: _list(
+        json['open_commitments'],
+        Commitment.fromJson,
+      ),
+      counts: _map(json['counts']),
+    );
+  }
+
+  final PlanRecord plan;
+  final List<PlanMilestone> openMilestones;
+  final List<Commitment> openCommitments;
+  final Map<String, dynamic> counts;
+}
+
+class DuplicateWarning {
+  const DuplicateWarning({
+    required this.recordType,
+    required this.title,
+    required this.recordIds,
+    required this.reason,
+  });
+
+  factory DuplicateWarning.fromJson(Map<String, dynamic> json) {
+    return DuplicateWarning(
+      recordType: _string(json['record_type']) ?? 'record',
+      title: _string(json['title']) ?? 'Duplicate warning',
+      recordIds: _stringList(json['record_ids']),
+      reason: _string(json['reason']) ?? '',
+    );
+  }
+
+  final String recordType;
+  final String title;
+  final List<String> recordIds;
+  final String reason;
 }
 
 class PlanRecord {
@@ -298,6 +376,7 @@ class PlanMilestone {
     required this.status,
     required this.active,
     required this.completedAt,
+    required this.openCommitments,
   });
 
   factory PlanMilestone.fromJson(Map<String, dynamic> json) {
@@ -312,6 +391,7 @@ class PlanMilestone {
       status: _string(json['status']) ?? 'open',
       active: _bool(json['active']) ?? true,
       completedAt: _dateTime(json['completed_at']),
+      openCommitments: _list(json['open_commitments'], Commitment.fromJson),
     );
   }
 
@@ -325,6 +405,7 @@ class PlanMilestone {
   final String status;
   final bool active;
   final DateTime? completedAt;
+  final List<Commitment> openCommitments;
 }
 
 extension AccountabilitySignalTypeLabel on AccountabilitySignalType {

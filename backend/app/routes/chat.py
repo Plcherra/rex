@@ -60,6 +60,8 @@ async def chat(
         conversation_id=result["conversation_id"],
         response=result["response"],
         messages=result["messages"],
+        memory_correction=result.get("memory_correction"),
+        memory_changes=result.get("memory_changes"),
     )
 
 

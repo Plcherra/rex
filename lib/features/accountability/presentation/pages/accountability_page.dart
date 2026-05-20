@@ -62,12 +62,27 @@ class _AccountabilityPageState extends ConsumerState<AccountabilityPage> {
                     const SizedBox(height: 20),
                     _RuleSection(rules: overview.activeRules),
                     const SizedBox(height: 20),
-                    _CommitmentSection(commitments: overview.openCommitments),
+                    _CommitmentSection(
+                      commitments: overview.openCommitments
+                          .where(
+                            (commitment) =>
+                                commitment.planId == null &&
+                                commitment.milestoneId == null,
+                          )
+                          .toList(growable: false),
+                    ),
                     const SizedBox(height: 20),
                     _PlanSection(
+                      planHierarchy: overview.planHierarchy,
                       plans: overview.activePlans,
                       milestones: overview.openMilestones,
                     ),
+                    if (overview.duplicateWarnings.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      _DuplicateWarningSection(
+                        warnings: overview.duplicateWarnings,
+                      ),
+                    ],
                   ],
                 ]),
               ),
@@ -102,13 +117,18 @@ class _OverviewSummary extends StatelessWidget {
         ),
         _SummaryPill(
           icon: Icons.check_circle_outline_rounded,
-          label: 'Commitments',
-          value: overview.openCommitments.length,
+          label: 'Tasks',
+          value: overview.openTaskCount,
+        ),
+        _SummaryPill(
+          icon: Icons.task_alt_rounded,
+          label: 'Milestones',
+          value: overview.openMilestoneCount,
         ),
         _SummaryPill(
           icon: Icons.flag_rounded,
           label: 'Plans',
-          value: overview.activePlans.length,
+          value: overview.activePlanCount,
         ),
       ],
     );
@@ -205,23 +225,36 @@ class _CommitmentSection extends StatelessWidget {
 }
 
 class _PlanSection extends StatelessWidget {
-  const _PlanSection({required this.plans, required this.milestones});
+  const _PlanSection({
+    required this.planHierarchy,
+    required this.plans,
+    required this.milestones,
+  });
 
+  final List<PlanHierarchyItem> planHierarchy;
   final List<PlanRecord> plans;
   final List<PlanMilestone> milestones;
 
   @override
   Widget build(BuildContext context) {
-    final planTiles = plans
-        .map(
-          (plan) => _PlanTile(
-            plan: plan,
-            milestones: milestones
-                .where((milestone) => milestone.planId == plan.id)
-                .toList(growable: false),
-          ),
-        )
-        .toList(growable: false);
+    final planTiles = planHierarchy.isNotEmpty
+        ? planHierarchy
+            .map((item) => _PlanTile(item: item))
+            .toList(growable: false)
+        : plans
+            .map(
+              (plan) => _PlanTile(
+                item: PlanHierarchyItem(
+                  plan: plan,
+                  openMilestones: milestones
+                      .where((milestone) => milestone.planId == plan.id)
+                      .toList(growable: false),
+                  openCommitments: const [],
+                  counts: const {},
+                ),
+              ),
+            )
+            .toList(growable: false);
     final orphanMilestones = milestones
         .where((milestone) => !plans.any((plan) => plan.id == milestone.planId))
         .map((milestone) => _MilestoneTile(milestone: milestone))
@@ -231,6 +264,23 @@ class _PlanSection extends StatelessWidget {
       title: 'Plan Progress',
       emptyText: 'No active plans or open milestones yet.',
       children: [...planTiles, ...orphanMilestones],
+    );
+  }
+}
+
+class _DuplicateWarningSection extends StatelessWidget {
+  const _DuplicateWarningSection({required this.warnings});
+
+  final List<DuplicateWarning> warnings;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Duplicate Risks',
+      emptyText: 'No duplicate risks detected.',
+      children: warnings
+          .map((warning) => _DuplicateWarningTile(warning: warning))
+          .toList(growable: false),
     );
   }
 }
@@ -388,13 +438,14 @@ class _CommitmentTile extends StatelessWidget {
 }
 
 class _PlanTile extends StatelessWidget {
-  const _PlanTile({required this.plan, required this.milestones});
+  const _PlanTile({required this.item});
 
-  final PlanRecord plan;
-  final List<PlanMilestone> milestones;
+  final PlanHierarchyItem item;
 
   @override
   Widget build(BuildContext context) {
+    final plan = item.plan;
+    final milestones = item.openMilestones;
     final details = plan.desiredOutcome ?? plan.description ?? '';
 
     return Column(
@@ -422,6 +473,15 @@ class _PlanTile extends StatelessWidget {
             child: Column(
               children: milestones
                   .map((milestone) => _MilestoneTile(milestone: milestone))
+                  .toList(growable: false),
+            ),
+          ),
+        if (item.openCommitments.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 44, bottom: 8),
+            child: Column(
+              children: item.openCommitments
+                  .map((commitment) => _ChecklistRow(commitment: commitment))
                   .toList(growable: false),
             ),
           ),
@@ -476,9 +536,79 @@ class _MilestoneTile extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (milestone.openCommitments.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Column(
+                    children: milestone.openCommitments
+                        .map(
+                          (commitment) =>
+                              _ChecklistRow(commitment: commitment),
+                        )
+                        .toList(growable: false),
+                  ),
+                ],
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChecklistRow extends StatelessWidget {
+  const _ChecklistRow({required this.commitment});
+
+  final Commitment commitment;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.check_circle_outline_rounded,
+            size: 17,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              commitment.commitmentText.isEmpty
+                  ? commitment.title
+                  : commitment.commitmentText,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DuplicateWarningTile extends StatelessWidget {
+  const _DuplicateWarningTile({required this.warning});
+
+  final DuplicateWarning warning;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+      leading: const _TileIcon(icon: Icons.merge_type_rounded),
+      title: Text(warning.title),
+      subtitle: _RecordSubtitle(
+        text: 'Multiple active ${warning.recordType.accountabilityLabel}s may overlap.',
+        chips: [
+          warning.recordType.accountabilityLabel,
+          '${warning.recordIds.length} records',
         ],
       ),
     );

@@ -174,6 +174,8 @@ class PlanIntelligenceService:
         parent_plan, _ = self.find_best_parent_plan(candidate, active_plans)
         if parent_plan:
             return False
+        if not active_plans and _has_standalone_anchor(candidate):
+            return _specificity_score(candidate, small_step_penalty=False) >= 0.38
         if _is_small_step(candidate):
             return False
         return _specificity_score(candidate) >= TOP_LEVEL_MINIMUM_SPECIFICITY
@@ -331,7 +333,11 @@ def _is_small_step(candidate: dict[str, Any]) -> bool:
     return False
 
 
-def _specificity_score(candidate: dict[str, Any]) -> float:
+def _specificity_score(
+    candidate: dict[str, Any],
+    *,
+    small_step_penalty: bool = True,
+) -> float:
     text = _candidate_text(candidate)
     tokens = _tokens(text)
     score = min(len(tokens) / 14, 0.55)
@@ -341,9 +347,30 @@ def _specificity_score(candidate: dict[str, Any]) -> float:
         score += 0.16
     if str(candidate.get("plan_type") or "").strip():
         score += 0.08
-    if _is_small_step(candidate):
+    if small_step_penalty and _is_small_step(candidate):
         score -= 0.22
     return max(0.0, min(score, 1.0))
+
+
+def _has_standalone_anchor(candidate: dict[str, Any]) -> bool:
+    plan_type = str(candidate.get("plan_type") or "").strip().lower()
+    if plan_type not in {
+        "career",
+        "creative",
+        "dating",
+        "finance",
+        "health",
+        "housing",
+        "immigration",
+        "personal",
+    }:
+        return False
+    return bool(
+        _clean(candidate.get("description"))
+        or _clean(candidate.get("desired_outcome"))
+        or _clean(candidate.get("entity_name"))
+        or _clean(candidate.get("primary_entity_id"))
+    )
 
 
 def _similarity(left: str, right: str) -> float:

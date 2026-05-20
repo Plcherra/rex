@@ -228,8 +228,23 @@ def test_overview_returns_backing_context_and_filtered_buckets(client):
     assert payload["metadata"]["active_rule_count"] == 1
     assert payload["metadata"]["open_commitment_count"] == 1
     assert payload["metadata"]["open_milestone_count"] == 1
+    assert payload["metadata"]["active_plan_count"] == 1
+    assert payload["metadata"]["open_task_count"] == 1
     assert [item["id"] for item in payload["open_commitments"]] == ["commitment-open"]
     assert [item["id"] for item in payload["open_milestones"]] == ["milestone-open"]
+    assert payload["plan_hierarchy"] == [
+        {
+            "plan": _plan_row(),
+            "open_milestones": [
+                {
+                    **_milestone_row(id="milestone-open", status="open"),
+                    "open_commitments": [],
+                }
+            ],
+            "open_commitments": [],
+            "counts": {"open_milestones": 1, "open_commitments": 0},
+        }
+    ]
     assert [item["signal_type"] for item in payload["rule_risks"]] == [
         "rule_violation"
     ]
@@ -255,6 +270,56 @@ def test_empty_overview_returns_empty_lists(client):
     assert payload["open_commitments"] == []
     assert payload["active_plans"] == []
     assert payload["open_milestones"] == []
+    assert payload["plan_hierarchy"] == []
+    assert payload["duplicate_warnings"] == []
+
+
+def test_overview_groups_linked_commitments_under_plan_hierarchy(client):
+    memory_service = FakeMemoryService()
+    memory_service.commitments = [
+        _commitment_row(id="commitment-plan", plan_id="plan-1"),
+        _commitment_row(id="commitment-milestone", milestone_id="milestone-open"),
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    hierarchy = payload["plan_hierarchy"][0]
+    assert [item["id"] for item in hierarchy["open_commitments"]] == [
+        "commitment-plan"
+    ]
+    assert [
+        item["id"]
+        for item in hierarchy["open_milestones"][0]["open_commitments"]
+    ] == ["commitment-milestone"]
+    assert hierarchy["counts"]["open_commitments"] == 2
+
+
+def test_overview_reports_duplicate_plan_and_rule_warnings(client):
+    memory_service = FakeMemoryService()
+    memory_service.plans = [
+        _plan_row(id="plan-1", title="Relocate to Europe next year"),
+        _plan_row(id="plan-2", title="Relocate to Europe next year"),
+    ]
+    memory_service.rules = [
+        _rule_row(id="rule-1", title="No DoorDash"),
+        _rule_row(id="rule-2", title="No DoorDash"),
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metadata"]["duplicate_warning_count"] == 2
+    assert {item["record_type"] for item in payload["duplicate_warnings"]} == {
+        "plan",
+        "rule",
+    }
 
 
 def test_invalid_filters_return_validation_errors(client):
@@ -317,11 +382,11 @@ def _signal(
     )
 
 
-def _rule_row() -> dict:
+def _rule_row(id="rule-1", title="No delivery") -> dict:
     return {
-        "id": "rule-1",
+        "id": id,
         "rule_type": "food_delivery",
-        "title": "No delivery",
+        "title": title,
         "rule_text": "No DoorDash this week.",
         "trigger_keywords": ["doordash"],
         "priority": 4,
@@ -330,22 +395,29 @@ def _rule_row() -> dict:
     }
 
 
-def _commitment_row(id="commitment-1", status="open") -> dict:
+def _commitment_row(
+    id="commitment-1",
+    status="open",
+    plan_id=None,
+    milestone_id=None,
+) -> dict:
     return {
         "id": id,
         "commitment_type": "habit",
         "title": "Workout",
         "commitment_text": "Work out tomorrow morning.",
+        "plan_id": plan_id,
+        "milestone_id": milestone_id,
         "status": status,
         "active": True,
     }
 
 
-def _plan_row() -> dict:
+def _plan_row(id="plan-1", title="Ship Rex") -> dict:
     return {
-        "id": "plan-1",
+        "id": id,
         "plan_type": "career",
-        "title": "Ship Rex",
+        "title": title,
         "status": "active",
         "active": True,
     }

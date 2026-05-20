@@ -464,9 +464,10 @@ When the user says "that is wrong", Rex must not merely agree in chat. It must a
 
 ### Checklist
 
-1. [ ] **Create correction intent detector**
+1. [x] **Create correction intent detector**
    - Exact files to create or modify:
      - `backend/app/services/memory_correction_service.py`
+     - `backend/scripts/apply_memory_discipline.py`
      - `tests/test_memory_correction_service.py`
    - What must be implemented:
      - Detect correction intents:
@@ -487,7 +488,7 @@ When the user says "that is wrong", Rex must not merely agree in chat. It must a
        - `that should be under the Europe plan`
        - `this is not a plan, it is just a task`
 
-2. [ ] **Implement correction execution**
+2. [x] **Implement correction execution**
    - Exact files to create or modify:
      - `backend/app/services/memory_correction_service.py`
      - `backend/app/services/memory_service.py`
@@ -505,7 +506,7 @@ When the user says "that is wrong", Rex must not merely agree in chat. It must a
    - Success criteria:
      - Wrong active records stop appearing in normal active-memory views.
 
-3. [ ] **Use memory_corrections as audit trail**
+3. [x] **Use memory_corrections as audit trail**
    - Exact files to create or modify:
      - `backend/app/services/memory_correction_service.py`
      - `backend/app/services/memory_service.py`
@@ -522,7 +523,7 @@ When the user says "that is wrong", Rex must not merely agree in chat. It must a
    - Success criteria:
      - Corrections are traceable and debuggable.
 
-4. [ ] **Add confirmation behavior for high-impact merges**
+4. [x] **Add confirmation behavior for high-impact merges**
    - Exact files to create or modify:
      - `backend/app/services/memory_correction_service.py`
      - `backend/app/services/chat_service.py`
@@ -538,7 +539,7 @@ When the user says "that is wrong", Rex must not merely agree in chat. It must a
    - Success criteria:
      - Rex can say exactly what it plans to merge/archive and wait for approval when needed.
 
-5. [ ] **Replace cleanup scripts with reusable correction workflows**
+5. [x] **Replace cleanup scripts with reusable correction workflows**
    - Exact files to create or modify:
      - `backend/scripts/consolidate_plans.py`
      - `backend/scripts/cleanup_project_names.py`
@@ -587,7 +588,7 @@ The backend can have good services, but if chat still saves raw extraction outpu
 
 ### Checklist
 
-1. [ ] **Route extraction output through MemoryDisciplineService**
+1. [x] **Route extraction output through MemoryDisciplineService**
    - Exact files to create or modify:
      - `backend/app/services/memory_extraction_service.py`
      - `backend/app/services/chat_service.py`
@@ -602,7 +603,7 @@ The backend can have good services, but if chat still saves raw extraction outpu
    - How to test:
      - Fake extraction returns duplicate plan; chat saves milestone instead.
 
-2. [ ] **Add memory-change response summary**
+2. [x] **Add memory-change response summary**
    - Exact files to create or modify:
      - `backend/app/models/chat.py`
      - `backend/app/services/chat_service.py`
@@ -621,7 +622,7 @@ The backend can have good services, but if chat still saves raw extraction outpu
    - Success criteria:
      - User can understand what Rex actually changed after a correction.
 
-3. [ ] **Add final discipline prompt block**
+3. [x] **Add final discipline prompt block**
    - Exact files to create or modify:
      - `backend/app/services/memory_extraction_service.py`
      - `backend/app/services/prompt_service.py`
@@ -642,7 +643,7 @@ The backend can have good services, but if chat still saves raw extraction outpu
    - Success criteria:
      - Prompts guide extraction, while services enforce behavior.
 
-4. [ ] **Add confirmation UX for ambiguous discipline decisions**
+4. [x] **Add confirmation UX for ambiguous discipline decisions**
    - Exact files to create or modify:
      - `backend/app/models/chat.py`
      - `backend/app/services/chat_service.py`
@@ -657,7 +658,7 @@ The backend can have good services, but if chat still saves raw extraction outpu
    - Success criteria:
      - Ambiguous high-impact cleanup is safe but not blocked forever.
 
-5. [ ] **Prevent save loops and double writes**
+5. [x] **Prevent save loops and double writes**
    - Exact files to create or modify:
      - `backend/app/services/chat_service.py`
      - `backend/app/services/memory_discipline_service.py`
@@ -690,7 +691,7 @@ If the backend stores hierarchy but the UI still presents everything as flat noi
 
 ### Checklist
 
-1. [ ] **Update accountability overview shape**
+1. [x] **Update accountability overview shape**
    - Exact files to create or modify:
      - `backend/app/routes/accountability.py`
      - `backend/app/services/accountability_service.py`
@@ -708,7 +709,7 @@ If the backend stores hierarchy but the UI still presents everything as flat noi
    - Success criteria:
      - API output reflects hierarchy instead of only flat lists.
 
-2. [ ] **Update Flutter accountability display**
+2. [x] **Update Flutter accountability display**
    - Exact files to create or modify:
      - `lib/features/memory/` or existing accountability page files
      - `lib/services/chat_api.dart` or API client files
@@ -724,7 +725,7 @@ If the backend stores hierarchy but the UI still presents everything as flat noi
      - Widget test renders nested active plan structure.
      - `flutter analyze && flutter test`
 
-3. [ ] **Add memory discipline regression dataset**
+3. [x] **Add memory discipline regression dataset**
    - Exact files to create or modify:
      - `tests/test_memory_discipline_regressions.py`
      - `docs/action_plans/rex_memory_regression_cases.md`
@@ -740,7 +741,7 @@ If the backend stores hierarchy but the UI still presents everything as flat noi
    - Success criteria:
      - The exact failure modes that caused plan spam and entity drift are covered.
 
-4. [ ] **Create manual memory discipline test script**
+4. [x] **Create manual memory discipline test script**
    - Exact files to create or modify:
      - `docs/action_plans/rex_memory_manual_test.md`
    - What must be implemented:
@@ -755,7 +756,7 @@ If the backend stores hierarchy but the UI still presents everything as flat noi
    - Success criteria:
      - Founder can verify behavior without reading DB records.
 
-5. [ ] **Add rollout/migration script**
+5. [x] **Add rollout/migration script**
    - Exact files to create or modify:
      - `backend/scripts/apply_memory_discipline.py`
      - `backend/scripts/consolidate_plans.py`

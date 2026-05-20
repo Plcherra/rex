@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Optional, Protocol
 
@@ -8,6 +9,7 @@ from app.services.ai_service import AIService
 from app.services.accountability_service import AccountabilityService
 from app.services.file_service import FileService
 from app.services.memory_extraction_service import MemoryExtractionService
+from app.services.memory_correction_service import MemoryCorrectionService
 from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.prompt_service import PromptService
 from app.services.time_context_service import TimeContextService
@@ -83,6 +85,7 @@ class ChatService:
         time_context_service: Optional[TimeContextService] = None,
         accountability_service: Optional[AccountabilityService] = None,
         memory_discipline_service: Optional[MemoryDisciplineService] = None,
+        memory_correction_service: Optional[MemoryCorrectionService] = None,
     ) -> None:
         self.ai_service = ai_service
         self.file_service = file_service
@@ -92,6 +95,7 @@ class ChatService:
         self.time_context_service = time_context_service or TimeContextService()
         self.accountability_service = accountability_service or AccountabilityService()
         self.memory_discipline_service = memory_discipline_service
+        self.memory_correction_service = memory_correction_service
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def send_message(
@@ -139,6 +143,13 @@ class ChatService:
             "user",
             message,
         )
+        memory_correction = await self._apply_memory_correction(
+            message,
+            conversation_id=conversation_id,
+            user_message_id=str(user_message.get("id") or ""),
+        )
+        if memory_correction:
+            ai_messages.append(self._memory_correction_prompt(memory_correction))
 
         rex_response = await self.ai_service.generate_response(ai_messages)
         assistant_message = await self.memory_service.save_message(
@@ -147,17 +158,31 @@ class ChatService:
             rex_response,
         )
 
-        await self._extract_memory_after_success(
-            conversation_id,
-            user_message,
-            assistant_message,
-        )
+        memory_changes = None
+        if self._correction_blocks_extraction(memory_correction):
+            memory_changes = self._memory_change_summary(
+                [],
+                memory_correction=memory_correction,
+                skipped_reason="correction_already_handled",
+            )
+        else:
+            extracted_memories = await self._extract_memory_after_success(
+                conversation_id,
+                user_message,
+                assistant_message,
+            )
+            memory_changes = self._memory_change_summary(
+                extracted_memories,
+                memory_correction=memory_correction,
+            )
 
         return {
             "conversation_id": conversation_id,
             "response": rex_response,
             "user_message": user_message,
             "assistant_message": assistant_message,
+            "memory_correction": memory_correction,
+            "memory_changes": memory_changes,
             "messages": await self.memory_service.get_recent_messages(
                 conversation_id,
                 limit=20,
@@ -237,6 +262,14 @@ class ChatService:
             message,
         )
         yield {"event": "conversation", "conversation_id": conversation_id}
+        memory_correction = await self._apply_memory_correction(
+            message,
+            conversation_id=conversation_id,
+            user_message_id=str(user_message.get("id") or ""),
+        )
+        if memory_correction:
+            ai_messages.append(self._memory_correction_prompt(memory_correction))
+            yield {"event": "memory_correction", "memory_correction": memory_correction}
 
         response_parts = []
         async for token in self.ai_service.stream_response(ai_messages):
@@ -250,11 +283,19 @@ class ChatService:
             rex_response,
         )
 
-        self._schedule_memory_extraction(
-            conversation_id,
-            user_message,
-            assistant_message,
-        )
+        memory_changes = None
+        if self._correction_blocks_extraction(memory_correction):
+            memory_changes = self._memory_change_summary(
+                [],
+                memory_correction=memory_correction,
+                skipped_reason="correction_already_handled",
+            )
+        else:
+            self._schedule_memory_extraction(
+                conversation_id,
+                user_message,
+                assistant_message,
+            )
 
         yield {
             "event": "done",
@@ -264,6 +305,7 @@ class ChatService:
                 conversation_id,
                 limit=20,
             ),
+            "memory_changes": memory_changes,
         }
 
     async def _existing_conversation_id(
@@ -409,6 +451,138 @@ class ChatService:
         except Exception:
             return []
 
+    async def _apply_memory_correction(
+        self,
+        message: str,
+        *,
+        conversation_id: str,
+        user_message_id: str,
+    ) -> Optional[dict]:
+        if self.memory_correction_service is None:
+            return None
+        try:
+            intent = self.memory_correction_service.detect_correction_intent(message)
+            if intent.confidence < 0.5:
+                return None
+            report = await self.memory_correction_service.apply_correction(
+                message,
+                source_conversation_id=conversation_id,
+                source_message_id=user_message_id or None,
+            )
+        except Exception:
+            return None
+        data = report.as_dict()
+        if not data.get("applied") and not data.get("requires_confirmation"):
+            return None
+        return data
+
+    def _memory_correction_prompt(self, memory_correction: dict) -> dict:
+        payload = json.dumps(memory_correction, sort_keys=True)
+        return {
+            "role": "system",
+            "content": (
+                "Memory correction status for this turn: "
+                f"{payload}\n"
+                "If applied, briefly tell the user exactly what was updated or archived. "
+                "If confirmation is required, ask for confirmation before claiming it was changed."
+            ),
+        }
+
+    def _correction_blocks_extraction(self, memory_correction: Optional[dict]) -> bool:
+        if not memory_correction:
+            return False
+        return bool(
+            memory_correction.get("applied")
+            or memory_correction.get("requires_confirmation")
+        )
+
+    def _memory_change_summary(
+        self,
+        extraction_results: list[dict],
+        *,
+        memory_correction: Optional[dict] = None,
+        skipped_reason: Optional[str] = None,
+    ) -> Optional[dict]:
+        summary = {
+            "created": 0,
+            "updated": 0,
+            "archived": 0,
+            "merged": 0,
+            "skipped": 0,
+            "confirmation_required": 0,
+            "records": [],
+        }
+
+        if memory_correction:
+            if memory_correction.get("requires_confirmation"):
+                summary["confirmation_required"] += 1
+            if memory_correction.get("applied"):
+                summary["updated"] += len(memory_correction.get("updated") or [])
+                summary["archived"] += len(memory_correction.get("archived") or [])
+                summary["created"] += len(memory_correction.get("created") or [])
+                summary["merged"] += len(memory_correction.get("merged") or [])
+            summary["records"].append(
+                {
+                    "kind": "memory_correction",
+                    "applied": bool(memory_correction.get("applied")),
+                    "requires_confirmation": bool(
+                        memory_correction.get("requires_confirmation")
+                    ),
+                }
+            )
+
+        if skipped_reason:
+            summary["skipped"] += 1
+            summary["records"].append(
+                {
+                    "kind": "memory_extraction",
+                    "action": "skipped",
+                    "reason": skipped_reason,
+                }
+            )
+
+        for result in extraction_results:
+            action = str(result.get("extraction_action") or "create")
+            if action.startswith("create"):
+                summary["created"] += 1
+            elif action.startswith("update") or action == "updated_correction":
+                summary["updated"] += 1
+            elif action.startswith("archive"):
+                summary["archived"] += 1
+            elif action.startswith("merge"):
+                summary["merged"] += 1
+            elif action in {"ask_confirmation", "confirmation_required"}:
+                summary["confirmation_required"] += 1
+            elif action.startswith("skip") or action.startswith("ignore"):
+                summary["skipped"] += 1
+
+            summary["records"].append(
+                {
+                    "kind": result.get("extraction_kind"),
+                    "type": result.get("structured_type")
+                    or result.get("memory_type"),
+                    "action": action,
+                    "id": result.get("id"),
+                    "title": result.get("title")
+                    or result.get("display_name")
+                    or result.get("content"),
+                }
+            )
+
+        if not any(
+            summary[key]
+            for key in (
+                "created",
+                "updated",
+                "archived",
+                "merged",
+                "skipped",
+                "confirmation_required",
+            )
+        ):
+            return None
+        return summary
+
     def _last_message_timestamp(self, conversation_history: list[dict]) -> Optional[str]:
         if not conversation_history:
             return None
@@ -426,12 +600,12 @@ class ChatService:
         conversation_id: str,
         user_message: dict,
         assistant_message: dict,
-    ) -> None:
+    ) -> list[dict]:
         if self.memory_extraction_service is None:
-            return
+            return []
 
         try:
-            await self.memory_extraction_service.extract_and_save(
+            return await self.memory_extraction_service.extract_and_save(
                 conversation_id=conversation_id,
                 user_message=user_message,
                 assistant_message=assistant_message,
@@ -439,7 +613,7 @@ class ChatService:
         except Exception:
             # Memory extraction is best-effort. A failed extraction must not
             # break a successful chat response.
-            return
+            return []
 
     def _schedule_memory_extraction(
         self,

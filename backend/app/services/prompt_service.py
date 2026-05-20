@@ -25,6 +25,18 @@ Rex should be:
 
 The target experience is simple: the founder puts the phone in a pocket, walks, talks naturally, and Rex responds by voice with context-aware advice. If the user says, "Clara touched my arm today," Rex should know who Clara is from previous context, why that matters, and how it fits into the broader dating story. If the user says, "I ordered DoorDash again," Rex should be able to say, directly, "You said last month you were cutting DoorDash because your budget was slipping, and this is the same pattern again."
 """.strip()
+MEMORY_DISCIPLINE_PROMPT = """
+Memory Discipline rules:
+- Prefer updating existing memory over creating new memory.
+- Before saving a plan, goal, rule, task, or entity, consider whether it belongs to an active existing record.
+- Corrections from the user override prior memory.
+- A duplicate active plan/rule/entity is a memory quality error.
+- Use top-level plans only for durable major areas.
+- Use milestones for sub-goals, deadlines, and progress details.
+- Use commitments for concrete actions, habits, or checklist items.
+- Use entity events for relationship changes, interactions, or historical notes.
+- Never preserve stale wrong names as current truth.
+""".strip()
 FILE_CONTEXT_PREFIX = "Uploaded file content:\n\n"
 PERSONALITY_CONTEXT_PREFIX = "Rex personality and behavior:\n"
 TIME_CONTEXT_PREFIX = "Current time context:\n"
@@ -91,7 +103,10 @@ class PromptService:
         conversation_metadata: Optional[dict],
         time_context: Optional[dict],
     ) -> list[str]:
-        sections = [f"{PERSONALITY_CONTEXT_PREFIX}{REX_PERSONALITY_PROMPT}"]
+        sections = [
+            f"{PERSONALITY_CONTEXT_PREFIX}{REX_PERSONALITY_PROMPT}",
+            MEMORY_DISCIPLINE_PROMPT,
+        ]
 
         time_section = self._time_context_section(time_context)
         if time_section:

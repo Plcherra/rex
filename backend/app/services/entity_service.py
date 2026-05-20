@@ -99,10 +99,13 @@ class EntityService:
                 None,
             )
             if duplicate:
+                wrong_names.update(_correction_wrong_names(duplicate))
                 entity = await self._merge_existing_entity(duplicate, payload)
             else:
                 entity = await self.memory_service.create_entity(payload)
+            wrong_names.update(_correction_wrong_names(entity))
             if wrong_names:
+                entity = await self._remove_wrong_aliases(entity, wrong_names)
                 await self._archive_superseded_entities(entity, wrong_names)
             return entity
         except MemoryServiceError as error:
@@ -291,6 +294,39 @@ class EntityService:
                 )
             except MemoryServiceError:
                 continue
+
+    async def _remove_wrong_aliases(
+        self,
+        entity: dict[str, Any],
+        wrong_names: set[str],
+    ) -> dict[str, Any]:
+        aliases = entity.get("aliases", [])
+        cleaned_aliases = [
+            alias
+            for alias in aliases
+            if _safe_normalize_entity_name(alias) not in wrong_names
+        ]
+        if cleaned_aliases == aliases:
+            return entity
+
+        metadata = {
+            **(entity.get("metadata") or {}),
+            "removed_wrong_aliases": [
+                alias
+                for alias in aliases
+                if _safe_normalize_entity_name(alias) in wrong_names
+            ],
+            "cleanup_reason": "explicit_person_correction",
+        }
+        try:
+            updated = await self.memory_service.update_entity(
+                entity["id"],
+                aliases=cleaned_aliases,
+                metadata=metadata,
+            )
+        except MemoryServiceError:
+            return entity
+        return updated or {**entity, "aliases": cleaned_aliases, "metadata": metadata}
 
 
 def _payload(request: Any) -> dict[str, Any]:
@@ -501,20 +537,72 @@ def _correction_wrong_names(payload: dict[str, Any]) -> set[str]:
         elif raw_value:
             values.append(raw_value)
 
-    source_content = _clean_optional(metadata.get("source_content"))
-    if source_content:
-        match = re.search(
-            r"\b(?:corrected|replacing|from)\s+(?:from\s+)?([A-Za-z0-9 ,/]+)[.!?]*$",
-            source_content,
-            flags=re.I,
-        )
-        if match:
-            values.extend(re.split(r"\s*(?:,|/|\bor\b|\band\b)\s*", match.group(1)))
+    for field in ("source_content",):
+        values.extend(_wrong_names_from_text(metadata.get(field)))
+    for field in ("relationship", "summary"):
+        values.extend(_wrong_names_from_text(payload.get(field)))
 
     return {
         _normalize_entity_name(value)
         for value in values
-        if _clean_optional(value)
+        if _looks_like_wrong_name(value)
+    }
+
+
+def _wrong_names_from_text(value: Any) -> list[str]:
+    text = _clean_optional(value)
+    if not text:
+        return []
+
+    values: list[str] = []
+    for pattern in (
+        r"\b(?:corrected|replacing)\s+from\s+([A-Za-z0-9 ,/]+?)(?:[.!?)]|$)",
+        r"\bpreviously\s+(?:referenced\s+as|called|known\s+as)\s+([A-Za-z0-9 ,/]+?)(?:[.!?)]|$)",
+    ):
+        for match in re.finditer(pattern, text, flags=re.I):
+            values.extend(_split_wrong_name_text(match.group(1)))
+
+    correction_context = re.search(
+        r"\b(?:name|person|correction|corrected|wrong|mistaken|referenced)\b",
+        text,
+        flags=re.I,
+    )
+    if correction_context:
+        values.extend(
+            match.group(1)
+            for match in re.finditer(r"\bnot\s+([A-Za-z0-9]{1,32})\b", text, re.I)
+        )
+
+    return values
+
+
+def _split_wrong_name_text(value: str) -> list[str]:
+    return [
+        token
+        for token in re.split(r"\s*(?:,|/|\bor\b|\band\b)\s*", value)
+        if token
+    ]
+
+
+def _looks_like_wrong_name(value: Any) -> bool:
+    cleaned = _clean_optional(value)
+    if not cleaned:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "", cleaned.casefold())
+    if not normalized:
+        return False
+    return normalized not in {
+        "a",
+        "an",
+        "as",
+        "from",
+        "name",
+        "not",
+        "or",
+        "person",
+        "previously",
+        "referenced",
+        "the",
     }
 
 

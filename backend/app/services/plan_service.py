@@ -48,6 +48,7 @@ class PlanService:
                 None,
             )
             if duplicate:
+                wrong_names.update(_correction_wrong_names(duplicate))
                 plan = await self._merge_existing_plan(duplicate, payload)
             else:
                 corrected_duplicate = next(
@@ -63,12 +64,14 @@ class PlanService:
                     None,
                 )
                 if corrected_duplicate:
+                    wrong_names.update(_correction_wrong_names(corrected_duplicate))
                     plan = await self._merge_existing_plan(
                         corrected_duplicate,
                         _corrected_plan_payload(payload, wrong_names),
                     )
                 else:
                     plan = await self.memory_service.create_plan(payload)
+            wrong_names.update(_correction_wrong_names(plan))
             if wrong_names:
                 await self._archive_superseded_plans(plan, wrong_names)
             return plan
@@ -317,17 +320,68 @@ def _correction_wrong_names(payload: dict[str, Any]) -> set[str]:
         elif raw_value:
             values.append(raw_value)
 
-    source_content = _clean_optional(metadata.get("source_content"))
-    if source_content:
-        match = re.search(
-            r"\b(?:corrected|replacing|from)\s+(?:from\s+)?([A-Za-z0-9 ,/]+)[.!?]*$",
-            source_content,
-            flags=re.I,
-        )
-        if match:
-            values.extend(re.split(r"\s*(?:,|/|\bor\b|\band\b)\s*", match.group(1)))
+    for field in ("source_content",):
+        values.extend(_wrong_names_from_text(metadata.get(field)))
+    for field in ("title", "description", "desired_outcome"):
+        values.extend(_wrong_names_from_text(payload.get(field)))
 
-    return {_normalize_text(value) for value in values if _clean_optional(value)}
+    return {_normalize_text(value) for value in values if _looks_like_wrong_name(value)}
+
+
+def _wrong_names_from_text(value: Any) -> list[str]:
+    text = _clean_optional(value)
+    if not text:
+        return []
+
+    values: list[str] = []
+    for pattern in (
+        r"\b(?:corrected|replacing)\s+from\s+([A-Za-z0-9 ,/]+?)(?:[.!?)]|$)",
+        r"\bpreviously\s+(?:referenced\s+as|called|known\s+as)\s+([A-Za-z0-9 ,/]+?)(?:[.!?)]|$)",
+    ):
+        for match in re.finditer(pattern, text, flags=re.I):
+            values.extend(_split_wrong_name_text(match.group(1)))
+
+    correction_context = re.search(
+        r"\b(?:name|person|correction|corrected|wrong|mistaken|referenced)\b",
+        text,
+        flags=re.I,
+    )
+    if correction_context:
+        values.extend(
+            match.group(1)
+            for match in re.finditer(r"\bnot\s+([A-Za-z0-9]{1,32})\b", text, re.I)
+        )
+    return values
+
+
+def _split_wrong_name_text(value: str) -> list[str]:
+    return [
+        token
+        for token in re.split(r"\s*(?:,|/|\bor\b|\band\b)\s*", value)
+        if token
+    ]
+
+
+def _looks_like_wrong_name(value: Any) -> bool:
+    cleaned = _clean_optional(value)
+    if not cleaned:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "", cleaned.casefold())
+    if not normalized:
+        return False
+    return normalized not in {
+        "a",
+        "an",
+        "as",
+        "from",
+        "name",
+        "not",
+        "or",
+        "person",
+        "previously",
+        "referenced",
+        "the",
+    }
 
 
 def _plan_text(plan: dict[str, Any]) -> str:

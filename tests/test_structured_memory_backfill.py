@@ -153,7 +153,9 @@ def test_build_backfill_candidates_extracts_corrected_person_and_linked_plan():
 
     assert [candidate.kind for candidate in candidates] == ["entity", "plan"]
     assert candidates[0].payload["display_name"] == "Melissa"
-    assert candidates[0].payload["aliases"] == ["Al", "AI"]
+    assert candidates[0].payload["aliases"] == []
+    assert candidates[0].payload["metadata"]["wrong_names"] == ["ai", "al"]
+    assert candidates[1].payload["metadata"]["wrong_names"] == ["ai", "al"]
     assert candidates[1].payload["title"] == "Ask Melissa out for dinner"
     assert candidates[0].link_key == candidates[1].link_key
 
@@ -234,6 +236,112 @@ async def test_backfill_structured_memory_uses_services_to_merge_duplicates():
     assert service.entity_updates[0][0] == "entity-existing"
     assert service.entity_updates[0][1]["source_memory_id"] == "memory-1"
     assert report.upserted[0]["id"] == "entity-existing"
+
+
+@pytest.mark.asyncio
+async def test_backfill_archives_stale_wrong_name_records_from_existing_correction():
+    service = FakeBackfillMemoryService(
+        [
+            {
+                "id": "memory-5",
+                "memory_type": "event",
+                "content": "I invited Melissa today in a teasing way, with a next-week dinner planned.",
+                "source_conversation_id": "conversation-1",
+                "source_message_id": "message-1",
+                "importance": 4,
+            }
+        ]
+    )
+    service.entities.extend(
+        [
+            {
+                "id": "entity-melissa",
+                "entity_type": "person",
+                "display_name": "Melissa",
+                "normalized_name": "melissa",
+                "aliases": ["Al", "AI", "coworker"],
+                "relationship": "person in next-week date plan",
+                "summary": (
+                    "Corrected name for the date plan participant "
+                    "(previously referenced as Al or AI)"
+                ),
+                "importance": 4,
+                "active": True,
+                "status": "active",
+                "metadata": {},
+            },
+            {
+                "id": "entity-al",
+                "entity_type": "person",
+                "display_name": "Al",
+                "normalized_name": "al",
+                "aliases": ["AI"],
+                "relationship": "person the user is planning to ask out on a date",
+                "summary": "Al has an off-day on Monday.",
+                "importance": 4,
+                "active": True,
+                "status": "active",
+                "metadata": {},
+            },
+            {
+                "id": "entity-next-week-date",
+                "entity_type": "person",
+                "display_name": "next week date",
+                "normalized_name": "next week date",
+                "aliases": [],
+                "relationship": "date the user is planning for next week",
+                "summary": "Name is not Al and not AI.",
+                "importance": 4,
+                "active": True,
+                "status": "active",
+                "metadata": {},
+            },
+        ]
+    )
+    service.plans.extend(
+        [
+            {
+                "id": "plan-melissa",
+                "plan_type": "dating",
+                "title": "Ask Melissa out for dinner",
+                "description": "Dinner with Melissa.",
+                "desired_outcome": "Successful date with Melissa.",
+                "primary_entity_id": "entity-melissa",
+                "priority": 4,
+                "status": "active",
+                "active": True,
+                "metadata": {},
+            },
+            {
+                "id": "plan-al",
+                "plan_type": "dating",
+                "title": "Ask Al out for dinner",
+                "description": "Dinner with Al on Monday.",
+                "desired_outcome": "Successful date with Al.",
+                "primary_entity_id": None,
+                "priority": 4,
+                "status": "active",
+                "active": True,
+                "metadata": {},
+            },
+        ]
+    )
+
+    report = await backfill_structured_memory(service, apply=True)
+
+    assert report.errors == []
+    melissa = next(entity for entity in service.entities if entity["id"] == "entity-melissa")
+    assert melissa["aliases"] == ["coworker"]
+    assert melissa["metadata"]["removed_wrong_aliases"] == ["Al", "AI"]
+    stale_al = next(entity for entity in service.entities if entity["id"] == "entity-al")
+    stale_generic = next(
+        entity for entity in service.entities if entity["id"] == "entity-next-week-date"
+    )
+    assert stale_al["active"] is False
+    assert stale_generic["active"] is False
+    stale_plan = next(plan for plan in service.plans if plan["id"] == "plan-al")
+    assert stale_plan["active"] is False
+    assert stale_plan["status"] == "archived"
 
 
 @pytest.mark.asyncio

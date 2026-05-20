@@ -10,7 +10,10 @@ from typing import Any
 from app.models.entity import EntityCreateRequest
 from app.models.personal_rule import PersonalRuleCreateRequest
 from app.models.plan import PlanCreateRequest
-from app.services.entity_service import EntityService
+from app.services.entity_service import (
+    EntityService,
+    _correction_wrong_names as _entity_correction_wrong_names,
+)
 from app.services.http_client import shutdown_http_client, startup_http_client
 from app.services.memory_service import SupabaseMemoryService
 from app.services.plan_service import PlanService
@@ -132,6 +135,7 @@ async def backfill_structured_memory(
             continue
 
         linked_entities: dict[str, str] = {}
+        linked_wrong_names: dict[str, set[str]] = {}
         for candidate in candidates:
             try:
                 payload = dict(candidate.payload)
@@ -142,11 +146,21 @@ async def backfill_structured_memory(
                     report.upserted.append(_upserted_row("entity", entity, memory))
                     if candidate.link_key:
                         linked_entities[candidate.link_key] = entity["id"]
+                        wrong_names = _entity_correction_wrong_names(entity)
+                        if wrong_names:
+                            linked_wrong_names[candidate.link_key] = wrong_names
                 elif candidate.kind == "plan":
                     if candidate.link_key and linked_entities.get(candidate.link_key):
                         payload["primary_entity_id"] = linked_entities[
                             candidate.link_key
                         ]
+                    if candidate.link_key and linked_wrong_names.get(candidate.link_key):
+                        payload["metadata"] = {
+                            **(payload.get("metadata") or {}),
+                            "wrong_names": sorted(
+                                linked_wrong_names[candidate.link_key]
+                            ),
+                        }
                     plan = await plan_service.create_plan(PlanCreateRequest(**payload))
                     report.upserted.append(_upserted_row("plan", plan, memory))
                 elif candidate.kind == "rule":
@@ -196,6 +210,12 @@ def build_backfill_candidates(memory: dict[str, Any]) -> list[BackfillCandidate]
     person_name = _extract_dating_person_name(content)
     if person_name:
         link_key = f"person:{_normalize(person_name)}"
+        wrong_names = _entity_correction_wrong_names(
+            {"metadata": source_metadata, "summary": content}
+        )
+        correction_metadata = dict(source_metadata)
+        if wrong_names:
+            correction_metadata["wrong_names"] = sorted(wrong_names)
         candidates.append(
             BackfillCandidate(
                 kind="entity",
@@ -204,14 +224,18 @@ def build_backfill_candidates(memory: dict[str, Any]) -> list[BackfillCandidate]
                     "entity_type": "person",
                     "display_name": person_name,
                     "normalized_name": _normalize(person_name),
-                    "aliases": _person_aliases(content, person_name),
+                    "aliases": [
+                        alias
+                        for alias in _person_aliases(content, person_name)
+                        if _normalize(alias) not in wrong_names
+                    ],
                     "relationship": _dating_relationship(content),
                     "summary": _person_summary(content, person_name),
                     "source_conversation_id": memory.get("source_conversation_id"),
                     "source_message_id": memory.get("source_message_id"),
                     "source_memory_id": memory.get("id"),
                     "importance": max(3, int(memory.get("importance") or 3)),
-                    "metadata": source_metadata,
+                    "metadata": correction_metadata,
                 },
             )
         )
@@ -231,7 +255,7 @@ def build_backfill_candidates(memory: dict[str, Any]) -> list[BackfillCandidate]
                         "source_message_id": memory.get("source_message_id"),
                         "source_memory_id": memory.get("id"),
                         "priority": max(3, int(memory.get("importance") or 3)),
-                        "metadata": source_metadata,
+                        "metadata": correction_metadata,
                     },
                 )
             )

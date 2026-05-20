@@ -276,6 +276,45 @@ async def test_plan_service_archives_stale_wrong_name_duplicate():
 
 
 @pytest.mark.asyncio
+async def test_plan_service_merges_related_same_person_dating_plan():
+    memory = FakePlanMemoryService()
+    memory.plans.append(
+        {
+            "id": "plan-date",
+            "plan_type": "dating",
+            "title": "Date with Melissa next week",
+            "description": "Take Melissa out next week.",
+            "desired_outcome": "Successful date with locked-in details.",
+            "primary_entity_id": "entity-melissa",
+            "priority": 4,
+            "status": "active",
+            "active": True,
+            "metadata": {"source": "first"},
+        }
+    )
+    service = PlanService(memory)
+
+    row = await service.create_plan(
+        PlanCreateRequest(
+            plan_type="dating",
+            title="Monday date with Melissa",
+            description="Confirm Monday dinner with Melissa.",
+            desired_outcome="Clear confirmation for the date.",
+            primary_entity_id="entity-melissa",
+            priority=5,
+            metadata={"source": "update"},
+        )
+    )
+
+    assert row["id"] == "plan-date"
+    assert row["title"] == "Monday date with Melissa"
+    assert row["priority"] == 5
+    assert row["metadata"]["source"] == "update"
+    assert row["metadata"]["merge_reason"] == "related_active_plan"
+    assert len(memory.plans) == 1
+
+
+@pytest.mark.asyncio
 async def test_plan_milestone_create_update_deactivate_flow():
     memory = FakePlanMemoryService()
     service = PlanService(memory)

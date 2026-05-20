@@ -70,7 +70,14 @@ class PlanService:
                         _corrected_plan_payload(payload, wrong_names),
                     )
                 else:
-                    plan = await self.memory_service.create_plan(payload)
+                    related_duplicate = _best_related_plan(existing, payload)
+                    if related_duplicate:
+                        plan = await self._merge_existing_plan(
+                            related_duplicate,
+                            _related_plan_payload(payload, related_duplicate),
+                        )
+                    else:
+                        plan = await self.memory_service.create_plan(payload)
             wrong_names.update(_correction_wrong_names(plan))
             if wrong_names:
                 await self._archive_superseded_plans(plan, wrong_names)
@@ -391,6 +398,115 @@ def _plan_text(plan: dict[str, Any]) -> str:
             for field in ("title", "description", "desired_outcome")
         )
     )
+
+
+PLAN_STOP_WORDS = {
+    "about",
+    "active",
+    "after",
+    "again",
+    "and",
+    "around",
+    "for",
+    "from",
+    "have",
+    "into",
+    "next",
+    "out",
+    "plan",
+    "planned",
+    "planning",
+    "successful",
+    "take",
+    "that",
+    "the",
+    "this",
+    "with",
+    "year",
+}
+
+
+def _plan_tokens(plan: dict[str, Any]) -> set[str]:
+    return {
+        token
+        for token in _plan_text(plan).split()
+        if len(token) > 2 and token not in PLAN_STOP_WORDS
+    }
+
+
+def _best_related_plan(
+    existing: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    scored = [
+        (_plan_related_score(plan, payload), plan)
+        for plan in existing
+        if plan.get("active") is not False
+        and plan.get("status", "active") == "active"
+    ]
+    scored = [(score, plan) for score, plan in scored if score > 0]
+    if not scored:
+        return None
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            int(item[1].get("priority") or 3),
+            str(item[1].get("updated_at") or item[1].get("created_at") or ""),
+        ),
+        reverse=True,
+    )
+    return scored[0][1]
+
+
+def _plan_related_score(existing: dict[str, Any], payload: dict[str, Any]) -> int:
+    existing_entity_id = existing.get("primary_entity_id")
+    payload_entity_id = payload.get("primary_entity_id")
+    if payload_entity_id and existing_entity_id == payload_entity_id:
+        if payload.get("plan_type") == "dating":
+            return 100
+        return 85
+
+    existing_tokens = _plan_tokens(existing)
+    payload_tokens = _plan_tokens(payload)
+    if not existing_tokens or not payload_tokens:
+        return 0
+
+    shared = existing_tokens & payload_tokens
+    smaller_size = min(len(existing_tokens), len(payload_tokens))
+    shared_ratio = len(shared) / smaller_size if smaller_size else 0
+
+    if (
+        payload.get("plan_type") == "dating"
+        and existing.get("plan_type") == "dating"
+        and _has_dating_plan_terms(existing_tokens)
+        and _has_dating_plan_terms(payload_tokens)
+        and shared
+    ):
+        return 75 + min(len(shared), 5)
+
+    if len(shared) >= 4 and shared_ratio >= 0.55:
+        return 65 + min(len(shared), 10)
+
+    if len(shared) >= 3 and shared_ratio >= 0.7:
+        return 60 + min(len(shared), 10)
+
+    return 0
+
+
+def _has_dating_plan_terms(tokens: set[str]) -> bool:
+    return bool(tokens & {"date", "dating", "dinner", "restaurant", "monday", "week"})
+
+
+def _related_plan_payload(
+    payload: dict[str, Any],
+    existing: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = {
+        **(payload.get("metadata") or {}),
+        "merged_into_existing_plan_id": existing.get("id"),
+        "merge_reason": "related_active_plan",
+    }
+    return {**payload, "metadata": metadata}
 
 
 def _plan_contains_wrong_name(plan: dict[str, Any], wrong_names: set[str]) -> bool:

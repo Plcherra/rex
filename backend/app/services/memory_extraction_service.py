@@ -124,6 +124,13 @@ Good memory examples:
 - multi-step plans: moving countries, income targets, immigration timelines
 - corrections to prior memory: "her name is Melissa, not Al", "I live in Massachusetts, not Europe"
 
+Plan rules:
+- Only create a top-level plan for a durable, multi-step goal that should remain useful for weeks or months.
+- Do not create a new top-level plan for every update, reflection, chat summary, or small next step.
+- If the user gives progress, details, a date, a follow-up task, or a sub-goal for an existing plan, prefer a plan_milestone or commitment.
+- Treat related details as part of a larger plan when possible: income targets can belong under a relocation or freedom plan; app launch details can belong under a development roadmap; date logistics can belong under one dating plan for that person.
+- Avoid multiple active plans that mean the same thing with different wording.
+
 Correction rules:
 - If the user corrects stale or wrong information, treat the corrected value as high-priority durable memory.
 - When the user says "not X, actually Y", do not save X as current truth. Save Y clearly and include the correction in the memory content.

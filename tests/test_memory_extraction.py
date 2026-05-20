@@ -263,6 +263,8 @@ async def test_memory_extraction_saves_valid_candidates():
 
     assert MEMORY_EXTRACTION_PROMPT in ai_service.messages[0]["content"]
     assert "structured_memories" in ai_service.messages[0]["content"]
+    assert "Plan intelligence rules:" in ai_service.messages[0]["content"]
+    assert "Entity normalization rules:" in ai_service.messages[0]["content"]
     assert len(saved) == 1
     assert saved[0]["memory_type"] == "preference"
     assert saved[0]["extraction_kind"] == "long_term_memory"
@@ -790,10 +792,11 @@ async def test_memory_extraction_creates_person_context_for_unstructured_correct
     assert memory_store.created_entities[0]["display_name"] == "Melissa"
     assert memory_store.created_entities[0]["normalized_name"] == "melissa"
     assert memory_store.created_entities[0]["aliases"] == []
-    assert memory_store.created_entities[0]["metadata"] == {
-        "correction_source": "explicit_person_correction",
-        "wrong_names": ["al"],
-    }
+    assert memory_store.created_entities[0]["metadata"]["correction_source"] == (
+        "explicit_person_correction"
+    )
+    assert memory_store.created_entities[0]["metadata"]["wrong_names"] == ["al"]
+    assert memory_store.created_entities[0]["metadata"]["obsolete_aliases"] == ["al"]
     assert memory_store.created_entity_events[0]["entity_id"] == "entity-1"
     assert memory_store.created_entity_events[0]["event_type"] == (
         "relationship_update"

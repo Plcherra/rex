@@ -7,6 +7,7 @@ from app.models.personal_rule import (
     PersonalRuleCreateRequest,
     PersonalRuleUpdateRequest,
 )
+from app.services.entity_normalization_service import EntityNormalizationService
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
 
@@ -20,6 +21,7 @@ class RuleServiceError(Exception):
 class RuleService:
     def __init__(self, memory_service: SupabaseMemoryService) -> None:
         self.memory_service = memory_service
+        self.normalization_service = EntityNormalizationService()
 
     async def create_rule(self, request: PersonalRuleCreateRequest) -> dict[str, Any]:
         payload = _payload(request)
@@ -28,6 +30,7 @@ class RuleService:
         payload["trigger_keywords"] = _dedupe_strings(
             payload.get("trigger_keywords", [])
         )
+        payload = await self._normalize_entity_references(payload)
 
         try:
             existing = await self.memory_service.list_personal_rules(
@@ -78,6 +81,7 @@ class RuleService:
             payload["rule_text"] = _clean_required(payload["rule_text"], "rule_text")
         if "trigger_keywords" in payload:
             payload["trigger_keywords"] = _dedupe_strings(payload["trigger_keywords"])
+        payload = await self._normalize_entity_references(payload)
 
         try:
             updated = await self.memory_service.update_personal_rule(rule_id, **payload)
@@ -120,6 +124,24 @@ class RuleService:
             existing["id"], **updates
         )
         return updated or existing
+
+    async def _normalize_entity_references(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        list_entities = getattr(self.memory_service, "list_entities", None)
+        if list_entities is None:
+            return payload
+        try:
+            entities = await list_entities(active=True, limit=100)
+        except Exception:
+            return payload
+        result = self.normalization_service.normalize_payload_references(
+            payload,
+            entities,
+            text_fields=("title", "rule_text", "trigger_keywords"),
+        )
+        return result.payload
 
 
 def is_active_rule(rule: dict[str, Any]) -> bool:

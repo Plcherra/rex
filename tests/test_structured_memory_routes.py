@@ -169,7 +169,7 @@ class FakeCommitmentService:
             raise self.error
 
     async def list_commitments(
-        self, *, commitment_type=None, status=None, active=True, limit=50
+        self, *, commitment_type=None, milestone_id=None, status=None, active=True, limit=50
     ):
         self._raise_if_configured()
         return [_commitment_row(commitment_type=commitment_type or "task")]

@@ -14,6 +14,7 @@ from app.services.plan_service import PlanService, PlanServiceError
 class FakePlanMemoryService:
     def __init__(self, error=None):
         self.error = error
+        self.entities = []
         self.plans = []
         self.milestones = []
 
@@ -32,6 +33,28 @@ class FakePlanMemoryService:
         rows = self.plans
         if plan_type is not None:
             rows = [row for row in rows if row.get("plan_type") == plan_type]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        if active is not None:
+            rows = [row for row in rows if row.get("active") is active]
+        return rows[:limit]
+
+    async def list_entities(
+        self,
+        entity_type=None,
+        normalized_name=None,
+        status=None,
+        active=True,
+        limit=50,
+    ):
+        self._raise_if_configured()
+        rows = self.entities
+        if entity_type is not None:
+            rows = [row for row in rows if row.get("entity_type") == entity_type]
+        if normalized_name is not None:
+            rows = [
+                row for row in rows if row.get("normalized_name") == normalized_name
+            ]
         if status is not None:
             rows = [row for row in rows if row.get("status") == status]
         if active is not None:
@@ -137,6 +160,42 @@ async def test_plan_create_update_deactivate_and_active_listing_flow():
     assert deactivated["active"] is False
     assert deactivated["status"] == "archived"
     assert await service.list_plans(active=True) == []
+
+
+@pytest.mark.asyncio
+async def test_plan_service_normalizes_obsolete_entity_references():
+    memory = FakePlanMemoryService()
+    memory.entities.append(
+        {
+            "id": "entity-flowforce",
+            "entity_type": "project",
+            "display_name": "FlowForce",
+            "normalized_name": "flowforce",
+            "aliases": [],
+            "active": True,
+            "status": "active",
+            "metadata": {"obsolete_aliases": ["Flowfirst", "Flowforte"]},
+        }
+    )
+    service = PlanService(memory)
+
+    created = await service.create_plan(
+        PlanCreateRequest(
+            plan_type="career",
+            title="Launch Flowfirst",
+            description="Polish Flowforte and ship it.",
+            desired_outcome="Revenue from Flowfirst.",
+            priority=4,
+        )
+    )
+
+    assert created["title"] == "Launch FlowForce"
+    assert created["description"] == "Polish FlowForce and ship it."
+    assert created["desired_outcome"] == "Revenue from FlowForce."
+    assert created["primary_entity_id"] == "entity-flowforce"
+    assert created["metadata"]["entity_normalization"][
+        "canonical_entity_id"
+    ] == "entity-flowforce"
 
 
 @pytest.mark.asyncio

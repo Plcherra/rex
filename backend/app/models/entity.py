@@ -27,6 +27,15 @@ EntityEventType = Literal[
     "other",
 ]
 
+ENTITY_NORMALIZATION_METADATA_KEYS = {
+    "canonical_entity_id",
+    "alias_source",
+    "obsolete_aliases",
+    "obsolete_names",
+    "removed_wrong_aliases",
+    "correction_confidence",
+}
+
 
 class EntityCreateRequest(BaseModel):
     entity_type: EntityType

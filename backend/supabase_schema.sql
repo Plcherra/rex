@@ -124,6 +124,9 @@ create index if not exists entities_active_importance_idx
 create index if not exists entities_source_conversation_idx
   on public.entities (source_conversation_id);
 
+comment on column public.entities.metadata is
+  'Entity normalization metadata. Supported keys include canonical_entity_id, alias_source, obsolete_aliases, obsolete_names, removed_wrong_aliases, and correction_confidence.';
+
 create table if not exists public.entity_events (
   id uuid primary key default gen_random_uuid(),
   entity_id uuid not null references public.entities(id) on delete cascade,
@@ -299,6 +302,7 @@ create table if not exists public.commitments (
   title text not null,
   commitment_text text not null,
   plan_id uuid references public.plans(id) on delete set null,
+  milestone_id uuid references public.plan_milestones(id) on delete set null,
   entity_id uuid references public.entities(id) on delete set null,
   source_conversation_id uuid references public.conversations(id) on delete set null,
   source_message_id uuid references public.messages(id) on delete set null,
@@ -321,6 +325,9 @@ create index if not exists commitments_active_due_idx
 
 create index if not exists commitments_plan_idx
   on public.commitments (plan_id);
+
+create index if not exists commitments_milestone_idx
+  on public.commitments (milestone_id);
 
 create index if not exists commitments_entity_idx
   on public.commitments (entity_id);

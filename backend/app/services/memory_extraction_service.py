@@ -9,6 +9,7 @@ from app.models.personal_rule import PersonalRuleCreateRequest, RuleType
 from app.models.plan import PlanCreateRequest, PlanMilestoneCreateRequest, PlanType
 from app.services.ai_service import AIService
 from app.services.commitment_service import CommitmentService
+from app.services.entity_normalization_service import EntityNormalizationService
 from app.services.entity_service import EntityService
 from app.services.plan_service import PlanService
 from app.services.rule_service import RuleService
@@ -104,6 +105,8 @@ Schema:
         "commitment_type": "task" | "habit" | "promise" | "money" | "health" | "relationship" | "work" | "immigration" | "deadline" | "other",
         "title": "short commitment name",
         "commitment_text": "what the user committed to",
+        "plan_id": "only include if already known",
+        "milestone_id": "only include if already known",
         "due_at": "ISO timestamp/date if known",
         "priority": 1 | 2 | 3 | 4 | 5,
         "rationale": "why this should be tracked"
@@ -131,11 +134,26 @@ Plan rules:
 - Treat related details as part of a larger plan when possible: income targets can belong under a relocation or freedom plan; app launch details can belong under a development roadmap; date logistics can belong under one dating plan for that person.
 - Avoid multiple active plans that mean the same thing with different wording.
 
+Plan intelligence rules:
+- A top-level plan is a durable container for a major area of life or work.
+- Do not create a new top-level plan for progress updates, repeated goals, deadlines, single next actions, or alternate wording.
+- If a candidate belongs under an active plan, output it as a plan_milestone or commitment instead.
+- Income, savings, client acquisition, and app revenue details should attach to the user's broader life/work plan when related.
+- Date logistics for the same person should attach to one dating plan for that person.
+- When unsure, prefer a milestone/commitment or ask for confirmation instead of creating a duplicate plan.
+
 Correction rules:
 - If the user corrects stale or wrong information, treat the corrected value as high-priority durable memory.
 - When the user says "not X, actually Y", do not save X as current truth. Save Y clearly and include the correction in the memory content.
 - For corrected person names, create or update the corrected person entity and add a relationship_update entity event that says the earlier name or label was wrong.
 - For corrected plans, save the updated plan details with the corrected person/place/date and avoid reinforcing stale plan wording.
+- For corrected project names, use EchoDesk and FlowForce as canonical project names. Do not save Flow, Flowfirst, Flowforte, or Echotask as active project names or aliases.
+
+Entity normalization rules:
+- If the user corrects a name, spelling, identity, relationship, or label, treat the corrected value as canonical.
+- Do not save the wrong value as current truth or as an active alias when the user asked to remove it.
+- Before creating a new entity, check whether the name is an alias, obsolete name, spelling variant, or correction of an existing active entity.
+- If an obsolete name appears in a new candidate, rewrite it to the canonical entity name and link to the canonical entity.
 
 Do not extract:
 - one-off emotions without durable context
@@ -234,6 +252,7 @@ class MemoryExtractionService:
         self.rule_service = RuleService(memory_service)
         self.plan_service = PlanService(memory_service)
         self.commitment_service = CommitmentService(memory_service)
+        self.entity_normalization_service = EntityNormalizationService()
 
     async def extract_and_save(
         self,
@@ -1202,6 +1221,7 @@ class MemoryExtractionService:
         rationale = self._clean_text(candidate.get("rationale"))
         entity_id = self._clean_text(candidate.get("entity_id"))
         plan_id = self._clean_text(candidate.get("plan_id"))
+        milestone_id = self._clean_text(candidate.get("milestone_id"))
 
         if priority is None or priority < MIN_IMPORTANCE_TO_SAVE:
             return None
@@ -1217,6 +1237,7 @@ class MemoryExtractionService:
                 commitment_text=commitment_text,
                 entity_id=entity_id,
                 plan_id=plan_id,
+                milestone_id=milestone_id,
                 source_conversation_id=conversation_id,
                 source_message_id=user_message_id,
                 priority=priority,
@@ -1310,6 +1331,12 @@ class MemoryExtractionService:
             return None
 
         target = self._normalized_text(entity_name)
+        obsolete_match = self.entity_normalization_service.detect_obsolete_alias(
+            entity_name,
+            entities,
+        )
+        if obsolete_match is not None:
+            return obsolete_match
         for entity in entities:
             keys = [
                 entity.get("normalized_name"),

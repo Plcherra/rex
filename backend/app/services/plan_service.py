@@ -9,6 +9,7 @@ from app.models.plan import (
     PlanMilestoneUpdateRequest,
     PlanUpdateRequest,
 )
+from app.services.entity_normalization_service import EntityNormalizationService
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
 
@@ -22,6 +23,7 @@ class PlanServiceError(Exception):
 class PlanService:
     def __init__(self, memory_service: SupabaseMemoryService) -> None:
         self.memory_service = memory_service
+        self.normalization_service = EntityNormalizationService()
 
     async def create_plan(self, request: PlanCreateRequest) -> dict[str, Any]:
         payload = _payload(request)
@@ -30,6 +32,11 @@ class PlanService:
             payload["description"] = _clean_optional(payload["description"])
         if "desired_outcome" in payload:
             payload["desired_outcome"] = _clean_optional(payload["desired_outcome"])
+        payload = await self._normalize_entity_references(
+            payload,
+            text_fields=("title", "description", "desired_outcome"),
+            link_field="primary_entity_id",
+        )
         wrong_names = _correction_wrong_names(payload)
 
         try:
@@ -113,6 +120,11 @@ class PlanService:
             payload["description"] = _clean_optional(payload["description"])
         if "desired_outcome" in payload:
             payload["desired_outcome"] = _clean_optional(payload["desired_outcome"])
+        payload = await self._normalize_entity_references(
+            payload,
+            text_fields=("title", "description", "desired_outcome"),
+            link_field="primary_entity_id",
+        )
 
         try:
             updated = await self.memory_service.update_plan(plan_id, **payload)
@@ -138,6 +150,10 @@ class PlanService:
         payload["title"] = _clean_required(payload.get("title"), "title")
         if "description" in payload:
             payload["description"] = _clean_optional(payload["description"])
+        payload = await self._normalize_entity_references(
+            payload,
+            text_fields=("title", "description"),
+        )
 
         try:
             return await self.memory_service.create_plan_milestone(payload)
@@ -170,6 +186,10 @@ class PlanService:
             payload["title"] = _clean_required(payload["title"], "title")
         if "description" in payload:
             payload["description"] = _clean_optional(payload["description"])
+        payload = await self._normalize_entity_references(
+            payload,
+            text_fields=("title", "description"),
+        )
 
         try:
             updated = await self.memory_service.update_plan_milestone(
@@ -265,6 +285,28 @@ class PlanService:
                 )
             except MemoryServiceError:
                 continue
+
+    async def _normalize_entity_references(
+        self,
+        payload: dict[str, Any],
+        *,
+        text_fields: tuple[str, ...],
+        link_field: str | None = None,
+    ) -> dict[str, Any]:
+        list_entities = getattr(self.memory_service, "list_entities", None)
+        if list_entities is None:
+            return payload
+        try:
+            entities = await list_entities(active=True, limit=100)
+        except Exception:
+            return payload
+        result = self.normalization_service.normalize_payload_references(
+            payload,
+            entities,
+            text_fields=text_fields,
+            link_field=link_field,
+        )
+        return result.payload
 
 
 def _payload(request: Any) -> dict[str, Any]:

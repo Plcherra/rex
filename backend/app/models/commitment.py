@@ -31,6 +31,7 @@ class CommitmentCreateRequest(BaseModel):
     title: str = Field(min_length=1)
     commitment_text: str = Field(min_length=1)
     plan_id: Optional[str] = None
+    milestone_id: Optional[str] = None
     entity_id: Optional[str] = None
     source_conversation_id: Optional[str] = None
     source_message_id: Optional[str] = None
@@ -49,6 +50,7 @@ class CommitmentUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1)
     commitment_text: Optional[str] = Field(default=None, min_length=1)
     plan_id: Optional[str] = None
+    milestone_id: Optional[str] = None
     entity_id: Optional[str] = None
     priority: Optional[int] = Field(default=None, ge=1, le=5)
     status: Optional[CommitmentStatus] = None
@@ -65,6 +67,7 @@ class CommitmentResponse(BaseModel):
     title: str
     commitment_text: str
     plan_id: Optional[str] = None
+    milestone_id: Optional[str] = None
     entity_id: Optional[str] = None
     source_conversation_id: Optional[str] = None
     source_message_id: Optional[str] = None

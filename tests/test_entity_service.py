@@ -258,6 +258,46 @@ async def test_entity_service_archives_wrong_person_after_name_correction():
 
 
 @pytest.mark.asyncio
+async def test_entity_service_reuses_canonical_entity_for_obsolete_project_name():
+    memory = FakeEntityMemoryService()
+    memory.entities.append(
+        {
+            "id": "entity-echodesk",
+            "entity_type": "project",
+            "display_name": "EchoDesk",
+            "normalized_name": "echodesk",
+            "aliases": [],
+            "relationship": "active project",
+            "summary": "Canonical app name.",
+            "importance": 4,
+            "active": True,
+            "status": "active",
+            "metadata": {"obsolete_aliases": ["Echotask"]},
+        }
+    )
+    service = EntityService(memory)
+
+    row = await service.create_entity(
+        EntityCreateRequest(
+            entity_type="project",
+            display_name="Echotask",
+            normalized_name="echotask",
+            aliases=["Echotask"],
+            summary="Misstated project name.",
+            importance=5,
+        )
+    )
+
+    assert row["id"] == "entity-echodesk"
+    assert row["display_name"] == "EchoDesk"
+    assert row["aliases"] == []
+    assert row["importance"] == 5
+    assert row["metadata"]["canonical_entity_id"] == "entity-echodesk"
+    assert row["metadata"]["obsolete_aliases"] == ["echotask"]
+    assert len(memory.entities) == 1
+
+
+@pytest.mark.asyncio
 async def test_entity_service_keeps_person_descriptors_as_aliases():
     memory = FakeEntityMemoryService()
     service = EntityService(memory)

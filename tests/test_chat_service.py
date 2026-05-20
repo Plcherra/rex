@@ -161,6 +161,10 @@ class FakeAccountabilityService:
         return self.signals
 
 
+class FakeMemoryDisciplineService:
+    pass
+
+
 class BlockingMemoryExtractionService:
     def __init__(self):
         self.calls = []
@@ -216,6 +220,24 @@ async def test_chat_service_handles_normal_chat():
         "assistant",
     ]
     assert ai_service.messages[-1]["content"] == "Hello Rex"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_accepts_memory_discipline_dependency_without_behavior_change():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    discipline_service = FakeMemoryDisciplineService()
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        memory_discipline_service=discipline_service,
+    )
+
+    result = await chat_service.send_message("Hello Rex")
+
+    assert result["response"] == "Rex response"
+    assert chat_service.memory_discipline_service is discipline_service
 
 
 @pytest.mark.asyncio

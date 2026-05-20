@@ -19,6 +19,7 @@ router = APIRouter(prefix="/commitments", tags=["commitments"])
 @router.get("", response_model=list[CommitmentResponse])
 async def list_commitments(
     commitment_type: Optional[CommitmentType] = Query(default=None),
+    milestone_id: Optional[str] = Query(default=None),
     status: Optional[CommitmentStatus] = Query(default=None),
     active: Optional[bool] = Query(default=True),
     limit: int = Query(default=50, ge=1, le=100),
@@ -27,6 +28,7 @@ async def list_commitments(
     try:
         commitments = await commitment_service.list_commitments(
             commitment_type=commitment_type,
+            milestone_id=milestone_id,
             status=status,
             active=active,
             limit=limit,

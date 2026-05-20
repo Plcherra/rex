@@ -62,7 +62,7 @@ PLAN_MILESTONE_SELECT = (
     "active,metadata,created_at,updated_at"
 )
 COMMITMENT_SELECT = (
-    "id,commitment_type,title,commitment_text,plan_id,entity_id,"
+    "id,commitment_type,title,commitment_text,plan_id,milestone_id,entity_id,"
     "source_conversation_id,source_message_id,source_memory_id,priority,status,"
     "active,due_at,completed_at,last_checked_at,metadata,created_at,updated_at"
 )
@@ -898,6 +898,7 @@ class SupabaseMemoryService:
         limit: int = 50,
         commitment_type: Optional[str] = None,
         plan_id: Optional[str] = None,
+        milestone_id: Optional[str] = None,
         entity_id: Optional[str] = None,
         status: Optional[str] = None,
         active: Optional[bool] = None,
@@ -905,6 +906,7 @@ class SupabaseMemoryService:
         filters = {
             "commitment_type": commitment_type,
             "plan_id": plan_id,
+            "milestone_id": milestone_id,
             "entity_id": entity_id,
             "status": status,
             "active": active,

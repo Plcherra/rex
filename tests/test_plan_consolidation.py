@@ -101,6 +101,36 @@ def test_build_plan_clusters_groups_duplicate_melissa_date_plans():
     assert len(clusters[0].archive) == 1
 
 
+def test_build_plan_clusters_ignores_capitalized_non_name_words():
+    clusters = build_plan_clusters(
+        [
+            _plan(
+                "plan-1",
+                "Ask Melissa out for dinner",
+                "dating",
+                description="I invited Melissa today in a teasing way.",
+                desired_outcome="Successful date with Melissa",
+                priority=4,
+            ),
+            _plan(
+                "plan-2",
+                "Monday outing with Melissa",
+                "dating",
+                description=(
+                    "Pursuing a date or meetup with Melissa this Monday; "
+                    "follow-up opportunity on Thursday to confirm."
+                ),
+                desired_outcome="Clear confirmation or successful one-on-one time",
+                priority=4,
+            ),
+        ]
+    )
+
+    assert len(clusters) == 1
+    assert clusters[0].name == "dating_person_melissa"
+    assert clusters[0].archive[0]["id"] in {"plan-1", "plan-2"}
+
+
 @pytest.mark.asyncio
 async def test_consolidate_plans_dry_run_does_not_write():
     memory = FakeConsolidationMemoryService()

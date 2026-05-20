@@ -9,6 +9,7 @@ from app.models.entity import (
     EntityEventUpdateRequest,
     EntityUpdateRequest,
 )
+from app.services.entity_normalization_service import EntityNormalizationService
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
 ENTITY_DESCRIPTOR_PREFIXES = (
@@ -50,6 +51,7 @@ class EntityServiceError(Exception):
 class EntityService:
     def __init__(self, memory_service: SupabaseMemoryService) -> None:
         self.memory_service = memory_service
+        self.normalization_service = EntityNormalizationService()
 
     async def create_entity(self, request: EntityCreateRequest) -> dict[str, Any]:
         payload = _payload(request)
@@ -86,6 +88,12 @@ class EntityService:
                 active=True,
                 limit=100,
             )
+            normalized = self.normalization_service.normalize_candidate_entity(
+                payload,
+                existing,
+            )
+            payload = normalized.payload
+            wrong_names.update(normalized.obsolete_names)
             duplicate = next(
                 (
                     entity
@@ -98,6 +106,8 @@ class EntityService:
                 ),
                 None,
             )
+            if duplicate is None and normalized.canonical_entity is not None:
+                duplicate = normalized.canonical_entity
             if duplicate:
                 wrong_names.update(_correction_wrong_names(duplicate))
                 entity = await self._merge_existing_entity(duplicate, payload)

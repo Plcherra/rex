@@ -8,6 +8,7 @@ from app.services.ai_service import AIService
 from app.services.accountability_service import AccountabilityService
 from app.services.file_service import FileService
 from app.services.memory_extraction_service import MemoryExtractionService
+from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.prompt_service import PromptService
 from app.services.time_context_service import TimeContextService
 
@@ -81,6 +82,7 @@ class ChatService:
         prompt_service: Optional[PromptService] = None,
         time_context_service: Optional[TimeContextService] = None,
         accountability_service: Optional[AccountabilityService] = None,
+        memory_discipline_service: Optional[MemoryDisciplineService] = None,
     ) -> None:
         self.ai_service = ai_service
         self.file_service = file_service
@@ -89,6 +91,7 @@ class ChatService:
         self.prompt_service = prompt_service or PromptService()
         self.time_context_service = time_context_service or TimeContextService()
         self.accountability_service = accountability_service or AccountabilityService()
+        self.memory_discipline_service = memory_discipline_service
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def send_message(

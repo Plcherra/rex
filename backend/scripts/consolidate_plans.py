@@ -238,7 +238,7 @@ def _is_app_development_plan(plan: dict[str, Any]) -> bool:
         "clarity",
         "development",
         "echodesk",
-        "flowfirst",
+        "flowforce",
         "launch",
         "rex",
     }
@@ -269,11 +269,15 @@ def _person_tokens(plan: dict[str, Any]) -> set[str]:
     }
     return names - {
         "ask",
+        "clear",
         "date",
         "dinner",
+        "meetup",
         "monday",
         "next",
+        "outing",
         "positive",
+        "pursuing",
         "successful",
         "thursday",
     }

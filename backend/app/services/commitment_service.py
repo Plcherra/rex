@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from app.models.commitment import CommitmentCreateRequest, CommitmentUpdateRequest
+from app.services.entity_normalization_service import EntityNormalizationService
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
 
@@ -17,6 +18,7 @@ class CommitmentServiceError(Exception):
 class CommitmentService:
     def __init__(self, memory_service: SupabaseMemoryService) -> None:
         self.memory_service = memory_service
+        self.normalization_service = EntityNormalizationService()
 
     async def create_commitment(
         self, request: CommitmentCreateRequest
@@ -26,6 +28,7 @@ class CommitmentService:
         payload["commitment_text"] = _clean_required(
             payload.get("commitment_text"), "commitment_text"
         )
+        payload = await self._normalize_entity_references(payload)
 
         try:
             existing = await self.memory_service.list_commitments(
@@ -51,6 +54,7 @@ class CommitmentService:
         self,
         *,
         commitment_type: str | None = None,
+        milestone_id: str | None = None,
         status: str | None = None,
         active: bool | None = True,
         limit: int = 50,
@@ -58,6 +62,7 @@ class CommitmentService:
         try:
             return await self.memory_service.list_commitments(
                 commitment_type=commitment_type,
+                milestone_id=milestone_id,
                 status=status,
                 active=active,
                 limit=limit,
@@ -75,6 +80,7 @@ class CommitmentService:
             payload["commitment_text"] = _clean_required(
                 payload["commitment_text"], "commitment_text"
             )
+        payload = await self._normalize_entity_references(payload)
 
         try:
             updated = await self.memory_service.update_commitment(
@@ -106,6 +112,7 @@ class CommitmentService:
             return False
         return (
             existing.get("plan_id") == payload.get("plan_id")
+            and existing.get("milestone_id") == payload.get("milestone_id")
             and existing.get("entity_id") == payload.get("entity_id")
         )
 
@@ -118,6 +125,7 @@ class CommitmentService:
             "source_message_id",
             "source_memory_id",
             "due_at",
+            "milestone_id",
         ):
             if payload.get(field) and not existing.get(field):
                 updates[field] = payload[field]
@@ -131,6 +139,25 @@ class CommitmentService:
             return existing
         updated = await self.memory_service.update_commitment(existing["id"], **updates)
         return updated or existing
+
+    async def _normalize_entity_references(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        list_entities = getattr(self.memory_service, "list_entities", None)
+        if list_entities is None:
+            return payload
+        try:
+            entities = await list_entities(active=True, limit=100)
+        except Exception:
+            return payload
+        result = self.normalization_service.normalize_payload_references(
+            payload,
+            entities,
+            text_fields=("title", "commitment_text"),
+            link_field="entity_id",
+        )
+        return result.payload
 
 
 def is_open_commitment(commitment: dict[str, Any]) -> bool:

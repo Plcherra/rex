@@ -190,6 +190,74 @@ async def test_entity_service_deduplicates_by_alias_and_descriptive_name():
 
 
 @pytest.mark.asyncio
+async def test_entity_service_archives_wrong_person_after_name_correction():
+    memory = FakeEntityMemoryService()
+    memory.entities.extend(
+        [
+            {
+                "id": "entity-al",
+                "entity_type": "person",
+                "display_name": "Al",
+                "normalized_name": "al",
+                "aliases": ["AI"],
+                "relationship": "person the user is planning to ask out",
+                "summary": "Al has Monday off.",
+                "importance": 4,
+                "active": True,
+                "status": "active",
+                "metadata": {},
+            },
+            {
+                "id": "entity-next-week-date",
+                "entity_type": "person",
+                "display_name": "next week date",
+                "normalized_name": "next week date",
+                "aliases": [],
+                "relationship": "date the user is planning for next week",
+                "summary": "Name is not Al and not AI.",
+                "importance": 4,
+                "active": True,
+                "status": "active",
+                "metadata": {},
+            },
+        ]
+    )
+    service = EntityService(memory)
+
+    row = await service.create_entity(
+        EntityCreateRequest(
+            entity_type="person",
+            display_name="Melissa",
+            normalized_name="melissa",
+            aliases=["Al", "AI"],
+            relationship="person in next-week date plan",
+            summary="Corrected name for the date plan participant.",
+            importance=5,
+            metadata={
+                "wrong_names": ["Al", "AI"],
+                "correction_source": "explicit_person_correction",
+            },
+        )
+    )
+
+    assert row["display_name"] == "Melissa"
+    assert row["id"] != "entity-al"
+    assert len(memory.entities) == 3
+    stale_rows = {
+        row["id"]: row for row in memory.entities if row["id"] != "entity-3"
+    }
+    assert stale_rows["entity-al"]["active"] is False
+    assert stale_rows["entity-al"]["status"] == "inactive"
+    assert stale_rows["entity-al"]["metadata"]["superseded_by_entity_id"] == (
+        "entity-3"
+    )
+    assert stale_rows["entity-next-week-date"]["active"] is False
+    assert stale_rows["entity-next-week-date"]["metadata"][
+        "cleanup_reason"
+    ] == "explicit_person_correction"
+
+
+@pytest.mark.asyncio
 async def test_entity_service_keeps_person_descriptors_as_aliases():
     memory = FakeEntityMemoryService()
     service = EntityService(memory)

@@ -178,6 +178,104 @@ async def test_plan_service_deduplicates_active_plan_by_title_and_type():
 
 
 @pytest.mark.asyncio
+async def test_plan_service_updates_wrong_name_plan_for_corrected_person():
+    memory = FakePlanMemoryService()
+    memory.plans.append(
+        {
+            "id": "plan-al",
+            "plan_type": "dating",
+            "title": "Ask Al out for dinner",
+            "description": "Dinner with Al on Monday near my house.",
+            "desired_outcome": "Successful date with Al.",
+            "primary_entity_id": None,
+            "priority": 4,
+            "status": "active",
+            "active": True,
+            "metadata": {"source": "original"},
+        }
+    )
+    service = PlanService(memory)
+
+    row = await service.create_plan(
+        PlanCreateRequest(
+            plan_type="dating",
+            title="Ask Melissa out for dinner",
+            description="Dinner with Melissa on Monday near my house.",
+            desired_outcome="Successful date with Melissa.",
+            primary_entity_id="entity-melissa",
+            priority=5,
+            metadata={
+                "source_content": (
+                    "The person for the next-week date plan is Melissa, "
+                    "corrected from Al or AI."
+                )
+            },
+        )
+    )
+
+    assert row["id"] == "plan-al"
+    assert row["title"] == "Ask Melissa out for dinner"
+    assert row["description"] == "Dinner with Melissa on Monday near my house."
+    assert row["desired_outcome"] == "Successful date with Melissa."
+    assert row["primary_entity_id"] == "entity-melissa"
+    assert row["priority"] == 5
+    assert len(memory.plans) == 1
+
+
+@pytest.mark.asyncio
+async def test_plan_service_archives_stale_wrong_name_duplicate():
+    memory = FakePlanMemoryService()
+    memory.plans.extend(
+        [
+            {
+                "id": "plan-melissa",
+                "plan_type": "dating",
+                "title": "Ask Melissa out for dinner",
+                "description": "Dinner with Melissa.",
+                "desired_outcome": "Successful date with Melissa.",
+                "primary_entity_id": "entity-melissa",
+                "priority": 4,
+                "status": "active",
+                "active": True,
+                "metadata": {},
+            },
+            {
+                "id": "plan-al",
+                "plan_type": "dating",
+                "title": "Ask Al out for dinner",
+                "description": "Dinner with Al on Monday.",
+                "desired_outcome": "Successful date with Al.",
+                "primary_entity_id": None,
+                "priority": 4,
+                "status": "active",
+                "active": True,
+                "metadata": {},
+            },
+        ]
+    )
+    service = PlanService(memory)
+
+    row = await service.create_plan(
+        PlanCreateRequest(
+            plan_type="dating",
+            title="Ask Melissa out for dinner",
+            description="Dinner with Melissa.",
+            desired_outcome="Successful date with Melissa.",
+            primary_entity_id="entity-melissa",
+            priority=5,
+            metadata={"wrong_names": ["Al", "AI"]},
+        )
+    )
+
+    assert row["id"] == "plan-melissa"
+    stale = next(plan for plan in memory.plans if plan["id"] == "plan-al")
+    assert stale["active"] is False
+    assert stale["status"] == "archived"
+    assert stale["metadata"]["superseded_by_plan_id"] == "plan-melissa"
+    assert stale["metadata"]["cleanup_reason"] == "explicit_person_correction"
+
+
+@pytest.mark.asyncio
 async def test_plan_milestone_create_update_deactivate_flow():
     memory = FakePlanMemoryService()
     service = PlanService(memory)

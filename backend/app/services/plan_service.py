@@ -30,6 +30,7 @@ class PlanService:
             payload["description"] = _clean_optional(payload["description"])
         if "desired_outcome" in payload:
             payload["desired_outcome"] = _clean_optional(payload["desired_outcome"])
+        wrong_names = _correction_wrong_names(payload)
 
         try:
             existing = await self.memory_service.list_plans(
@@ -47,8 +48,30 @@ class PlanService:
                 None,
             )
             if duplicate:
-                return await self._merge_existing_plan(duplicate, payload)
-            return await self.memory_service.create_plan(payload)
+                plan = await self._merge_existing_plan(duplicate, payload)
+            else:
+                corrected_duplicate = next(
+                    (
+                        plan
+                        for plan in existing
+                        if _plan_matches_corrected_duplicate(
+                            plan,
+                            payload,
+                            wrong_names,
+                        )
+                    ),
+                    None,
+                )
+                if corrected_duplicate:
+                    plan = await self._merge_existing_plan(
+                        corrected_duplicate,
+                        _corrected_plan_payload(payload, wrong_names),
+                    )
+                else:
+                    plan = await self.memory_service.create_plan(payload)
+            if wrong_names:
+                await self._archive_superseded_plans(plan, wrong_names)
+            return plan
         except MemoryServiceError as error:
             raise PlanServiceError(error.detail, error.status_code) from error
 
@@ -162,6 +185,7 @@ class PlanService:
     ) -> dict[str, Any]:
         updates: dict[str, Any] = {}
         for field in (
+            "title",
             "description",
             "desired_outcome",
             "primary_entity_id",
@@ -171,11 +195,21 @@ class PlanService:
             "start_date",
             "target_date",
         ):
-            if payload.get(field) and not existing.get(field):
+            if payload.get(field) and payload.get(field) != existing.get(field):
                 updates[field] = payload[field]
+        if payload.get("status") and payload.get("status") != existing.get("status"):
+            updates["status"] = payload["status"]
+        if (
+            payload.get("active") is not None
+            and payload.get("active") != existing.get("active")
+        ):
+            updates["active"] = payload["active"]
         if payload.get("priority", 3) > existing.get("priority", 3):
             updates["priority"] = payload["priority"]
-        metadata = {**(existing.get("metadata") or {}), **(payload.get("metadata") or {})}
+        metadata = {
+            **(existing.get("metadata") or {}),
+            **(payload.get("metadata") or {}),
+        }
         if metadata != (existing.get("metadata") or {}):
             updates["metadata"] = metadata
 
@@ -183,6 +217,44 @@ class PlanService:
             return existing
         updated = await self.memory_service.update_plan(existing["id"], **updates)
         return updated or existing
+
+    async def _archive_superseded_plans(
+        self,
+        corrected_plan: dict[str, Any],
+        wrong_names: set[str],
+    ) -> None:
+        corrected_id = corrected_plan.get("id")
+        if not corrected_id:
+            return
+        try:
+            plans = await self.memory_service.list_plans(
+                plan_type=corrected_plan.get("plan_type"),
+                active=True,
+                limit=100,
+            )
+        except MemoryServiceError:
+            return
+
+        for plan in plans:
+            if plan.get("id") == corrected_id:
+                continue
+            if not _plan_contains_wrong_name(plan, wrong_names):
+                continue
+            metadata = {
+                **(plan.get("metadata") or {}),
+                "superseded_by_plan_id": corrected_id,
+                "superseded_by_title": corrected_plan.get("title"),
+                "cleanup_reason": "explicit_person_correction",
+            }
+            try:
+                await self.memory_service.update_plan(
+                    plan["id"],
+                    active=False,
+                    status="archived",
+                    metadata=metadata,
+                )
+            except MemoryServiceError:
+                continue
 
 
 def _payload(request: Any) -> dict[str, Any]:
@@ -220,4 +292,103 @@ def _clean_optional(value: Any) -> str | None:
 
 
 def _normalize_text(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value or "").casefold()).strip()
+    cleaned = _clean_optional(value)
+    if not cleaned:
+        return ""
+    normalized = re.sub(r"[^a-z0-9]+", " ", cleaned.casefold())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _correction_wrong_names(payload: dict[str, Any]) -> set[str]:
+    metadata = payload.get("metadata") or {}
+    values: list[Any] = []
+    for key in ("wrong_names", "wrong_name", "old_names", "old_name"):
+        raw_value = metadata.get(key)
+        if isinstance(raw_value, list):
+            values.extend(raw_value)
+        elif raw_value:
+            values.append(raw_value)
+
+    person_correction = metadata.get("person_correction")
+    if isinstance(person_correction, dict):
+        raw_value = person_correction.get("wrong_names")
+        if isinstance(raw_value, list):
+            values.extend(raw_value)
+        elif raw_value:
+            values.append(raw_value)
+
+    source_content = _clean_optional(metadata.get("source_content"))
+    if source_content:
+        match = re.search(
+            r"\b(?:corrected|replacing|from)\s+(?:from\s+)?([A-Za-z0-9 ,/]+)[.!?]*$",
+            source_content,
+            flags=re.I,
+        )
+        if match:
+            values.extend(re.split(r"\s*(?:,|/|\bor\b|\band\b)\s*", match.group(1)))
+
+    return {_normalize_text(value) for value in values if _clean_optional(value)}
+
+
+def _plan_text(plan: dict[str, Any]) -> str:
+    return _normalize_text(
+        " ".join(
+            str(plan.get(field) or "")
+            for field in ("title", "description", "desired_outcome")
+        )
+    )
+
+
+def _plan_contains_wrong_name(plan: dict[str, Any], wrong_names: set[str]) -> bool:
+    if not wrong_names:
+        return False
+    return bool(set(_plan_text(plan).split()) & wrong_names)
+
+
+def _plan_matches_corrected_duplicate(
+    existing: dict[str, Any],
+    payload: dict[str, Any],
+    wrong_names: set[str],
+) -> bool:
+    if not wrong_names or not _plan_contains_wrong_name(existing, wrong_names):
+        return False
+    existing_entity_id = existing.get("primary_entity_id")
+    payload_entity_id = payload.get("primary_entity_id")
+    if payload_entity_id and existing_entity_id not in {None, payload_entity_id}:
+        return False
+    return bool(set(_plan_text(existing).split()) & set(_plan_text(payload).split()))
+
+
+def _corrected_plan_payload(
+    payload: dict[str, Any],
+    wrong_names: set[str],
+) -> dict[str, Any]:
+    updated = dict(payload)
+    corrected_display = _corrected_display_from_plan(payload, wrong_names)
+    if not corrected_display:
+        return updated
+
+    for field in ("title", "description", "desired_outcome"):
+        value = updated.get(field)
+        if not value:
+            continue
+        for wrong_name in wrong_names:
+            value = re.sub(
+                rf"\b{re.escape(wrong_name)}\b",
+                corrected_display,
+                str(value),
+                flags=re.I,
+            )
+        updated[field] = value
+    return updated
+
+
+def _corrected_display_from_plan(
+    payload: dict[str, Any],
+    wrong_names: set[str],
+) -> str | None:
+    text = str(payload.get("title") or "")
+    for token in re.findall(r"\b[A-Z][a-z0-9]{1,24}\b", text):
+        if _normalize_text(token) not in wrong_names:
+            return token
+    return None

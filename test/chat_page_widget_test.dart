@@ -271,6 +271,66 @@ void main() {
       expect(find.textContaining('Saved answer'), findsOneWidget);
     },
   );
+
+  testWidgets('Conversation list groups chats by local date', (
+    WidgetTester tester,
+  ) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, 12);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final conversationApi = ConversationApi(
+      baseUrl: 'http://rex.test',
+      client: MockClient((request) async {
+        if (request.url.path == '/conversations') {
+          return http.Response('''
+[
+  {
+    "id": "conversation-today",
+    "title": "Today plan",
+    "timestamp": "${today.toUtc().toIso8601String()}",
+    "last_message": {
+      "id": "message-today",
+      "conversation_id": "conversation-today",
+      "role": "assistant",
+      "content": "Latest answer",
+      "timestamp": "${today.toUtc().toIso8601String()}"
+    }
+  },
+  {
+    "id": "conversation-yesterday",
+    "title": "Yesterday plan",
+    "timestamp": "${yesterday.toUtc().toIso8601String()}",
+    "last_message": {
+      "id": "message-yesterday",
+      "conversation_id": "conversation-yesterday",
+      "role": "assistant",
+      "content": "Older answer",
+      "timestamp": "${yesterday.toUtc().toIso8601String()}"
+    }
+  }
+]
+''', 200);
+        }
+
+        return http.Response('Not found', 404);
+      }),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [conversationApiProvider.overrideWithValue(conversationApi)],
+        child: const RexApp(),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Conversations'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Yesterday'), findsOneWidget);
+    expect(find.text('Today plan'), findsOneWidget);
+    expect(find.text('Yesterday plan'), findsOneWidget);
+  });
 }
 
 class _FakeMicrophonePermissionService implements MicrophonePermissionService {

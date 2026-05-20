@@ -27,16 +27,36 @@ Use this as the source of truth for what is implemented, what still needs manual
 
 ### Still Missing Before Calling This Fully Complete
 
-- [ ] Deploy the latest backend changes to the VPS.
-- [ ] Run the structured-memory backfill in dry-run mode on the VPS.
-- [ ] Review the dry-run output and confirm it only proposes obvious records.
-- [ ] Run the structured-memory backfill with `--apply` if the dry-run output is clean.
-- [ ] Restart the backend after deployment/backfill.
-- [ ] Rebuild and install the latest release app on the phone.
-- [ ] Run the manual validation checklist in `docs/action_plans/rex_memory_manual_test.md`.
-- [ ] Confirm Rex remembers `Melissa`, not stale `Al` / `AI`, in both chat and voice.
-- [ ] Confirm Memory UI shows the corrected person, linked plan, location, and no duplicate active wrong records.
-- [ ] Confirm Accountability UI still loads rules, commitments, plans, and signals.
+- [x] Deploy the structured-memory backend changes to the VPS.
+- [x] Run the structured-memory backfill in dry-run mode on the VPS.
+- [x] Review the dry-run output and confirm it only proposes obvious records.
+- [x] Run the structured-memory backfill with `--apply` after the dry-run output is clean.
+- [x] Restart the backend after deployment/backfill.
+- [x] Rebuild and install the latest release app on the phone.
+- [x] Run extended real-world manual validation through chat and voice.
+- [x] Confirm Rex remembers `Melissa`, the linked dating plan, and Massachusetts in normal use.
+- [x] Confirm Memory UI shows structured layers for Notes, People, Rules, Plans, and Commitments.
+- [x] Confirm conversation timestamps are already available and the app now groups conversation history by date.
+- [x] Add backend cleanup so explicit person corrections can archive stale active wrong person records and duplicate wrong-name plans.
+- [x] Add regression tests for corrected person cleanup and duplicate corrected plan cleanup.
+- [ ] Deploy the latest stale-cleanup backend changes to the VPS.
+- [ ] Re-run the structured-memory backfill after deployment so existing stale rows like generic `next week date` and stale `Al` / `AI` are archived.
+- [ ] Manually deactivate or merge transcription mistake records like `Stephanie` when the intended person was `Laura`.
+- [ ] Add a safer correction/merge path in the Memory UI so wrong structured records can be fixed without needing direct API/Supabase cleanup.
+- [ ] Improve person disambiguation when voice transcription introduces a wrong name.
+- [ ] Confirm Accountability UI still loads rules, commitments, plans, and signals after the latest memory cleanup.
+- [x] Re-run full local validation after the backend stale-cleanup fix.
+- [ ] Re-run VPS/manual validation after stale records are cleaned up in production.
+
+### Manual Validation Notes - 2026-05-20
+
+- Rex held a long voice/manual validation session for roughly 2-3 hours.
+- Voice call quality is usable for talk-to-talk sessions, with only a few failures across the long test.
+- Background voice is not complete yet; opening another app still interrupts the active call flow.
+- Noisy street environments can still disrupt Rex voice playback or the active call.
+- Memory quality improved significantly: Rex remembers Melissa, Massachusetts, and several real people/details.
+- Remaining memory risk is stale or wrongly transcribed records staying active beside corrected records instead of being merged or deactivated.
+- Conversation history became hard to scan as usage increased, so the app now groups conversations by date using the existing backend timestamps.
 
 ### Validation Commands
 

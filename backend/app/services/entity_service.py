@@ -65,11 +65,12 @@ class EntityService:
             original_aliases,
         )
         payload["display_name"] = display_name
-        payload["normalized_name"] = _normalize_entity_name(
-            display_name if payload.get("entity_type") == "person" else (
-                original_normalized_name or display_name
-            )
+        normalized_source = (
+            display_name
+            if payload.get("entity_type") == "person"
+            else original_normalized_name or display_name
         )
+        payload["normalized_name"] = _normalize_entity_name(normalized_source)
         payload["aliases"] = _entity_aliases(
             payload,
             original_display_name=original_display_name,
@@ -77,6 +78,7 @@ class EntityService:
             original_aliases=original_aliases,
             display_name=display_name,
         )
+        wrong_names = _correction_wrong_names(payload)
 
         try:
             existing = await self.memory_service.list_entities(
@@ -88,13 +90,21 @@ class EntityService:
                 (
                     entity
                     for entity in existing
-                    if _entity_matches_payload(entity, payload)
+                    if _entity_matches_payload(
+                        entity,
+                        payload,
+                        ignore_alias_matches=bool(wrong_names),
+                    )
                 ),
                 None,
             )
             if duplicate:
-                return await self._merge_existing_entity(duplicate, payload)
-            return await self.memory_service.create_entity(payload)
+                entity = await self._merge_existing_entity(duplicate, payload)
+            else:
+                entity = await self.memory_service.create_entity(payload)
+            if wrong_names:
+                await self._archive_superseded_entities(entity, wrong_names)
+            return entity
         except MemoryServiceError as error:
             raise EntityServiceError(error.detail, error.status_code) from error
 
@@ -241,6 +251,46 @@ class EntityService:
 
         updated = await self.memory_service.update_entity(existing["id"], **updates)
         return updated or existing
+
+    async def _archive_superseded_entities(
+        self,
+        corrected_entity: dict[str, Any],
+        wrong_names: set[str],
+    ) -> None:
+        corrected_id = corrected_entity.get("id")
+        if not corrected_id:
+            return
+
+        try:
+            entities = await self.memory_service.list_entities(
+                entity_type=corrected_entity.get("entity_type"),
+                active=True,
+                limit=100,
+            )
+        except MemoryServiceError:
+            return
+
+        for entity in entities:
+            if entity.get("id") == corrected_id:
+                continue
+            if not _is_superseded_entity(entity, wrong_names):
+                continue
+
+            metadata = {
+                **(entity.get("metadata") or {}),
+                "superseded_by_entity_id": corrected_id,
+                "superseded_by_display_name": corrected_entity.get("display_name"),
+                "cleanup_reason": "explicit_person_correction",
+            }
+            try:
+                await self.memory_service.update_entity(
+                    entity["id"],
+                    active=False,
+                    status="inactive",
+                    metadata=metadata,
+                )
+            except MemoryServiceError:
+                continue
 
 
 def _payload(request: Any) -> dict[str, Any]:
@@ -398,12 +448,17 @@ def entity_event_accountability_text(event: dict[str, Any]) -> str:
     )
 
 
-def _entity_match_keys(entity: dict[str, Any]) -> set[str]:
+def _entity_match_keys(
+    entity: dict[str, Any],
+    *,
+    include_aliases: bool = True,
+) -> set[str]:
     raw_values = [
         entity.get("normalized_name"),
         entity.get("display_name"),
-        *entity.get("aliases", []),
     ]
+    if include_aliases:
+        raw_values.extend(entity.get("aliases", []))
     return {
         _normalize_entity_name(value)
         for value in raw_values
@@ -414,10 +469,84 @@ def _entity_match_keys(entity: dict[str, Any]) -> set[str]:
 def _entity_matches_payload(
     entity: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    ignore_alias_matches: bool = False,
 ) -> bool:
-    existing_keys = _entity_match_keys(entity)
-    incoming_keys = _entity_match_keys(payload)
+    existing_keys = _entity_match_keys(
+        entity,
+        include_aliases=not ignore_alias_matches,
+    )
+    incoming_keys = _entity_match_keys(
+        payload,
+        include_aliases=not ignore_alias_matches,
+    )
     return bool(existing_keys & incoming_keys)
+
+
+def _correction_wrong_names(payload: dict[str, Any]) -> set[str]:
+    metadata = payload.get("metadata") or {}
+    values: list[Any] = []
+    for key in ("wrong_names", "wrong_name", "old_names", "old_name"):
+        raw_value = metadata.get(key)
+        if isinstance(raw_value, list):
+            values.extend(raw_value)
+        elif raw_value:
+            values.append(raw_value)
+
+    person_correction = metadata.get("person_correction")
+    if isinstance(person_correction, dict):
+        raw_value = person_correction.get("wrong_names")
+        if isinstance(raw_value, list):
+            values.extend(raw_value)
+        elif raw_value:
+            values.append(raw_value)
+
+    source_content = _clean_optional(metadata.get("source_content"))
+    if source_content:
+        match = re.search(
+            r"\b(?:corrected|replacing|from)\s+(?:from\s+)?([A-Za-z0-9 ,/]+)[.!?]*$",
+            source_content,
+            flags=re.I,
+        )
+        if match:
+            values.extend(re.split(r"\s*(?:,|/|\bor\b|\band\b)\s*", match.group(1)))
+
+    return {
+        _normalize_entity_name(value)
+        for value in values
+        if _clean_optional(value)
+    }
+
+
+def _is_superseded_entity(entity: dict[str, Any], wrong_names: set[str]) -> bool:
+    keys = _entity_match_keys(entity)
+    if keys & wrong_names:
+        return True
+
+    normalized_name = _safe_normalize_entity_name(entity.get("normalized_name"))
+    display_name = _safe_normalize_entity_name(entity.get("display_name"))
+    if normalized_name in {"next week date", "date plan"} or display_name in {
+        "next week date",
+        "date plan",
+    }:
+        text = _safe_normalize_entity_name(
+            " ".join(
+                str(entity.get(field) or "")
+                for field in ("relationship", "summary")
+            )
+        )
+        return bool(set(text.split()) & wrong_names)
+
+    return False
+
+
+def _safe_normalize_entity_name(value: Any) -> str:
+    if not _clean_optional(value):
+        return ""
+    try:
+        return _normalize_entity_name(value)
+    except EntityServiceError:
+        return ""
 
 
 def _dedupe_strings(values: list[str] | None) -> list[str]:

@@ -179,17 +179,24 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
                 ),
               )
             else
-              SliverList.builder(
-                itemCount: state.conversations.length,
-                itemBuilder: (context, index) {
-                  final conversation = state.conversations[index];
-                  return _ConversationTile(
-                    conversation: conversation,
-                    isSelected: conversation.id == currentConversation?.id,
-                    onTap: () => _openConversation(conversation),
-                    onDelete: () => _deleteConversation(conversation),
-                  );
-                },
+              SliverList(
+                delegate: SliverChildListDelegate(
+                  _conversationGroups(state.conversations)
+                      .expand<Widget>(
+                        (group) => [
+                          _ConversationDateHeader(label: group.label),
+                          for (final conversation in group.conversations)
+                            _ConversationTile(
+                              conversation: conversation,
+                              isSelected:
+                                  conversation.id == currentConversation?.id,
+                              onTap: () => _openConversation(conversation),
+                              onDelete: () => _deleteConversation(conversation),
+                            ),
+                        ],
+                      )
+                      .toList(growable: false),
+                ),
               ),
           ],
         ),
@@ -201,6 +208,29 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
               icon: const Icon(Icons.add_rounded),
               label: const Text('New'),
             ),
+    );
+  }
+}
+
+class _ConversationDateHeader extends StatelessWidget {
+  const _ConversationDateHeader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 6),
+      child: Text(
+        label,
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: scheme.onSurfaceVariant,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }
@@ -302,6 +332,85 @@ class _ConversationTile extends StatelessWidget {
     final minute = local.minute.toString().padLeft(2, '0');
     return '$hour:$minute';
   }
+}
+
+class _ConversationGroup {
+  _ConversationGroup({required this.label}) : conversations = [];
+
+  final String label;
+  final List<Conversation> conversations;
+}
+
+List<_ConversationGroup> _conversationGroups(List<Conversation> conversations) {
+  final now = DateTime.now();
+  final groups = <_ConversationGroup>[];
+
+  for (final conversation in conversations) {
+    final label = _conversationDateLabel(conversation.timestamp, now);
+    if (groups.isEmpty || groups.last.label != label) {
+      groups.add(_ConversationGroup(label: label));
+    }
+    groups.last.conversations.add(conversation);
+  }
+
+  return groups;
+}
+
+String _conversationDateLabel(DateTime? timestamp, DateTime now) {
+  if (timestamp == null) {
+    return 'Undated';
+  }
+
+  final local = timestamp.toLocal();
+  final today = DateTime(now.year, now.month, now.day);
+  final date = DateTime(local.year, local.month, local.day);
+  final dayDifference = today.difference(date).inDays;
+
+  if (dayDifference < 0) {
+    return 'Upcoming';
+  }
+  if (dayDifference == 0) {
+    return 'Today';
+  }
+  if (dayDifference == 1) {
+    return 'Yesterday';
+  }
+  if (dayDifference < 7) {
+    return _weekdayName(local.weekday);
+  }
+
+  return '${_monthName(local.month)} ${local.day}, ${local.year}';
+}
+
+String _weekdayName(int weekday) {
+  return switch (weekday) {
+    DateTime.monday => 'Monday',
+    DateTime.tuesday => 'Tuesday',
+    DateTime.wednesday => 'Wednesday',
+    DateTime.thursday => 'Thursday',
+    DateTime.friday => 'Friday',
+    DateTime.saturday => 'Saturday',
+    DateTime.sunday => 'Sunday',
+    _ => 'Older',
+  };
+}
+
+String _monthName(int month) {
+  return switch (month) {
+    DateTime.january => 'January',
+    DateTime.february => 'February',
+    DateTime.march => 'March',
+    DateTime.april => 'April',
+    DateTime.may => 'May',
+    DateTime.june => 'June',
+    DateTime.july => 'July',
+    DateTime.august => 'August',
+    DateTime.september => 'September',
+    DateTime.october => 'October',
+    DateTime.november => 'November',
+    DateTime.december => 'December',
+    _ => 'Older',
+  };
 }
 
 enum _ConversationAction { delete }

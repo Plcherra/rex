@@ -133,9 +133,49 @@ async def test_duplicate_dating_plan_does_not_create_new_top_level_plan():
 
     assert decision.action != MemoryDisciplineAction.CREATE_PLAN
     assert decision.action in {
-        MemoryDisciplineAction.CREATE_MILESTONE,
+        MemoryDisciplineAction.CREATE_COMMITMENT,
         MemoryDisciplineAction.UPDATE_PLAN,
     }
+
+
+@pytest.mark.asyncio
+async def test_direct_duplicate_milestone_updates_existing_milestone():
+    repo = RegressionMemoryRepo()
+    repo.plans.append(
+        {
+            "id": "plan-europe",
+            "plan_type": "personal",
+            "title": "Move out of the country next year",
+            "description": "Move after reaching stable income.",
+            "status": "active",
+            "active": True,
+            "priority": 5,
+        }
+    )
+    repo.milestones.append(
+        {
+            "id": "milestone-income",
+            "plan_id": "plan-europe",
+            "title": "Reach $5k monthly income",
+            "description": "Reach stable income before moving.",
+            "status": "open",
+            "active": True,
+        }
+    )
+
+    decision = await MemoryDisciplineService(repo).decide(
+        MemoryDisciplineCandidate(
+            kind=MemoryCandidateKind.PLAN_MILESTONE,
+            payload={
+                "plan_id": "plan-europe",
+                "title": "$5k monthly revenue target",
+                "description": "Reach $5k/month before moving out.",
+            },
+        )
+    )
+
+    assert decision.action == MemoryDisciplineAction.UPDATE_MILESTONE
+    assert decision.target_id == "milestone-income"
 
 
 @pytest.mark.asyncio

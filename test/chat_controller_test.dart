@@ -114,6 +114,66 @@ data: {"conversation_id":"conversation-1","response":"Rex stream","messages":[]}
     },
   );
 
+  test(
+    'ChatController attaches memory candidate cards to assistant message',
+    () async {
+      final api = ChatApi(
+        baseUrl: 'http://rex.test',
+        client: MockClient((request) async {
+          return http.Response(
+            '''
+          {
+            "conversation_id": "conversation-1",
+            "response": "Please confirm this memory change.",
+            "messages": [
+              {
+                "id": "message-1",
+                "conversation_id": "conversation-1",
+                "role": "assistant",
+                "content": "Please confirm this memory change.",
+                "timestamp": "2026-05-11T00:00:01Z"
+              }
+            ],
+            "memory_changes": {
+              "pending_candidates": [
+                {
+                  "id": "candidate-1",
+                  "candidate_type": "correction",
+                  "status": "pending",
+                  "risk_level": "high",
+                  "preview": "correction: Stephanie was not fired.",
+                  "expected_action": "Apply correction and verify stale facts are gone",
+                  "requires_explicit_confirmation": true
+                }
+              ]
+            }
+          }
+          ''',
+            200,
+            headers: {'Content-Type': 'application/json'},
+          );
+        }),
+      );
+      final container = ProviderContainer(
+        overrides: [chatApiProvider.overrideWithValue(api)],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(chatProvider.notifier)
+          .sendMessage('Fix Stephanie', stream: false);
+
+      final assistantMessage = container.read(chatProvider).messages.last;
+      expect(assistantMessage.memoryCandidates, hasLength(1));
+      expect(assistantMessage.memoryCandidates.single.id, 'candidate-1');
+      expect(assistantMessage.memoryCandidates.single.riskLevel, 'high');
+      expect(
+        assistantMessage.memoryCandidates.single.requiresExplicitConfirmation,
+        true,
+      );
+    },
+  );
+
   test('ChatController loads an existing conversation', () async {
     final conversationApi = ConversationApi(
       baseUrl: 'http://rex.test',

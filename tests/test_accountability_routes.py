@@ -29,8 +29,10 @@ class FakeMemoryService:
             _milestone_row(id="milestone-open", status="open"),
             _milestone_row(id="milestone-done", status="completed"),
         ]
+        self.entities = [_entity_row()]
         self.entity_events = [_entity_event_row()]
         self.memories = [_memory_row()]
+        self.memory_candidates = [_memory_candidate_row()]
 
     def _raise_if_configured(self):
         if self.error is not None:
@@ -56,6 +58,11 @@ class FakeMemoryService:
         self.calls.append(("milestones", kwargs))
         return self.milestones
 
+    async def list_entities(self, **kwargs):
+        self._raise_if_configured()
+        self.calls.append(("entities", kwargs))
+        return self.entities
+
     async def list_entity_events(self, **kwargs):
         self._raise_if_configured()
         self.calls.append(("entity_events", kwargs))
@@ -66,6 +73,11 @@ class FakeMemoryService:
         self.calls.append(("memories", kwargs))
         return self.memories
 
+    async def list_memory_candidates(self, **kwargs):
+        self._raise_if_configured()
+        self.calls.append(("memory_candidates", kwargs))
+        return self.memory_candidates
+
 
 class EmptyMemoryService(FakeMemoryService):
     def __init__(self):
@@ -74,8 +86,10 @@ class EmptyMemoryService(FakeMemoryService):
         self.commitments = []
         self.plans = []
         self.milestones = []
+        self.entities = []
         self.entity_events = []
         self.memories = []
+        self.memory_candidates = []
 
 
 class FakeAccountabilityService:
@@ -228,10 +242,18 @@ def test_overview_returns_backing_context_and_filtered_buckets(client):
     assert payload["metadata"]["active_rule_count"] == 1
     assert payload["metadata"]["open_commitment_count"] == 1
     assert payload["metadata"]["open_milestone_count"] == 1
+    assert payload["metadata"]["completed_milestone_count"] == 1
     assert payload["metadata"]["active_plan_count"] == 1
     assert payload["metadata"]["open_task_count"] == 1
+    assert payload["metadata"]["pending_memory_candidate_count"] == 1
     assert [item["id"] for item in payload["open_commitments"]] == ["commitment-open"]
     assert [item["id"] for item in payload["open_milestones"]] == ["milestone-open"]
+    assert [item["id"] for item in payload["completed_milestones"]] == [
+        "milestone-done"
+    ]
+    assert [item["id"] for item in payload["pending_memory_candidates"]] == [
+        "candidate-1"
+    ]
     assert payload["plan_hierarchy"] == [
         {
             "plan": _plan_row(),
@@ -241,8 +263,15 @@ def test_overview_returns_backing_context_and_filtered_buckets(client):
                     "open_commitments": [],
                 }
             ],
+            "completed_milestones": [
+                _milestone_row(id="milestone-done", status="completed")
+            ],
             "open_commitments": [],
-            "counts": {"open_milestones": 1, "open_commitments": 0},
+            "counts": {
+                "open_milestones": 1,
+                "completed_milestones": 1,
+                "open_commitments": 0,
+            },
         }
     ]
     assert [item["signal_type"] for item in payload["rule_risks"]] == [
@@ -270,7 +299,9 @@ def test_empty_overview_returns_empty_lists(client):
     assert payload["open_commitments"] == []
     assert payload["active_plans"] == []
     assert payload["open_milestones"] == []
+    assert payload["completed_milestones"] == []
     assert payload["plan_hierarchy"] == []
+    assert payload["pending_memory_candidates"] == []
     assert payload["duplicate_warnings"] == []
 
 
@@ -320,6 +351,72 @@ def test_overview_reports_duplicate_plan_and_rule_warnings(client):
         "plan",
         "rule",
     }
+
+
+def test_overview_reports_duplicate_milestone_and_commitment_warnings(client):
+    memory_service = FakeMemoryService()
+    memory_service.milestones = [
+        _milestone_row(id="milestone-1", title="Date with Melissa next week"),
+        _milestone_row(id="milestone-2", title="Next week date with Melissa"),
+    ]
+    memory_service.commitments = [
+        _commitment_row(id="commitment-1", title="No DoorDash"),
+        _commitment_row(id="commitment-2", title="Avoid DoorDash"),
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    warning_types = {item["record_type"] for item in payload["duplicate_warnings"]}
+    assert "milestone" in warning_types
+    assert "commitment" in warning_types
+
+
+def test_overview_reports_entity_fact_conflict_warning(client):
+    memory_service = FakeMemoryService()
+    memory_service.entities = [
+        _entity_row(
+            id="entity-stephanie",
+            display_name="Stephanie",
+            summary="Friend who got fired and later quit last month.",
+        )
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(
+        warning["record_type"] == "entity"
+        and warning["reason"] == "possible_conflicting_entity_facts"
+        for warning in payload["duplicate_warnings"]
+    )
+
+
+def test_overview_reports_plan_cleanup_warning_for_noisy_milestones(client):
+    memory_service = FakeMemoryService()
+    memory_service.milestones = [
+        _milestone_row(id=f"milestone-{index}", title=f"Repeated goal {index}")
+        for index in range(8)
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(
+        warning["record_type"] == "plan"
+        and warning["reason"]
+        == "plan_open_milestone_count_exceeds_cleanup_threshold"
+        for warning in payload["duplicate_warnings"]
+    )
 
 
 def test_overview_reports_semantic_duplicate_plan_warnings(client):
@@ -430,6 +527,7 @@ def _rule_row(id="rule-1", title="No delivery") -> dict:
 
 def _commitment_row(
     id="commitment-1",
+    title="Workout",
     status="open",
     plan_id=None,
     milestone_id=None,
@@ -437,7 +535,7 @@ def _commitment_row(
     return {
         "id": id,
         "commitment_type": "habit",
-        "title": "Workout",
+        "title": title,
         "commitment_text": "Work out tomorrow morning.",
         "plan_id": plan_id,
         "milestone_id": milestone_id,
@@ -457,12 +555,31 @@ def _plan_row(id="plan-1", title="Ship Rex", description="") -> dict:
     }
 
 
-def _milestone_row(id="milestone-1", status="open") -> dict:
+def _milestone_row(
+    id="milestone-1",
+    status="open",
+    title="Release accountability page",
+) -> dict:
     return {
         "id": id,
         "plan_id": "plan-1",
-        "title": "Release accountability page",
+        "title": title,
         "status": status,
+        "active": True,
+    }
+
+
+def _entity_row(
+    id="entity-1",
+    display_name="Rex",
+    summary="Personal AI assistant.",
+) -> dict:
+    return {
+        "id": id,
+        "display_name": display_name,
+        "summary": summary,
+        "relationship": "project",
+        "aliases": [],
         "active": True,
     }
 
@@ -484,4 +601,16 @@ def _memory_row() -> dict:
         "content": "I want Rex to call out repeated spending patterns.",
         "active": True,
         "importance": 4,
+    }
+
+
+def _memory_candidate_row() -> dict:
+    return {
+        "id": "candidate-1",
+        "candidate_type": "plan_update",
+        "status": "pending",
+        "risk_level": "medium",
+        "preview": "Update relocation plan description.",
+        "reason": "User correction requires confirmation.",
+        "active": True,
     }

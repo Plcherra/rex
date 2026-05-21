@@ -184,4 +184,39 @@ data: {"detail":"Grok API returned an error."}
       ),
     );
   });
+
+  test('ChatApi parses memory candidate changes from response', () async {
+    final api = ChatApi(
+      baseUrl: 'http://rex.test',
+      client: MockClient((request) async {
+        return http.Response('''
+          {
+            "conversation_id": "conversation-1",
+            "response": "Please confirm this memory change.",
+            "messages": [],
+            "memory_changes": {
+              "confirmation_required": 1,
+              "pending_candidates": [
+                {
+                  "id": "candidate-1",
+                  "candidate_type": "correction",
+                  "status": "pending",
+                  "risk_level": "high",
+                  "preview": "correction: Stephanie was not fired.",
+                  "expected_action": "Apply correction and verify stale facts are gone",
+                  "requires_explicit_confirmation": true
+                }
+              ]
+            }
+          }
+          ''', 200);
+      }),
+    );
+
+    final response = await api.sendMessage('Fix Stephanie');
+
+    expect(response.memoryChanges?['confirmation_required'], 1);
+    final candidates = response.memoryChanges?['pending_candidates'] as List;
+    expect(candidates.single['id'], 'candidate-1');
+  });
 }

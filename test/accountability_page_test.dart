@@ -9,7 +9,7 @@ import 'package:rex/features/accountability/data/accountability_api.dart';
 import 'package:rex/features/accountability/presentation/pages/accountability_page.dart';
 
 void main() {
-  testWidgets('AccountabilityPage renders plan hierarchy with checklist rows', (
+  testWidgets('AccountabilityPage hides raw milestones behind internal memory', (
     tester,
   ) async {
     final api = AccountabilityApi(
@@ -28,8 +28,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Relocate to Europe next year'), findsOneWidget);
-    expect(find.text(r'$5k monthly revenue target'), findsOneWidget);
+    expect(find.text('Move with enough income and savings.'), findsOneWidget);
+    expect(find.text(r'$5k monthly revenue target'), findsNothing);
     expect(find.text('Submit first FlowForce offer'), findsOneWidget);
+    await tester.ensureVisible(find.text('Internal milestones'));
+    await tester.pumpAndSettle();
+    expect(find.text('Internal milestones'), findsOneWidget);
+
+    await tester.tap(find.text('Internal milestones'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(r'$5k monthly revenue target'), findsOneWidget);
+
     await tester.scrollUntilVisible(
       find.text('Duplicate Risks'),
       260,

@@ -108,6 +108,63 @@ void main() {
     expect(find.text('Help me think through my day.'), findsNothing);
   });
 
+  testWidgets('ChatPage renders memory candidate card and confirms it', (
+    WidgetTester tester,
+  ) async {
+    var requestCount = 0;
+    final api = ChatApi(
+      baseUrl: 'http://rex.test',
+      client: MockClient((request) async {
+        requestCount++;
+        if (requestCount == 1) {
+          return http.Response(
+            '''
+event: conversation
+data: {"conversation_id":"conversation-1"}
+
+event: token
+data: {"token":"Please confirm this memory change."}
+
+event: done
+data: {"conversation_id":"conversation-1","response":"Please confirm this memory change.","messages":[],"memory_changes":{"pending_candidates":[{"id":"candidate-1","candidate_type":"correction","status":"pending","risk_level":"high","preview":"correction: Stephanie was not fired.","expected_action":"Apply correction and verify stale facts are gone","requires_explicit_confirmation":true}]}}
+
+''',
+            200,
+            headers: {'Content-Type': 'text/event-stream'},
+          );
+        }
+
+        expect(request.body, contains('confirm memory candidate candidate-1'));
+        return _streamingResponse();
+      }),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [chatApiProvider.overrideWithValue(api)],
+        child: const RexApp(),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'Fix Stephanie');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Pending memory'), findsOneWidget);
+    expect(find.text('correction'), findsOneWidget);
+    expect(find.text('high'), findsOneWidget);
+    expect(find.textContaining('Stephanie was not fired'), findsOneWidget);
+    expect(find.text('Confirm'), findsOneWidget);
+
+    await tester.tap(find.text('Confirm'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(requestCount, 2);
+  });
+
   testWidgets('ChatPage composer voice button opens active voice call', (
     WidgetTester tester,
   ) async {

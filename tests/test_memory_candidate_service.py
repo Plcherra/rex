@@ -19,6 +19,14 @@ class FakeMemoryCandidateRepository:
         self.error = error
         self.candidates = []
         self.durable_writes = []
+        self.memories = []
+        self.entities = []
+        self.entity_events = []
+        self.rules = []
+        self.plans = []
+        self.milestones = []
+        self.commitments = []
+        self.corrections = []
 
     def _raise_if_configured(self):
         if self.error is not None:
@@ -113,22 +121,93 @@ class FakeMemoryCandidateRepository:
         return {"id": "event-1", **payload}
 
     async def list_long_term_memory(self, **kwargs):
-        return []
+        return _filter_active(self.memories, kwargs.get("active"))
 
     async def list_entities(self, **kwargs):
-        return []
+        return _filter_active(self.entities, kwargs.get("active"))
+
+    async def list_entity_events(self, **kwargs):
+        return _filter_active(self.entity_events, kwargs.get("active"))
 
     async def list_personal_rules(self, **kwargs):
-        return []
+        return _filter_active(self.rules, kwargs.get("active"))
 
     async def list_plans(self, **kwargs):
-        return []
+        return _filter_active(self.plans, kwargs.get("active"))
 
     async def list_plan_milestones(self, **kwargs):
-        return []
+        return _filter_active(self.milestones, kwargs.get("active"))
 
     async def list_commitments(self, **kwargs):
-        return []
+        return _filter_active(self.commitments, kwargs.get("active"))
+
+    async def update_long_term_memory(self, memory_id, **updates):
+        return _update(self.memories, memory_id, updates)
+
+    async def update_entity(self, entity_id, **updates):
+        return _update(self.entities, entity_id, updates)
+
+    async def update_entity_event(self, event_id, **updates):
+        return _update(self.entity_events, event_id, updates)
+
+    async def update_personal_rule(self, rule_id, **updates):
+        return _update(self.rules, rule_id, updates)
+
+    async def update_plan(self, plan_id, **updates):
+        return _update(self.plans, plan_id, updates)
+
+    async def update_plan_milestone(self, milestone_id, **updates):
+        return _update(self.milestones, milestone_id, updates)
+
+    async def update_commitment(self, commitment_id, **updates):
+        return _update(self.commitments, commitment_id, updates)
+
+    async def deactivate_long_term_memory(self, memory_id):
+        return _deactivate(self.memories, memory_id)
+
+    async def deactivate_entity(self, entity_id):
+        return _deactivate(self.entities, entity_id, status="inactive")
+
+    async def deactivate_entity_event(self, event_id):
+        return _deactivate(self.entity_events, event_id)
+
+    async def deactivate_personal_rule(self, rule_id):
+        return _deactivate(self.rules, rule_id, status="archived")
+
+    async def deactivate_plan(self, plan_id):
+        return _deactivate(self.plans, plan_id, status="archived")
+
+    async def deactivate_plan_milestone(self, milestone_id):
+        return _deactivate(self.milestones, milestone_id, status="canceled")
+
+    async def deactivate_commitment(self, commitment_id):
+        return _deactivate(self.commitments, commitment_id, status="archived")
+
+    async def create_memory_correction(self, correction):
+        row = {"id": f"correction-{len(self.corrections) + 1}", **correction}
+        self.corrections.append(row)
+        return row
+
+
+def _filter_active(rows, active):
+    if active is None:
+        return list(rows)
+    return [row for row in rows if row.get("active", True) is active]
+
+
+def _update(rows, row_id, updates):
+    for row in rows:
+        if row.get("id") == row_id:
+            row.update(updates)
+            return row
+    return None
+
+
+def _deactivate(rows, row_id, status=None):
+    updates = {"active": False}
+    if status is not None:
+        updates["status"] = status
+    return _update(rows, row_id, updates) is not None
 
 
 @pytest.mark.asyncio
@@ -192,6 +271,39 @@ async def test_approve_candidate_applies_durable_write():
     assert approved["decision"]["durable_apply_enabled"] is True
     assert approved["verification"]["passed"] is True
     assert repo.durable_writes[0][0] == "plans"
+
+
+@pytest.mark.asyncio
+async def test_approve_correction_candidate_applies_and_verifies_stale_terms_removed():
+    repo = FakeMemoryCandidateRepository()
+    repo.plans.append(
+        {
+            "id": "plan-1",
+            "title": "Launch Flowfirst",
+            "description": "Flowfirst is the wrong app name.",
+            "active": True,
+            "metadata": {},
+        }
+    )
+    service = MemoryCandidateService(repo)
+    created = await service.create_candidate(
+        MemoryCandidateCreateRequest(
+            candidate_type="correction",
+            payload={"text": "not Flowfirst, it is FlowForce"},
+            risk_level="high",
+        )
+    )
+
+    approved = await service.approve_candidate(
+        created["id"],
+        MemoryCandidateApproveRequest(approved_by="pedro"),
+    )
+
+    assert approved["status"] == "applied"
+    assert repo.plans[0]["title"] == "Launch FlowForce"
+    assert repo.corrections[0]["old_value"] == "Flowfirst"
+    assert approved["verification"]["passed"] is True
+    assert approved["verification"]["remaining_conflicts"] == []
 
 
 @pytest.mark.asyncio

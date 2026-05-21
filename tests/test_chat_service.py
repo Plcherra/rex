@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import Settings
+from app.services.memory_correction_service import CorrectionIntentType
 from app.services.chat_service import ChatService, PROFILE_MEMORY_QUERY
 from app.services.file_service import FileService
 from app.services.memory_service import SupabaseMemoryService, MemoryServiceError
@@ -168,6 +169,10 @@ class FakeMemoryDisciplineService:
 
 class FakeCorrectionIntent:
     confidence = 0.9
+    intent_type = CorrectionIntentType.REPLACE_VALUE
+    old_value = "Flowfirst"
+    new_value = "FlowForce"
+    target_hint = None
 
 
 class FakeCorrectionReport:
@@ -206,8 +211,11 @@ class FakeMemoryCorrectionService:
 
 
 class FakeMemoryCandidateService:
-    def __init__(self):
+    def __init__(self, pending=None, approved=None):
         self.created = []
+        self.pending = pending or []
+        self.approved = approved or []
+        self.rejected = []
 
     async def create_candidate(self, request):
         candidate = {
@@ -220,6 +228,63 @@ class FakeMemoryCandidateService:
         }
         self.created.append(candidate)
         return candidate
+
+    async def list_candidates(
+        self,
+        *,
+        status=None,
+        source_conversation_id=None,
+        limit=20,
+        **kwargs,
+    ):
+        return self.pending[:limit]
+
+    async def approve_candidate(self, candidate_id, request):
+        for candidate in self.pending:
+            if candidate["id"] == candidate_id:
+                approved = {
+                    **candidate,
+                    "status": "applied",
+                    "applied_record_table": "entities",
+                    "applied_record_id": "entity-1",
+                    "verification": {
+                        "passed": True,
+                        "message": "Candidate applied and verified.",
+                        "remaining_conflicts": [],
+                        "applied_record": {
+                            "table": "entities",
+                            "id": "entity-1",
+                        },
+                    },
+                }
+                self.approved.append(approved)
+                return approved
+        raise AssertionError(f"unknown candidate {candidate_id}")
+
+    async def reject_candidate(self, candidate_id, request):
+        for candidate in self.pending:
+            if candidate["id"] == candidate_id:
+                rejected = {**candidate, "status": "rejected"}
+                self.rejected.append(rejected)
+                return rejected
+        raise AssertionError(f"unknown candidate {candidate_id}")
+
+    async def bulk_approve_candidates(self, request):
+        approved = []
+        skipped = []
+        for candidate in self.pending:
+            if candidate.get("risk_level") == "high" and not request.include_high_risk:
+                skipped.append(candidate)
+                continue
+            approved.append(await self.approve_candidate(candidate["id"], request))
+        return {"approved": approved, "rejected": [], "skipped": skipped}
+
+    async def bulk_reject_candidates(self, request):
+        rejected = [
+            await self.reject_candidate(candidate["id"], request)
+            for candidate in self.pending
+        ]
+        return {"approved": [], "rejected": rejected, "skipped": []}
 
 
 class BlockingMemoryExtractionService:
@@ -323,9 +388,12 @@ async def test_chat_service_applies_memory_correction_and_prompts_summary():
 
     assert result["memory_correction"]["applied"] is False
     assert result["memory_correction"]["requires_confirmation"] is True
-    assert candidate_service.created[0]["payload"]["content"] == (
-        "User correction: not Flowfirst, it is FlowForce"
+    assert candidate_service.created[0]["candidate_type"] == "correction"
+    assert candidate_service.created[0]["payload"]["text"] == (
+        "not Flowfirst, it is FlowForce"
     )
+    assert candidate_service.created[0]["payload"]["intent"]["old_value"] == "Flowfirst"
+    assert candidate_service.created[0]["payload"]["intent"]["new_value"] == "FlowForce"
     assert correction_service.calls == [("detect", "not Flowfirst, it is FlowForce")]
     assert "Memory correction status" in ai_service.messages[-1]["content"]
     assert any(
@@ -375,6 +443,223 @@ async def test_chat_service_skips_extraction_after_applied_correction():
     assert result["memory_changes"]["updated"] == 0
     assert result["memory_changes"]["confirmation_required"] == 1
     assert result["memory_changes"]["skipped"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_service_blocks_vague_confirmation_for_high_risk_candidate():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.conversations.add("conversation-existing")
+    candidate_service = FakeMemoryCandidateService(
+        pending=[
+            {
+                "id": "candidate-high",
+                "candidate_type": "correction",
+                "payload": {
+                    "text": "Stephanie was not fired.",
+                    "intent": {
+                        "intent_type": "replace_value",
+                        "old_value": "Stephanie got fired",
+                        "new_value": "Stephanie quit",
+                    },
+                },
+                "risk_level": "high",
+                "status": "pending",
+                "preview": "correction: Stephanie was not fired.",
+                "source_conversation_id": "conversation-existing",
+                "source_message_id": "message-1",
+            }
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        memory_candidate_service=candidate_service,
+    )
+
+    result = await chat_service.send_message("ok", "conversation-existing")
+
+    assert candidate_service.approved == []
+    assert "high-risk memory change" in result["response"]
+    assert result["memory_changes"]["confirmation_required"] == 1
+    card = result["memory_changes"]["pending_candidates"][0]
+    assert card["id"] == "candidate-high"
+    assert card["risk_level"] == "high"
+    assert card["requires_explicit_confirmation"] is True
+    assert card["expected_action"] == "Apply correction and verify stale facts are gone"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_explicit_confirmation_applies_and_reports_candidate_card():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.conversations.add("conversation-existing")
+    candidate_service = FakeMemoryCandidateService(
+        pending=[
+            {
+                "id": "candidate-high",
+                "candidate_type": "correction",
+                "payload": {"text": "Fix Stephanie fact."},
+                "risk_level": "high",
+                "status": "pending",
+                "preview": "correction: Fix Stephanie fact.",
+                "source_conversation_id": "conversation-existing",
+                "source_message_id": "message-1",
+            }
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        memory_candidate_service=candidate_service,
+    )
+
+    result = await chat_service.send_message("confirm", "conversation-existing")
+
+    assert candidate_service.approved[0]["id"] == "candidate-high"
+    assert result["memory_changes"]["created"] == 1
+    assert result["memory_changes"]["applied_candidates"][0]["applied_record"] == {
+        "table": "entities",
+        "id": "entity-1",
+    }
+    assert result["memory_changes"]["applied_candidates"][0]["verification"][
+        "passed"
+    ] is True
+    assert result["memory_changes"]["records"][0]["candidate"]["id"] == (
+        "candidate-high"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_lists_multiple_pending_candidates_as_cards():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.conversations.add("conversation-existing")
+    candidate_service = FakeMemoryCandidateService(
+        pending=[
+            {
+                "id": "candidate-1",
+                "candidate_type": "commitment",
+                "payload": {"title": "Prepare Clarity release build"},
+                "risk_level": "low",
+                "status": "pending",
+                "preview": "commitment: Prepare Clarity release build",
+            },
+            {
+                "id": "candidate-2",
+                "candidate_type": "plan",
+                "payload": {"title": "Move out of the country"},
+                "risk_level": "high",
+                "status": "pending",
+                "preview": "plan: Move out of the country",
+            },
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        memory_candidate_service=candidate_service,
+    )
+
+    result = await chat_service.send_message("yes", "conversation-existing")
+
+    assert candidate_service.approved == []
+    assert result["memory_changes"]["confirmation_required"] == 2
+    assert [card["id"] for card in result["memory_changes"]["pending_candidates"]] == [
+        "candidate-1",
+        "candidate-2",
+    ]
+    assert result["memory_changes"]["pending_candidates"][1][
+        "requires_explicit_confirmation"
+    ] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_service_can_confirm_specific_candidate_by_id():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.conversations.add("conversation-existing")
+    candidate_service = FakeMemoryCandidateService(
+        pending=[
+            {
+                "id": "candidate-low",
+                "candidate_type": "commitment",
+                "payload": {"title": "Prepare Clarity release build"},
+                "risk_level": "low",
+                "status": "pending",
+                "preview": "commitment: Prepare Clarity release build",
+            },
+            {
+                "id": "candidate-high",
+                "candidate_type": "correction",
+                "payload": {"text": "Fix Stephanie fact."},
+                "risk_level": "high",
+                "status": "pending",
+                "preview": "correction: Fix Stephanie fact.",
+            },
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        memory_candidate_service=candidate_service,
+    )
+
+    result = await chat_service.send_message(
+        "confirm memory candidate candidate-high",
+        "conversation-existing",
+    )
+
+    assert candidate_service.approved[0]["id"] == "candidate-high"
+    assert result["memory_changes"]["applied_candidates"][0]["id"] == (
+        "candidate-high"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_can_reject_all_pending_candidates():
+    ai_service = FakeAIService()
+    memory_service = FakeMemoryService()
+    memory_service.conversations.add("conversation-existing")
+    candidate_service = FakeMemoryCandidateService(
+        pending=[
+            {
+                "id": "candidate-1",
+                "candidate_type": "commitment",
+                "payload": {"title": "Prepare Clarity release build"},
+                "risk_level": "low",
+                "status": "pending",
+                "preview": "commitment: Prepare Clarity release build",
+            },
+            {
+                "id": "candidate-2",
+                "candidate_type": "plan",
+                "payload": {"title": "Move out of the country"},
+                "risk_level": "high",
+                "status": "pending",
+                "preview": "plan: Move out of the country",
+            },
+        ]
+    )
+    chat_service = ChatService(
+        ai_service,
+        FileService(),
+        memory_service,
+        memory_candidate_service=candidate_service,
+    )
+
+    result = await chat_service.send_message("reject all pending", "conversation-existing")
+
+    assert [candidate["id"] for candidate in candidate_service.rejected] == [
+        "candidate-1",
+        "candidate-2",
+    ]
+    assert result["memory_changes"]["rejected_candidates"][0]["id"] == "candidate-1"
+    assert result["memory_changes"]["rejected_candidates"][1]["id"] == "candidate-2"
 
 
 @pytest.mark.asyncio

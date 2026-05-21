@@ -18,6 +18,7 @@ class MemoryDisciplineAction(str, Enum):
     CREATE_ENTITY = "create_entity"
     UPDATE_ENTITY = "update_entity"
     ARCHIVE_ENTITY = "archive_entity"
+    CREATE_ENTITY_EVENT = "create_entity_event"
     CREATE_PLAN = "create_plan"
     UPDATE_PLAN = "update_plan"
     ARCHIVE_PLAN = "archive_plan"

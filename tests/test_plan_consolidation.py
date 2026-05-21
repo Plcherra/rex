@@ -221,7 +221,7 @@ async def test_consolidate_plans_dry_run_does_not_write():
 
 
 @pytest.mark.asyncio
-async def test_consolidate_plans_archives_duplicates_and_creates_milestones():
+async def test_consolidate_plans_archives_duplicates_and_merges_non_milestone_details():
     memory = FakeConsolidationMemoryService()
     memory.plans.extend(
         [
@@ -251,8 +251,37 @@ async def test_consolidate_plans_archives_duplicates_and_creates_milestones():
     assert archived["status"] == "archived"
     assert archived["metadata"]["cleanup_reason"] == "plan_consolidation"
     assert archived["metadata"]["consolidated_into_plan_id"] == "plan-root"
-    assert len(memory.milestones) == 1
-    assert memory.milestones[0]["plan_id"] == "plan-root"
-    assert memory.milestones[0]["metadata"]["consolidated_from_plan_id"] == (
-        "plan-duplicate"
+    assert memory.milestones == []
+    assert len(report.plans_updated) == 1
+    root = next(plan for plan in memory.plans if plan["id"] == "plan-root")
+    assert "Monday date with Melissa" in root["description"]
+
+
+@pytest.mark.asyncio
+async def test_consolidate_plans_still_creates_badge_like_milestones():
+    memory = FakeConsolidationMemoryService()
+    memory.plans.extend(
+        [
+            _plan(
+                "plan-root",
+                "Relocate to Europe next year",
+                "personal",
+                description="Move after reaching stable income.",
+                priority=5,
+            ),
+            _plan(
+                "plan-income",
+                "Reach $5k monthly income",
+                "finance",
+                description="Reach stable monthly income before moving.",
+                priority=5,
+            ),
+        ]
     )
+
+    report = await consolidate_plans(memory, apply=True)
+
+    assert report.errors == []
+    assert len(memory.milestones) == 1
+    assert memory.milestones[0]["title"] == "Reach $5k monthly income"
+    assert memory.milestones[0]["metadata"]["consolidated_from_plan_id"] == "plan-income"

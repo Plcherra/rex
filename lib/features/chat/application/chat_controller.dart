@@ -90,9 +90,10 @@ class ChatController extends Notifier<ChatState> {
     required String conversationId,
     required List<ChatApiMessage> messages,
     String? fallbackAssistantResponse,
+    Map<String, dynamic>? memoryChanges,
   }) {
     final nextMessages = messages.isNotEmpty
-        ? messages.map(_messageFromApi).toList(growable: false)
+        ? _messagesFromApiMessages(messages, memoryChanges: memoryChanges)
         : state.messages;
 
     state = state.copyWith(
@@ -111,6 +112,7 @@ class ChatController extends Notifier<ChatState> {
           role: ChatMessageRole.assistant,
           content: fallbackAssistantResponse.trim(),
           timestamp: DateTime.now(),
+          memoryCandidates: _candidateCardsFromMemoryChanges(memoryChanges),
         ),
       );
     }
@@ -211,7 +213,7 @@ class ChatController extends Notifier<ChatState> {
       state = state.copyWith(
         conversationId: result.conversationId,
         messages: result.messages.isNotEmpty
-            ? result.messages.map(_messageFromApi).toList(growable: false)
+            ? _messagesFromApiResponse(result)
             : List.unmodifiable([
                 ...state.messages,
                 ChatMessage(
@@ -219,6 +221,9 @@ class ChatController extends Notifier<ChatState> {
                   role: ChatMessageRole.assistant,
                   content: result.response,
                   timestamp: DateTime.now(),
+                  memoryCandidates: _candidateCardsFromMemoryChanges(
+                    result.memoryChanges,
+                  ),
                 ),
               ]),
         isLoading: false,
@@ -271,8 +276,11 @@ class ChatController extends Notifier<ChatState> {
           state = state.copyWith(
             conversationId: response.conversationId,
             messages: response.messages.isNotEmpty
-                ? response.messages.map(_messageFromApi).toList(growable: false)
-                : _messagesWithStreamingStopped(state.messages),
+                ? _messagesFromApiResponse(response)
+                : _messagesWithMemoryCandidates(
+                    _messagesWithStreamingStopped(state.messages),
+                    response.memoryChanges,
+                  ),
             isLoading: false,
             clearError: true,
           );
@@ -347,6 +355,85 @@ class ChatController extends Notifier<ChatState> {
   }
 
   ChatMessage _messageFromApi(ChatApiMessage message) => message.toDomain();
+
+  List<ChatMessage> _messagesFromApiResponse(ChatApiResponse response) {
+    return _messagesFromApiMessages(
+      response.messages,
+      memoryChanges: response.memoryChanges,
+    );
+  }
+
+  List<ChatMessage> _messagesFromApiMessages(
+    List<ChatApiMessage> messages, {
+    Map<String, dynamic>? memoryChanges,
+  }) {
+    final mapped = messages.map(_messageFromApi).toList(growable: false);
+    return _messagesWithMemoryCandidates(mapped, memoryChanges);
+  }
+
+  List<ChatMessage> _messagesWithMemoryCandidates(
+    List<ChatMessage> messages,
+    Map<String, dynamic>? memoryChanges,
+  ) {
+    final candidates = _candidateCardsFromMemoryChanges(memoryChanges);
+    if (candidates.isEmpty || messages.isEmpty) {
+      return List.unmodifiable(messages);
+    }
+
+    final updated = [...messages];
+    for (var index = updated.length - 1; index >= 0; index--) {
+      if (updated[index].role == ChatMessageRole.assistant) {
+        updated[index] = updated[index].copyWith(memoryCandidates: candidates);
+        return List.unmodifiable(updated);
+      }
+    }
+    return List.unmodifiable(updated);
+  }
+
+  List<MemoryCandidateCard> _candidateCardsFromMemoryChanges(
+    Map<String, dynamic>? memoryChanges,
+  ) {
+    if (memoryChanges == null) {
+      return const [];
+    }
+
+    final cards = <MemoryCandidateCard>[];
+    for (final key in const [
+      'pending_candidates',
+      'applied_candidates',
+      'failed_candidates',
+      'skipped_candidates',
+      'rejected_candidates',
+    ]) {
+      final value = memoryChanges[key];
+      if (value is! List) {
+        continue;
+      }
+      for (final item in value) {
+        if (item is Map<String, dynamic>) {
+          cards.add(MemoryCandidateCard.fromJson(item));
+        }
+      }
+    }
+    if (cards.isNotEmpty) {
+      return List.unmodifiable(cards);
+    }
+
+    final records = memoryChanges['records'];
+    if (records is! List) {
+      return const [];
+    }
+    for (final record in records) {
+      if (record is! Map<String, dynamic>) {
+        continue;
+      }
+      final candidate = record['candidate'];
+      if (candidate is Map<String, dynamic>) {
+        cards.add(MemoryCandidateCard.fromJson(candidate));
+      }
+    }
+    return List.unmodifiable(cards);
+  }
 
   String? _assistantTextFromApiResponse(ChatApiResponse response) {
     if (response.messages.isEmpty) {

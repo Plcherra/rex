@@ -33,6 +33,7 @@ _ChatApiResponse _$ChatApiResponseFromJson(Map<String, dynamic> json) =>
       messages: (json['messages'] as List<dynamic>)
           .map((e) => ChatApiMessage.fromJson(e as Map<String, dynamic>))
           .toList(),
+      memoryChanges: json['memory_changes'] as Map<String, dynamic>?,
     );
 
 Map<String, dynamic> _$ChatApiResponseToJson(_ChatApiResponse instance) =>
@@ -40,6 +41,7 @@ Map<String, dynamic> _$ChatApiResponseToJson(_ChatApiResponse instance) =>
       'conversation_id': instance.conversationId,
       'response': instance.response,
       'messages': instance.messages,
+      'memory_changes': instance.memoryChanges,
     };
 
 _Conversation _$ConversationFromJson(Map<String, dynamic> json) =>

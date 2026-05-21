@@ -71,11 +71,18 @@ class _AccountabilityPageState extends ConsumerState<AccountabilityPage> {
                           )
                           .toList(growable: false),
                     ),
+                    if (overview.pendingMemoryCandidates.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      _PendingCandidateSection(
+                        candidates: overview.pendingMemoryCandidates,
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     _PlanSection(
                       planHierarchy: overview.planHierarchy,
                       plans: overview.activePlans,
                       milestones: overview.openMilestones,
+                      completedMilestones: overview.completedMilestones,
                     ),
                     if (overview.duplicateWarnings.isNotEmpty) ...[
                       const SizedBox(height: 20),
@@ -122,9 +129,21 @@ class _OverviewSummary extends StatelessWidget {
         ),
         _SummaryPill(
           icon: Icons.task_alt_rounded,
-          label: 'Milestones',
+          label: 'Targets',
           value: overview.openMilestoneCount,
         ),
+        if (overview.completedMilestoneCount > 0)
+          _SummaryPill(
+            icon: Icons.emoji_events_outlined,
+            label: 'Won',
+            value: overview.completedMilestoneCount,
+          ),
+        if (overview.pendingMemoryCandidateCount > 0)
+          _SummaryPill(
+            icon: Icons.pending_actions_rounded,
+            label: 'Pending',
+            value: overview.pendingMemoryCandidateCount,
+          ),
         _SummaryPill(
           icon: Icons.flag_rounded,
           label: 'Plans',
@@ -224,46 +243,75 @@ class _CommitmentSection extends StatelessWidget {
   }
 }
 
+class _PendingCandidateSection extends StatelessWidget {
+  const _PendingCandidateSection({required this.candidates});
+
+  final List<PendingMemoryCandidate> candidates;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Pending Memory',
+      emptyText: 'No pending memory changes.',
+      children: candidates
+          .map((candidate) => _PendingCandidateTile(candidate: candidate))
+          .toList(growable: false),
+    );
+  }
+}
+
 class _PlanSection extends StatelessWidget {
   const _PlanSection({
     required this.planHierarchy,
     required this.plans,
     required this.milestones,
+    required this.completedMilestones,
   });
 
   final List<PlanHierarchyItem> planHierarchy;
   final List<PlanRecord> plans;
   final List<PlanMilestone> milestones;
+  final List<PlanMilestone> completedMilestones;
 
   @override
   Widget build(BuildContext context) {
     final planTiles = planHierarchy.isNotEmpty
         ? planHierarchy
-            .map((item) => _PlanTile(item: item))
-            .toList(growable: false)
+              .map((item) => _PlanTile(item: item))
+              .toList(growable: false)
         : plans
-            .map(
-              (plan) => _PlanTile(
-                item: PlanHierarchyItem(
-                  plan: plan,
-                  openMilestones: milestones
-                      .where((milestone) => milestone.planId == plan.id)
-                      .toList(growable: false),
-                  openCommitments: const [],
-                  counts: const {},
+              .map(
+                (plan) => _PlanTile(
+                  item: PlanHierarchyItem(
+                    plan: plan,
+                    openMilestones: milestones
+                        .where((milestone) => milestone.planId == plan.id)
+                        .toList(growable: false),
+                    completedMilestones: completedMilestones
+                        .where((milestone) => milestone.planId == plan.id)
+                        .toList(growable: false),
+                    openCommitments: const [],
+                    counts: const {},
+                  ),
                 ),
-              ),
-            )
-            .toList(growable: false);
+              )
+              .toList(growable: false);
     final orphanMilestones = milestones
         .where((milestone) => !plans.any((plan) => plan.id == milestone.planId))
-        .map((milestone) => _MilestoneTile(milestone: milestone))
+        .map((milestone) => _InternalMilestoneRow(milestone: milestone))
         .toList(growable: false);
 
     return _Section(
       title: 'Plan Progress',
       emptyText: 'No active plans or open milestones yet.',
-      children: [...planTiles, ...orphanMilestones],
+      children: [
+        ...planTiles,
+        if (orphanMilestones.isNotEmpty)
+          _InternalMemoryTile(
+            title: 'Unlinked internal milestones',
+            children: orphanMilestones,
+          ),
+      ],
     );
   }
 }
@@ -446,7 +494,16 @@ class _PlanTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final plan = item.plan;
     final milestones = item.openMilestones;
-    final details = plan.desiredOutcome ?? plan.description ?? '';
+    final completed = item.completedMilestones;
+    final details = plan.description ?? plan.desiredOutcome ?? '';
+    final tasks = <Commitment>[
+      ...item.openCommitments,
+      for (final milestone in milestones) ...milestone.openCommitments,
+    ];
+    final achievementTargets = milestones
+        .where((milestone) => milestone.openCommitments.isEmpty)
+        .take(3)
+        .toList(growable: false);
 
     return Column(
       children: [
@@ -457,6 +514,7 @@ class _PlanTile extends StatelessWidget {
           ),
           leading: const _TileIcon(icon: Icons.flag_rounded),
           title: Text(plan.title),
+          trailing: const _PlanActions(),
           subtitle: _RecordSubtitle(
             text: details,
             chips: [
@@ -467,21 +525,42 @@ class _PlanTile extends StatelessWidget {
             ],
           ),
         ),
-        if (milestones.isNotEmpty)
+        if (tasks.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(left: 44, bottom: 8),
+            padding: const EdgeInsets.only(left: 44, right: 4, bottom: 8),
             child: Column(
-              children: milestones
-                  .map((milestone) => _MilestoneTile(milestone: milestone))
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: tasks
+                  .map((commitment) => _ChecklistRow(commitment: commitment))
                   .toList(growable: false),
             ),
           ),
-        if (item.openCommitments.isNotEmpty)
+        if (completed.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(left: 44, bottom: 8),
-            child: Column(
-              children: item.openCommitments
-                  .map((commitment) => _ChecklistRow(commitment: commitment))
+            padding: const EdgeInsets.only(left: 44, right: 4, bottom: 8),
+            child: _MilestoneBadgeWrap(milestones: completed),
+          ),
+        if (achievementTargets.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 44, right: 4, bottom: 8),
+            child: _UpcomingTargets(milestones: achievementTargets),
+          ),
+        if (milestones.length >= 8)
+          const Padding(
+            padding: EdgeInsets.only(left: 44, right: 4, bottom: 8),
+            child: _InlineWarning(
+              text: 'This plan has too many raw open milestones.',
+            ),
+          ),
+        if (milestones.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 44, right: 4, bottom: 8),
+            child: _InternalMemoryTile(
+              title: 'Internal milestones',
+              children: milestones
+                  .map(
+                    (milestone) => _InternalMilestoneRow(milestone: milestone),
+                  )
                   .toList(growable: false),
             ),
           ),
@@ -490,8 +569,121 @@ class _PlanTile extends StatelessWidget {
   }
 }
 
-class _MilestoneTile extends StatelessWidget {
-  const _MilestoneTile({required this.milestone});
+class _PlanActions extends StatelessWidget {
+  const _PlanActions();
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Plan actions',
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: 'edit', child: Text('Edit')),
+        PopupMenuItem(value: 'archive', child: Text('Archive')),
+      ],
+      onSelected: (_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Plan edits go through confirmed memory changes.'),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _UpcomingTargets extends StatelessWidget {
+  const _UpcomingTargets({required this.milestones});
+
+  final List<PlanMilestone> milestones;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Next targets',
+          style: theme.textTheme.labelLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: milestones
+              .map(
+                (milestone) => _MetaChip(
+                  label: milestone.targetDate == null
+                      ? milestone.title
+                      : '${milestone.title} - ${_shortDate(milestone.targetDate!)}',
+                ),
+              )
+              .toList(growable: false),
+        ),
+      ],
+    );
+  }
+}
+
+class _MilestoneBadgeWrap extends StatelessWidget {
+  const _MilestoneBadgeWrap({required this.milestones});
+
+  final List<PlanMilestone> milestones;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Completed milestones',
+          style: theme.textTheme.labelLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: milestones
+              .map(
+                (milestone) => _StatusChip(
+                  icon: Icons.emoji_events_outlined,
+                  label: milestone.title,
+                ),
+              )
+              .toList(growable: false),
+        ),
+      ],
+    );
+  }
+}
+
+class _InternalMemoryTile extends StatelessWidget {
+  const _InternalMemoryTile({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      title: Text(title),
+      subtitle: Text('${children.length} raw records'),
+      children: children,
+    );
+  }
+}
+
+class _InternalMilestoneRow extends StatelessWidget {
+  const _InternalMilestoneRow({required this.milestone});
 
   final PlanMilestone milestone;
 
@@ -541,8 +733,7 @@ class _MilestoneTile extends StatelessWidget {
                   Column(
                     children: milestone.openCommitments
                         .map(
-                          (commitment) =>
-                              _ChecklistRow(commitment: commitment),
+                          (commitment) => _ChecklistRow(commitment: commitment),
                         )
                         .toList(growable: false),
                   ),
@@ -593,6 +784,29 @@ class _ChecklistRow extends StatelessWidget {
   }
 }
 
+class _PendingCandidateTile extends StatelessWidget {
+  const _PendingCandidateTile({required this.candidate});
+
+  final PendingMemoryCandidate candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+      leading: const _TileIcon(icon: Icons.pending_actions_rounded),
+      title: Text(candidate.preview),
+      subtitle: _RecordSubtitle(
+        text: candidate.reason,
+        chips: [
+          candidate.candidateType.accountabilityLabel,
+          candidate.riskLevel.accountabilityLabel,
+          candidate.status.accountabilityLabel,
+        ],
+      ),
+    );
+  }
+}
+
 class _DuplicateWarningTile extends StatelessWidget {
   const _DuplicateWarningTile({required this.warning});
 
@@ -605,11 +819,54 @@ class _DuplicateWarningTile extends StatelessWidget {
       leading: const _TileIcon(icon: Icons.merge_type_rounded),
       title: Text(warning.title),
       subtitle: _RecordSubtitle(
-        text: 'Multiple active ${warning.recordType.accountabilityLabel}s may overlap.',
+        text:
+            'Multiple active ${warning.recordType.accountabilityLabel}s may overlap.',
         chips: [
           warning.recordType.accountabilityLabel,
           '${warning.recordIds.length} records',
         ],
+      ),
+    );
+  }
+}
+
+class _InlineWarning extends StatelessWidget {
+  const _InlineWarning({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.errorContainer.withValues(alpha: 0.34),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              size: 17,
+              color: scheme.onErrorContainer,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onErrorContainer,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -648,6 +905,45 @@ class _RecordSubtitle extends StatelessWidget {
                 .toList(growable: false),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: scheme.onPrimaryContainer),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

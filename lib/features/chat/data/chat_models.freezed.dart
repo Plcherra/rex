@@ -290,7 +290,7 @@ as DateTime?,
 /// @nodoc
 mixin _$ChatApiResponse {
 
-@JsonKey(name: 'conversation_id') String get conversationId; String get response; List<ChatApiMessage> get messages;
+@JsonKey(name: 'conversation_id') String get conversationId; String get response; List<ChatApiMessage> get messages;@JsonKey(name: 'memory_changes') Map<String, dynamic>? get memoryChanges;
 /// Create a copy of ChatApiResponse
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -303,16 +303,16 @@ $ChatApiResponseCopyWith<ChatApiResponse> get copyWith => _$ChatApiResponseCopyW
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is ChatApiResponse&&(identical(other.conversationId, conversationId) || other.conversationId == conversationId)&&(identical(other.response, response) || other.response == response)&&const DeepCollectionEquality().equals(other.messages, messages));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is ChatApiResponse&&(identical(other.conversationId, conversationId) || other.conversationId == conversationId)&&(identical(other.response, response) || other.response == response)&&const DeepCollectionEquality().equals(other.messages, messages)&&const DeepCollectionEquality().equals(other.memoryChanges, memoryChanges));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,conversationId,response,const DeepCollectionEquality().hash(messages));
+int get hashCode => Object.hash(runtimeType,conversationId,response,const DeepCollectionEquality().hash(messages),const DeepCollectionEquality().hash(memoryChanges));
 
 @override
 String toString() {
-  return 'ChatApiResponse(conversationId: $conversationId, response: $response, messages: $messages)';
+  return 'ChatApiResponse(conversationId: $conversationId, response: $response, messages: $messages, memoryChanges: $memoryChanges)';
 }
 
 
@@ -323,7 +323,7 @@ abstract mixin class $ChatApiResponseCopyWith<$Res>  {
   factory $ChatApiResponseCopyWith(ChatApiResponse value, $Res Function(ChatApiResponse) _then) = _$ChatApiResponseCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: 'conversation_id') String conversationId, String response, List<ChatApiMessage> messages
+@JsonKey(name: 'conversation_id') String conversationId, String response, List<ChatApiMessage> messages,@JsonKey(name: 'memory_changes') Map<String, dynamic>? memoryChanges
 });
 
 
@@ -340,12 +340,13 @@ class _$ChatApiResponseCopyWithImpl<$Res>
 
 /// Create a copy of ChatApiResponse
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? conversationId = null,Object? response = null,Object? messages = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? conversationId = null,Object? response = null,Object? messages = null,Object? memoryChanges = freezed,}) {
   return _then(_self.copyWith(
 conversationId: null == conversationId ? _self.conversationId : conversationId // ignore: cast_nullable_to_non_nullable
 as String,response: null == response ? _self.response : response // ignore: cast_nullable_to_non_nullable
 as String,messages: null == messages ? _self.messages : messages // ignore: cast_nullable_to_non_nullable
-as List<ChatApiMessage>,
+as List<ChatApiMessage>,memoryChanges: freezed == memoryChanges ? _self.memoryChanges : memoryChanges // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,
   ));
 }
 
@@ -430,10 +431,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'conversation_id')  String conversationId,  String response,  List<ChatApiMessage> messages)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'conversation_id')  String conversationId,  String response,  List<ChatApiMessage> messages, @JsonKey(name: 'memory_changes')  Map<String, dynamic>? memoryChanges)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _ChatApiResponse() when $default != null:
-return $default(_that.conversationId,_that.response,_that.messages);case _:
+return $default(_that.conversationId,_that.response,_that.messages,_that.memoryChanges);case _:
   return orElse();
 
 }
@@ -451,10 +452,10 @@ return $default(_that.conversationId,_that.response,_that.messages);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'conversation_id')  String conversationId,  String response,  List<ChatApiMessage> messages)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'conversation_id')  String conversationId,  String response,  List<ChatApiMessage> messages, @JsonKey(name: 'memory_changes')  Map<String, dynamic>? memoryChanges)  $default,) {final _that = this;
 switch (_that) {
 case _ChatApiResponse():
-return $default(_that.conversationId,_that.response,_that.messages);case _:
+return $default(_that.conversationId,_that.response,_that.messages,_that.memoryChanges);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -471,10 +472,10 @@ return $default(_that.conversationId,_that.response,_that.messages);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'conversation_id')  String conversationId,  String response,  List<ChatApiMessage> messages)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'conversation_id')  String conversationId,  String response,  List<ChatApiMessage> messages, @JsonKey(name: 'memory_changes')  Map<String, dynamic>? memoryChanges)?  $default,) {final _that = this;
 switch (_that) {
 case _ChatApiResponse() when $default != null:
-return $default(_that.conversationId,_that.response,_that.messages);case _:
+return $default(_that.conversationId,_that.response,_that.messages,_that.memoryChanges);case _:
   return null;
 
 }
@@ -486,7 +487,7 @@ return $default(_that.conversationId,_that.response,_that.messages);case _:
 @JsonSerializable()
 
 class _ChatApiResponse implements ChatApiResponse {
-  const _ChatApiResponse({@JsonKey(name: 'conversation_id') required this.conversationId, required this.response, required final  List<ChatApiMessage> messages}): _messages = messages;
+  const _ChatApiResponse({@JsonKey(name: 'conversation_id') required this.conversationId, required this.response, required final  List<ChatApiMessage> messages, @JsonKey(name: 'memory_changes') final  Map<String, dynamic>? memoryChanges}): _messages = messages,_memoryChanges = memoryChanges;
   factory _ChatApiResponse.fromJson(Map<String, dynamic> json) => _$ChatApiResponseFromJson(json);
 
 @override@JsonKey(name: 'conversation_id') final  String conversationId;
@@ -496,6 +497,15 @@ class _ChatApiResponse implements ChatApiResponse {
   if (_messages is EqualUnmodifiableListView) return _messages;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableListView(_messages);
+}
+
+ final  Map<String, dynamic>? _memoryChanges;
+@override@JsonKey(name: 'memory_changes') Map<String, dynamic>? get memoryChanges {
+  final value = _memoryChanges;
+  if (value == null) return null;
+  if (_memoryChanges is EqualUnmodifiableMapView) return _memoryChanges;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(value);
 }
 
 
@@ -512,16 +522,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ChatApiResponse&&(identical(other.conversationId, conversationId) || other.conversationId == conversationId)&&(identical(other.response, response) || other.response == response)&&const DeepCollectionEquality().equals(other._messages, _messages));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ChatApiResponse&&(identical(other.conversationId, conversationId) || other.conversationId == conversationId)&&(identical(other.response, response) || other.response == response)&&const DeepCollectionEquality().equals(other._messages, _messages)&&const DeepCollectionEquality().equals(other._memoryChanges, _memoryChanges));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,conversationId,response,const DeepCollectionEquality().hash(_messages));
+int get hashCode => Object.hash(runtimeType,conversationId,response,const DeepCollectionEquality().hash(_messages),const DeepCollectionEquality().hash(_memoryChanges));
 
 @override
 String toString() {
-  return 'ChatApiResponse(conversationId: $conversationId, response: $response, messages: $messages)';
+  return 'ChatApiResponse(conversationId: $conversationId, response: $response, messages: $messages, memoryChanges: $memoryChanges)';
 }
 
 
@@ -532,7 +542,7 @@ abstract mixin class _$ChatApiResponseCopyWith<$Res> implements $ChatApiResponse
   factory _$ChatApiResponseCopyWith(_ChatApiResponse value, $Res Function(_ChatApiResponse) _then) = __$ChatApiResponseCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: 'conversation_id') String conversationId, String response, List<ChatApiMessage> messages
+@JsonKey(name: 'conversation_id') String conversationId, String response, List<ChatApiMessage> messages,@JsonKey(name: 'memory_changes') Map<String, dynamic>? memoryChanges
 });
 
 
@@ -549,12 +559,13 @@ class __$ChatApiResponseCopyWithImpl<$Res>
 
 /// Create a copy of ChatApiResponse
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? conversationId = null,Object? response = null,Object? messages = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? conversationId = null,Object? response = null,Object? messages = null,Object? memoryChanges = freezed,}) {
   return _then(_ChatApiResponse(
 conversationId: null == conversationId ? _self.conversationId : conversationId // ignore: cast_nullable_to_non_nullable
 as String,response: null == response ? _self.response : response // ignore: cast_nullable_to_non_nullable
 as String,messages: null == messages ? _self._messages : messages // ignore: cast_nullable_to_non_nullable
-as List<ChatApiMessage>,
+as List<ChatApiMessage>,memoryChanges: freezed == memoryChanges ? _self._memoryChanges : memoryChanges // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,
   ));
 }
 

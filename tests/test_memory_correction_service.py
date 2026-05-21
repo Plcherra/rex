@@ -236,6 +236,49 @@ async def test_apply_remove_correction_archives_matching_active_records():
 
 
 @pytest.mark.asyncio
+async def test_apply_person_fact_correction_updates_lara_and_removes_stephanie_fired_fact():
+    repo = FakeMemoryCorrectionRepository()
+    repo.entities.extend(
+        [
+            {
+                "id": "entity-lara",
+                "display_name": "Lara",
+                "normalized_name": "lara",
+                "summary": "Kitchen supervisor.",
+                "relationship": "kitchen supervisor",
+                "active": True,
+                "metadata": {},
+            },
+            {
+                "id": "entity-stephanie",
+                "display_name": "Stephanie",
+                "normalized_name": "stephanie",
+                "summary": "got fired at the beginning of this year",
+                "relationship": "Laura's friend who lives with her",
+                "active": True,
+                "metadata": {},
+            },
+        ]
+    )
+
+    report = await MemoryCorrectionService(repo).apply_correction(
+        "Lara is the kitchen supervisor who got fired at the beginning of the year. "
+        "Stephanie is her friend that lives with her, and Stephanie quit just a month ago. "
+        "Stephanie was not fired at the beginning of this year.",
+        force=True,
+    )
+
+    assert report.applied is True
+    assert "got fired" in repo.entities[0]["summary"]
+    assert "quit just a month ago" in repo.entities[1]["summary"]
+    assert "got fired" not in repo.entities[1]["summary"]
+    assert report.as_dict()["verification_stale_terms"] == [
+        "Stephanie got fired",
+        "Stephanie was fired",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_high_impact_correction_requires_confirmation_before_apply():
     repo = FakeMemoryCorrectionRepository()
     for index in range(6):

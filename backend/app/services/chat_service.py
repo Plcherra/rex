@@ -35,19 +35,38 @@ APPROVE_ALL_PHRASES = {
     "save all",
     "save all pending",
 }
+REJECT_ALL_PHRASES = {
+    "reject all",
+    "reject all pending",
+    "discard all",
+    "discard all pending",
+    "do not save any",
+    "dont save any",
+}
 APPROVE_PHRASES = {
     "yes",
     "yep",
     "yeah",
     "ok",
     "okay",
+    "sure",
     "confirm",
     "confirmed",
     "do it",
     "apply",
+    "approve",
+    "approve it",
     "save it",
     "save that",
     "looks good",
+}
+VAGUE_APPROVE_PHRASES = {
+    "yes",
+    "yep",
+    "yeah",
+    "ok",
+    "okay",
+    "sure",
 }
 REJECT_PHRASES = {
     "no",
@@ -58,6 +77,7 @@ REJECT_PHRASES = {
     "do not save",
     "cancel",
 }
+LOW_RISK_AUTO_APPLY_ENABLED = False
 
 
 class ConversationNotFoundError(Exception):
@@ -560,14 +580,19 @@ class ChatService:
         try:
             candidate = await self.memory_candidate_service.create_candidate(
                 MemoryCandidateCreateRequest(
-                    candidate_type="long_term_memory",
+                    candidate_type="correction",
                     payload={
-                        "memory_type": "fact",
-                        "content": f"User correction: {message}",
-                        "importance": 5,
+                        "text": message,
+                        "intent": {
+                            "intent_type": intent.intent_type.value,
+                            "old_value": intent.old_value,
+                            "new_value": intent.new_value,
+                            "target_hint": intent.target_hint,
+                            "confidence": intent.confidence,
+                        },
                         "metadata": {
                             "correction_intent": True,
-                            "phase": "1b_pending_confirmation",
+                            "phase": "2_pending_verified_correction",
                         },
                     },
                     risk_level="high",
@@ -721,6 +746,8 @@ class ChatService:
         if not pending:
             return None
 
+        selected_candidate = self._candidate_from_confirmation_text(message, pending)
+
         if intent == "approve_all":
             result = await self.memory_candidate_service.bulk_approve_candidates(
                 MemoryCandidateBulkDecisionRequest(
@@ -732,8 +759,18 @@ class ChatService:
             )
             return self._candidate_decision_response(result)
 
+        if intent == "reject_all":
+            result = await self.memory_candidate_service.bulk_reject_candidates(
+                MemoryCandidateBulkDecisionRequest(
+                    source_conversation_id=conversation_id,
+                    decided_by="user",
+                    reason="Rejected all pending changes from chat.",
+                )
+            )
+            return self._candidate_decision_response(result)
+
         if intent == "reject":
-            candidate = pending[0]
+            candidate = selected_candidate or pending[0]
             rejected = await self.memory_candidate_service.reject_candidate(
                 candidate["id"],
                 MemoryCandidateRejectRequest(reason="Rejected from chat."),
@@ -742,34 +779,25 @@ class ChatService:
                 {"approved": [], "rejected": [rejected], "skipped": []}
             )
 
-        if len(pending) > 1:
-            return {
-                "response": (
-                    f"I found {len(pending)} pending memory changes. Say "
-                    "\"approve all pending\" to apply the low/medium-risk ones, "
-                    "or reject the latest one with \"do not save\"."
+        if len(pending) > 1 and selected_candidate is None:
+            return self._pending_candidates_response(pending)
+
+        candidate = selected_candidate or pending[0]
+        if (
+            candidate.get("risk_level") == "high"
+            and self._is_vague_approval(message)
+        ):
+            return self._pending_candidates_response(
+                [candidate],
+                response=(
+                    "This is a high-risk memory change. Please confirm explicitly "
+                    "with \"confirm\", \"apply\", or \"save that\" before I change "
+                    "durable memory."
                 ),
-                "memory_changes": {
-                    "created": 0,
-                    "updated": 0,
-                    "archived": 0,
-                    "merged": 0,
-                    "skipped": 0,
-                    "confirmation_required": len(pending),
-                    "records": [
-                        {
-                            "kind": "memory_candidate",
-                            "action": "pending",
-                            "id": candidate.get("id"),
-                            "title": candidate.get("preview"),
-                        }
-                        for candidate in pending
-                    ],
-                },
-            }
+            )
 
         approved = await self.memory_candidate_service.approve_candidate(
-            pending[0]["id"],
+            candidate["id"],
             MemoryCandidateApproveRequest(
                 approved_by="user",
                 reason="Approved from chat confirmation.",
@@ -785,16 +813,94 @@ class ChatService:
             return None
         if normalized in APPROVE_ALL_PHRASES:
             return "approve_all"
+        if normalized in REJECT_ALL_PHRASES:
+            return "reject_all"
         if (
             ("approve" in normalized or "apply" in normalized or "save" in normalized)
             and ("all" in normalized or "pending" in normalized or "these" in normalized)
         ):
             return "approve_all"
+        if (
+            ("reject" in normalized or "discard" in normalized)
+            and ("all" in normalized or "pending" in normalized or "these" in normalized)
+        ):
+            return "reject_all"
         if normalized in REJECT_PHRASES:
+            return "reject"
+        if normalized.startswith("do not save ") or normalized.startswith(
+            "dont save "
+        ):
             return "reject"
         if normalized in APPROVE_PHRASES:
             return "approve"
+        if normalized.startswith(("confirm ", "confirmed ", "approve ", "apply ")):
+            return "approve"
+        if normalized.startswith("save ") and "all" not in normalized:
+            return "approve"
         return None
+
+    def _is_vague_approval(self, message: str) -> bool:
+        return self._normalized_confirmation_text(message) in VAGUE_APPROVE_PHRASES
+
+    def _candidate_from_confirmation_text(
+        self,
+        message: str,
+        candidates: list[dict],
+    ) -> Optional[dict]:
+        normalized = self._normalized_confirmation_text(message)
+        if not normalized:
+            return None
+        for candidate in candidates:
+            candidate_id = str(candidate.get("id") or "")
+            if not candidate_id:
+                continue
+            normalized_id = self._normalized_confirmation_text(candidate_id)
+            compact_id = normalized_id.replace(" ", "")
+            if normalized_id and normalized_id in normalized:
+                return candidate
+            if compact_id and compact_id in normalized.replace(" ", ""):
+                return candidate
+            if len(compact_id) >= 8 and compact_id[-8:] in normalized.replace(" ", ""):
+                return candidate
+        return None
+
+    def _pending_candidates_response(
+        self,
+        pending: list[dict],
+        *,
+        response: Optional[str] = None,
+    ) -> dict:
+        if response is None:
+            response = (
+                f"I found {len(pending)} pending memory change(s). Review the "
+                "candidate card(s), then say \"approve all pending\" for eligible "
+                "low/medium-risk changes, \"confirm\" for a single high-risk "
+                "change, or \"do not save\" to reject the latest one."
+            )
+        cards = [self._candidate_card(candidate) for candidate in pending]
+        return {
+            "response": response,
+            "memory_changes": {
+                "created": 0,
+                "updated": 0,
+                "archived": 0,
+                "merged": 0,
+                "skipped": 0,
+                "confirmation_required": len(pending),
+                "low_risk_auto_apply_enabled": LOW_RISK_AUTO_APPLY_ENABLED,
+                "pending_candidates": cards,
+                "records": [
+                    {
+                        "kind": "memory_candidate",
+                        "action": "pending",
+                        "id": candidate.get("id"),
+                        "title": candidate.get("preview"),
+                        "candidate": card,
+                    }
+                    for candidate, card in zip(pending, cards)
+                ],
+            },
+        }
 
     def _candidate_decision_response(self, result: dict) -> dict:
         approved = result.get("approved") or []
@@ -827,7 +933,15 @@ class ChatService:
             parts.append(
                 "Some pending changes failed verification, so I did not mark them done."
             )
+            remaining = self._remaining_conflict_text(failed)
+            if remaining:
+                parts.append(f"Still wrong: {remaining}")
         response = " ".join(parts) or "No pending memory changes were applied."
+
+        applied_cards = [self._candidate_card(candidate) for candidate in applied]
+        rejected_cards = [self._candidate_card(candidate) for candidate in rejected]
+        skipped_cards = [self._candidate_card(candidate) for candidate in skipped]
+        failed_cards = [self._candidate_card(candidate) for candidate in failed]
 
         return {
             "response": response,
@@ -838,6 +952,12 @@ class ChatService:
                 "merged": 0,
                 "skipped": len(skipped) + len(failed),
                 "confirmation_required": len(skipped),
+                "low_risk_auto_apply_enabled": LOW_RISK_AUTO_APPLY_ENABLED,
+                "applied_candidates": applied_cards,
+                "rejected_candidates": rejected_cards,
+                "skipped_candidates": skipped_cards,
+                "failed_candidates": failed_cards,
+                "pending_candidates": skipped_cards + failed_cards,
                 "records": [
                     *[
                         {
@@ -845,8 +965,9 @@ class ChatService:
                             "action": candidate.get("status"),
                             "id": candidate.get("id"),
                             "title": candidate.get("preview"),
+                            "candidate": card,
                         }
-                        for candidate in applied
+                        for candidate, card in zip(applied, applied_cards)
                     ],
                     *[
                         {
@@ -854,8 +975,9 @@ class ChatService:
                             "action": "rejected",
                             "id": candidate.get("id"),
                             "title": candidate.get("preview"),
+                            "candidate": card,
                         }
-                        for candidate in rejected
+                        for candidate, card in zip(rejected, rejected_cards)
                     ],
                     *[
                         {
@@ -863,8 +985,9 @@ class ChatService:
                             "action": "skipped_high_risk",
                             "id": candidate.get("id"),
                             "title": candidate.get("preview"),
+                            "candidate": card,
                         }
-                        for candidate in skipped
+                        for candidate, card in zip(skipped, skipped_cards)
                     ],
                     *[
                         {
@@ -872,12 +995,104 @@ class ChatService:
                             "action": "verification_failed",
                             "id": candidate.get("id"),
                             "title": candidate.get("preview"),
+                            "candidate": card,
                         }
-                        for candidate in failed
+                        for candidate, card in zip(failed, failed_cards)
                     ],
                 ],
             },
         }
+
+    def _candidate_card(self, candidate: dict) -> dict:
+        verification = candidate.get("verification") or {}
+        applied_record_table = candidate.get("applied_record_table")
+        applied_record_id = candidate.get("applied_record_id")
+        payload = candidate.get("payload") or {}
+        return {
+            "id": candidate.get("id"),
+            "candidate_type": candidate.get("candidate_type"),
+            "status": candidate.get("status"),
+            "risk_level": candidate.get("risk_level"),
+            "preview": candidate.get("preview"),
+            "expected_action": self._candidate_expected_action(candidate),
+            "requires_explicit_confirmation": candidate.get("risk_level") == "high",
+            "source_conversation_id": candidate.get("source_conversation_id"),
+            "source_message_id": candidate.get("source_message_id"),
+            "payload_preview": self._payload_preview(payload),
+            "applied_record": (
+                {
+                    "table": applied_record_table,
+                    "id": applied_record_id,
+                }
+                if applied_record_table or applied_record_id
+                else None
+            ),
+            "verification": self._verification_summary(verification),
+        }
+
+    def _candidate_expected_action(self, candidate: dict) -> str:
+        candidate_type = str(candidate.get("candidate_type") or "")
+        return {
+            "long_term_memory": "Create long-term memory after confirmation",
+            "entity": "Create or update canonical entity after confirmation",
+            "entity_event": "Create historical entity event after confirmation",
+            "personal_rule": "Create or update personal rule after confirmation",
+            "plan": "Create or update top-level plan after confirmation",
+            "plan_milestone": "Create or update achievement milestone after confirmation",
+            "commitment": "Create or update task/commitment after confirmation",
+            "correction": "Apply correction and verify stale facts are gone",
+            "archive": "Archive stale record after confirmation",
+            "merge": "Merge duplicate records after confirmation",
+        }.get(candidate_type, "Apply pending memory change after confirmation")
+
+    def _payload_preview(self, payload: dict) -> dict:
+        preview: dict[str, object] = {}
+        for key in (
+            "title",
+            "display_name",
+            "content",
+            "description",
+            "rule_text",
+            "commitment_text",
+            "text",
+        ):
+            value = payload.get(key)
+            if value is None:
+                continue
+            text = " ".join(str(value).split())
+            if text:
+                preview[key] = text[:240]
+        intent = payload.get("intent")
+        if isinstance(intent, dict):
+            preview["intent"] = {
+                key: intent.get(key)
+                for key in ("intent_type", "old_value", "new_value", "target_hint")
+                if intent.get(key) is not None
+            }
+        return preview
+
+    def _verification_summary(self, verification: dict) -> Optional[dict]:
+        if not verification:
+            return None
+        remaining = verification.get("remaining_conflicts") or []
+        return {
+            "passed": bool(verification.get("passed")),
+            "message": verification.get("message"),
+            "remaining_conflict_count": len(remaining),
+            "remaining_conflicts": remaining[:5],
+            "applied_record": verification.get("applied_record"),
+        }
+
+    def _remaining_conflict_text(self, candidates: list[dict]) -> str:
+        conflicts: list[str] = []
+        for candidate in candidates:
+            verification = candidate.get("verification") or {}
+            for conflict in verification.get("remaining_conflicts") or []:
+                table = conflict.get("table") or "record"
+                title = conflict.get("title") or conflict.get("id") or "unknown"
+                terms = ", ".join(conflict.get("matched_terms") or [])
+                conflicts.append(f"{table} {title} still contains {terms}".strip())
+        return "; ".join(conflicts[:5])
 
     def _normalized_confirmation_text(self, message: str) -> str:
         normalized = message.lower().replace("'", "")

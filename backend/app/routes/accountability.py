@@ -143,14 +143,25 @@ async def accountability_overview(
     ]
     open_commitments = _open_commitments(context["commitments"])
     open_milestones = _open_milestones(context["plan_milestones"])
+    completed_milestones = _completed_milestones(context["plan_milestones"])
     plan_hierarchy = _plan_hierarchy(
         plans=context["plans"],
         milestones=open_milestones,
+        completed_milestones=completed_milestones,
         commitments=open_commitments,
     )
     duplicate_warnings = _duplicate_warnings(
         plans=context["plans"],
         rules=context["personal_rules"],
+        milestones=open_milestones,
+        commitments=open_commitments,
+        entities=context["entities"],
+    )
+    duplicate_warnings.extend(
+        _cleanup_warnings(
+            plan_hierarchy=plan_hierarchy,
+            open_milestones=open_milestones,
+        )
     )
 
     return AccountabilityOverviewResponse(
@@ -162,7 +173,9 @@ async def accountability_overview(
         open_commitments=open_commitments,
         active_plans=context["plans"],
         open_milestones=open_milestones,
+        completed_milestones=completed_milestones,
         plan_hierarchy=plan_hierarchy,
+        pending_memory_candidates=context["pending_memory_candidates"],
         duplicate_warnings=duplicate_warnings,
         metadata={
             "message": message,
@@ -171,7 +184,11 @@ async def accountability_overview(
             "open_commitment_count": len(open_commitments),
             "active_plan_count": len(context["plans"]),
             "open_milestone_count": len(open_milestones),
+            "completed_milestone_count": len(completed_milestones),
             "open_task_count": len(open_commitments),
+            "pending_memory_candidate_count": len(
+                context["pending_memory_candidates"]
+            ),
             "duplicate_warning_count": len(duplicate_warnings),
         },
     )
@@ -187,8 +204,10 @@ async def _load_accountability_context(
             commitments,
             plans,
             plan_milestones,
+            entities,
             entity_events,
             relevant_memories,
+            pending_memory_candidates,
         ) = await asyncio.gather(
             memory_service.list_personal_rules(
                 active=True,
@@ -208,6 +227,7 @@ async def _load_accountability_context(
                 active=True,
                 limit=ACCOUNTABILITY_CONTEXT_LIMIT,
             ),
+            _list_entities(memory_service),
             memory_service.list_entity_events(
                 active=True,
                 limit=ACCOUNTABILITY_CONTEXT_LIMIT,
@@ -216,6 +236,7 @@ async def _load_accountability_context(
                 query=message,
                 limit=ACCOUNTABILITY_CONTEXT_LIMIT,
             ),
+            _list_pending_memory_candidates(memory_service),
         )
     except MemoryServiceError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error
@@ -225,12 +246,65 @@ async def _load_accountability_context(
         "commitments": commitments,
         "plans": plans,
         "plan_milestones": plan_milestones,
+        "entities": entities,
         "entity_events": entity_events,
         "relevant_memories": relevant_memories,
+        "pending_memory_candidates": pending_memory_candidates,
         "time_context": TimeContextService(
             timezone_name=get_settings().app_timezone,
         ).current_context(),
     }
+
+
+async def _list_entities(memory_service: SupabaseMemoryService) -> list[dict]:
+    list_method = getattr(memory_service, "list_entities", None)
+    if list_method is None:
+        return []
+    try:
+        return await list_method(active=True, limit=ACCOUNTABILITY_CONTEXT_LIMIT)
+    except Exception:
+        return []
+
+
+async def _list_pending_memory_candidates(
+    memory_service: SupabaseMemoryService,
+) -> list[dict]:
+    list_method = getattr(memory_service, "list_memory_candidates", None)
+    if list_method is None:
+        return []
+    try:
+        rows = await list_method(status="pending", limit=ACCOUNTABILITY_CONTEXT_LIMIT)
+        return [_with_candidate_preview(row) for row in rows]
+    except TypeError:
+        try:
+            rows = await list_method(limit=ACCOUNTABILITY_CONTEXT_LIMIT)
+            return [_with_candidate_preview(row) for row in rows]
+        except Exception:
+            return []
+    except Exception:
+        return []
+
+
+def _with_candidate_preview(row: dict) -> dict:
+    if row.get("preview"):
+        return row
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    candidate_type = str(row.get("candidate_type") or "memory_update")
+    title = ""
+    for key in (
+        "title",
+        "display_name",
+        "content",
+        "rule_text",
+        "commitment_text",
+        "new_value",
+    ):
+        value = payload.get(key)
+        if value:
+            title = " ".join(str(value).split())
+            break
+    preview = f"{candidate_type}: {title}" if title else f"{candidate_type}: pending"
+    return {**row, "preview": preview}
 
 
 async def _analyze_signals(
@@ -301,13 +375,27 @@ def _open_milestones(milestones: list[dict]) -> list[dict]:
     ]
 
 
+def _completed_milestones(milestones: list[dict]) -> list[dict]:
+    return [
+        milestone
+        for milestone in milestones
+        if milestone.get("active") is not False
+        and (
+            milestone.get("status") in {"completed", "done"}
+            or bool(milestone.get("completed_at"))
+        )
+    ]
+
+
 def _plan_hierarchy(
     *,
     plans: list[dict],
     milestones: list[dict],
+    completed_milestones: list[dict],
     commitments: list[dict],
 ) -> list[dict]:
     milestones_by_plan: dict[str, list[dict]] = {}
+    completed_milestones_by_plan: dict[str, list[dict]] = {}
     commitments_by_plan: dict[str, list[dict]] = {}
     commitments_by_milestone: dict[str, list[dict]] = {}
 
@@ -315,6 +403,11 @@ def _plan_hierarchy(
         plan_id = str(milestone.get("plan_id") or "")
         if plan_id:
             milestones_by_plan.setdefault(plan_id, []).append(milestone)
+
+    for milestone in completed_milestones:
+        plan_id = str(milestone.get("plan_id") or "")
+        if plan_id:
+            completed_milestones_by_plan.setdefault(plan_id, []).append(milestone)
 
     for commitment in commitments:
         milestone_id = str(commitment.get("milestone_id") or "")
@@ -344,9 +437,16 @@ def _plan_hierarchy(
             {
                 "plan": plan,
                 "open_milestones": plan_milestones,
+                "completed_milestones": completed_milestones_by_plan.get(
+                    plan_id,
+                    [],
+                ),
                 "open_commitments": commitments_by_plan.get(plan_id, []),
                 "counts": {
                     "open_milestones": len(plan_milestones),
+                    "completed_milestones": len(
+                        completed_milestones_by_plan.get(plan_id, [])
+                    ),
                     "open_commitments": len(commitments_by_plan.get(plan_id, []))
                     + sum(
                         len(item.get("open_commitments") or [])
@@ -362,6 +462,9 @@ def _duplicate_warnings(
     *,
     plans: list[dict],
     rules: list[dict],
+    milestones: list[dict],
+    commitments: list[dict],
+    entities: list[dict],
 ) -> list[dict]:
     warnings = []
     warnings.extend(
@@ -380,6 +483,96 @@ def _duplicate_warnings(
             text_fields=("title", "rule_text"),
         )
     )
+    warnings.extend(
+        _duplicate_warning_group(
+            records=milestones,
+            record_type="milestone",
+            title_field="title",
+            text_fields=("title", "description"),
+        )
+    )
+    warnings.extend(
+        _duplicate_warning_group(
+            records=commitments,
+            record_type="commitment",
+            title_field="title",
+            text_fields=("title", "commitment_text"),
+        )
+    )
+    warnings.extend(_entity_conflict_warnings(entities))
+    return warnings
+
+
+def _cleanup_warnings(
+    *,
+    plan_hierarchy: list[dict],
+    open_milestones: list[dict],
+) -> list[dict]:
+    warnings = []
+    if len(open_milestones) >= 20:
+        warnings.append(
+            {
+                "record_type": "milestone",
+                "title": "Too many open milestones",
+                "record_ids": [
+                    str(milestone.get("id"))
+                    for milestone in open_milestones[:20]
+                    if milestone.get("id")
+                ],
+                "reason": "open_milestone_count_exceeds_cleanup_threshold",
+            }
+        )
+
+    for item in plan_hierarchy:
+        open_count = int(item.get("counts", {}).get("open_milestones") or 0)
+        if open_count < 8:
+            continue
+        plan = item.get("plan") or {}
+        warnings.append(
+            {
+                "record_type": "plan",
+                "title": f"{plan.get('title') or 'Plan'} needs milestone cleanup",
+                "record_ids": [str(plan.get("id"))] if plan.get("id") else [],
+                "reason": "plan_open_milestone_count_exceeds_cleanup_threshold",
+            }
+        )
+    return warnings
+
+
+def _entity_conflict_warnings(entities: list[dict]) -> list[dict]:
+    warnings = []
+    for entity in entities:
+        if entity.get("active") is False:
+            continue
+        text = " ".join(
+            str(entity.get(field) or "")
+            for field in ("display_name", "name", "summary", "relationship")
+        )
+        aliases = entity.get("aliases")
+        if isinstance(aliases, list):
+            text = f"{text} {' '.join(str(alias) for alias in aliases)}"
+        normalized = text.casefold()
+        has_job_conflict = (
+            "fired" in normalized
+            and any(term in normalized for term in ("quit", "resigned", "left"))
+        )
+        has_route_conflict = (
+            "primary" in normalized
+            and any(term in normalized for term in ("backup", "fallback"))
+        )
+        if not has_job_conflict and not has_route_conflict:
+            continue
+        title = str(
+            entity.get("display_name") or entity.get("name") or "Entity fact conflict"
+        )
+        warnings.append(
+            {
+                "record_type": "entity",
+                "title": title,
+                "record_ids": [str(entity.get("id"))] if entity.get("id") else [],
+                "reason": "possible_conflicting_entity_facts",
+            }
+        )
     return warnings
 
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:rex/features/chat/domain/chat_message.dart';
+
 /// A single chat line: assistant (left) or user (right).
 class ChatMessageBubble extends StatelessWidget {
   const ChatMessageBubble({
@@ -8,12 +10,24 @@ class ChatMessageBubble extends StatelessWidget {
     this.isUser = false,
     this.isLoading = false,
     this.isStreaming = false,
+    this.memoryCandidates = const [],
+    this.onApproveCandidate,
+    this.onRejectCandidate,
+    this.onApproveAllCandidates,
+    this.onRejectAllCandidates,
+    this.onEditCandidate,
   });
 
   final String text;
   final bool isUser;
   final bool isLoading;
   final bool isStreaming;
+  final List<MemoryCandidateCard> memoryCandidates;
+  final ValueChanged<MemoryCandidateCard>? onApproveCandidate;
+  final ValueChanged<MemoryCandidateCard>? onRejectCandidate;
+  final VoidCallback? onApproveAllCandidates;
+  final VoidCallback? onRejectAllCandidates;
+  final ValueChanged<MemoryCandidateCard>? onEditCandidate;
 
   @override
   Widget build(BuildContext context) {
@@ -66,26 +80,45 @@ class ChatMessageBubble extends StatelessWidget {
                     ),
                     child: isLoading && text.isEmpty
                         ? _TypingDots(color: foreground)
-                        : SelectableText.rich(
-                            TextSpan(
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                color: foreground,
-                                height: 1.42,
-                              ),
-                              children: [
-                                ..._inlineMarkdownSpans(
-                                  text,
-                                  theme,
-                                  foreground,
-                                  isUser,
-                                ),
-                                if (isStreaming)
-                                  WidgetSpan(
-                                    alignment: PlaceholderAlignment.middle,
-                                    child: _StreamingCursor(color: foreground),
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SelectableText.rich(
+                                TextSpan(
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: foreground,
+                                    height: 1.42,
                                   ),
+                                  children: [
+                                    ..._inlineMarkdownSpans(
+                                      text,
+                                      theme,
+                                      foreground,
+                                      isUser,
+                                    ),
+                                    if (isStreaming)
+                                      WidgetSpan(
+                                        alignment: PlaceholderAlignment.middle,
+                                        child: _StreamingCursor(
+                                          color: foreground,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              if (!isUser && memoryCandidates.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                _MemoryCandidateCards(
+                                  candidates: memoryCandidates,
+                                  onApprove: onApproveCandidate,
+                                  onReject: onRejectCandidate,
+                                  onApproveAll: onApproveAllCandidates,
+                                  onRejectAll: onRejectAllCandidates,
+                                  onEdit: onEditCandidate,
+                                ),
                               ],
-                            ),
+                            ],
                           ),
                   ),
                 ),
@@ -141,6 +174,219 @@ class ChatMessageBubble extends StatelessWidget {
     }
 
     return spans.isEmpty ? [TextSpan(text: value)] : spans;
+  }
+}
+
+class _MemoryCandidateCards extends StatelessWidget {
+  const _MemoryCandidateCards({
+    required this.candidates,
+    this.onApprove,
+    this.onReject,
+    this.onApproveAll,
+    this.onRejectAll,
+    this.onEdit,
+  });
+
+  final List<MemoryCandidateCard> candidates;
+  final ValueChanged<MemoryCandidateCard>? onApprove;
+  final ValueChanged<MemoryCandidateCard>? onReject;
+  final VoidCallback? onApproveAll;
+  final VoidCallback? onRejectAll;
+  final ValueChanged<MemoryCandidateCard>? onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final pendingCount = candidates
+        .where((candidate) => candidate.isPending)
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.fact_check_rounded,
+              size: 16,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              pendingCount > 0 ? 'Pending memory' : 'Memory result',
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const Spacer(),
+            if (pendingCount > 1 && onApproveAll != null)
+              TextButton.icon(
+                onPressed: onApproveAll,
+                icon: const Icon(Icons.done_all_rounded, size: 16),
+                label: const Text('Approve all'),
+              ),
+            if (pendingCount > 1 && onRejectAll != null)
+              TextButton.icon(
+                onPressed: onRejectAll,
+                icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                label: const Text('Reject all'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        for (final candidate in candidates)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _MemoryCandidateCard(
+              candidate: candidate,
+              onApprove: onApprove,
+              onReject: onReject,
+              onEdit: onEdit,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MemoryCandidateCard extends StatelessWidget {
+  const _MemoryCandidateCard({
+    required this.candidate,
+    this.onApprove,
+    this.onReject,
+    this.onEdit,
+  });
+
+  final MemoryCandidateCard candidate;
+  final ValueChanged<MemoryCandidateCard>? onApprove;
+  final ValueChanged<MemoryCandidateCard>? onReject;
+  final ValueChanged<MemoryCandidateCard>? onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isHighRisk = candidate.riskLevel == 'high';
+    final verificationPassed = candidate.verificationPassed;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isHighRisk
+              ? scheme.error.withValues(alpha: 0.42)
+              : scheme.outlineVariant.withValues(alpha: 0.55),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _MemoryChip(label: candidate.candidateType),
+                _MemoryChip(
+                  label: candidate.riskLevel,
+                  color: isHighRisk ? scheme.error : scheme.primary,
+                ),
+                _MemoryChip(label: candidate.status),
+                if (verificationPassed != null)
+                  _MemoryChip(
+                    label: verificationPassed ? 'verified' : 'failed',
+                    color: verificationPassed ? scheme.primary : scheme.error,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              candidate.preview,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              candidate.expectedAction,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.3,
+              ),
+            ),
+            if (candidate.verificationMessage != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                candidate.verificationMessage!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: verificationPassed == false
+                      ? scheme.error
+                      : scheme.onSurfaceVariant,
+                  height: 1.3,
+                ),
+              ),
+            ],
+            if (candidate.canApprove || candidate.canReject) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (candidate.canApprove && onApprove != null)
+                    FilledButton.icon(
+                      onPressed: () => onApprove!(candidate),
+                      icon: const Icon(Icons.check_rounded, size: 16),
+                      label: Text(isHighRisk ? 'Confirm' : 'Approve'),
+                    ),
+                  if (candidate.canReject && onReject != null)
+                    OutlinedButton.icon(
+                      onPressed: () => onReject!(candidate),
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      label: const Text('Reject'),
+                    ),
+                  if (candidate.canApprove && onEdit != null)
+                    TextButton.icon(
+                      onPressed: () => onEdit!(candidate),
+                      icon: const Icon(Icons.edit_rounded, size: 16),
+                      label: const Text('Edit'),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MemoryChip extends StatelessWidget {
+  const _MemoryChip({required this.label, this.color});
+
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final chipColor = color ?? scheme.onSurfaceVariant;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: chipColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: chipColor,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
   }
 }
 

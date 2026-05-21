@@ -233,6 +233,11 @@ class MemoryDisciplineService:
                     context,
                 )
 
+        if candidate.kind == MemoryCandidateKind.PLAN_MILESTONE:
+            milestone_decision = self._decide_milestone_candidate(candidate, context)
+            if milestone_decision is not None:
+                return milestone_decision
+
         action = _create_action_for_kind(candidate.kind)
         if action is None:
             return MemoryDisciplineDecision(
@@ -258,6 +263,92 @@ class MemoryDisciplineService:
             related_records=self._top_related_records(context),
             metadata=self._decision_metadata(action, candidate),
         )
+
+    def _decide_milestone_candidate(
+        self,
+        candidate: MemoryDisciplineCandidate,
+        context: MemoryDisciplineContext,
+    ) -> MemoryDisciplineDecision | None:
+        parent_plan = next(
+            (
+                plan
+                for plan in context.active_plans
+                if str(plan.get("id")) == str(candidate.payload.get("plan_id"))
+            ),
+            None,
+        )
+        if parent_plan is None:
+            return None
+        active_milestones = [
+            milestone
+            for milestone in context.active_milestones
+            if str(milestone.get("plan_id")) == str(parent_plan.get("id"))
+        ]
+        classification = self.plan_intelligence_service.classify_milestone_candidate(
+            candidate.payload,
+            parent_plan,
+            active_milestones,
+        )
+        metadata = {
+            **self._decision_metadata(
+                MemoryDisciplineAction.CREATE_MILESTONE,
+                candidate,
+            ),
+            "milestone_classification": classification.model_dump(),
+            "parent_plan_id": parent_plan.get("id"),
+        }
+        if classification.existing_milestone_id:
+            return MemoryDisciplineDecision(
+                action=MemoryDisciplineAction.UPDATE_MILESTONE,
+                candidate_kind=MemoryCandidateKind.PLAN_MILESTONE,
+                payload=candidate.payload,
+                reason=classification.reason,
+                confidence=classification.confidence,
+                target_table="plan_milestones",
+                target_id=classification.existing_milestone_id,
+                related_records=self._top_related_records(context),
+                metadata=metadata,
+            )
+        if classification.kind == "task":
+            plan_decision = self.plan_intelligence_service.classify_plan_candidate(
+                {
+                    **candidate.payload,
+                    "plan_type": parent_plan.get("plan_type"),
+                },
+                {
+                    "active_plans": [parent_plan],
+                    "active_milestones": active_milestones,
+                },
+            )
+            if plan_decision.action == MemoryDisciplineAction.CREATE_COMMITMENT:
+                return self._decision_from_plan_intelligence(candidate, plan_decision, context)
+        if classification.kind in {"strategy_description_update", "entity_event"}:
+            plan_decision = self.plan_intelligence_service.classify_plan_candidate(
+                {
+                    **candidate.payload,
+                    "plan_type": parent_plan.get("plan_type"),
+                },
+                {
+                    "active_plans": [parent_plan],
+                    "active_milestones": active_milestones,
+                },
+            )
+            if plan_decision.action in {
+                MemoryDisciplineAction.UPDATE_PLAN,
+                MemoryDisciplineAction.CREATE_ENTITY_EVENT,
+            }:
+                return self._decision_from_plan_intelligence(candidate, plan_decision, context)
+        if classification.kind == "noisy_ignore":
+            return MemoryDisciplineDecision(
+                action=MemoryDisciplineAction.IGNORE_NOISY_CANDIDATE,
+                candidate_kind=MemoryCandidateKind.PLAN_MILESTONE,
+                payload=candidate.payload,
+                reason=classification.reason,
+                confidence=classification.confidence,
+                related_records=self._top_related_records(context),
+                metadata=metadata,
+            )
+        return None
 
     async def apply_decision(self, decision: MemoryDisciplineDecision) -> dict:
         normalized_payload = await self._normalize_decision_payload(decision)
@@ -523,14 +614,23 @@ class MemoryDisciplineService:
         context: MemoryDisciplineContext,
     ) -> MemoryDisciplineDecision:
         action_to_kind = {
+            MemoryDisciplineAction.CREATE_ENTITY_EVENT: MemoryCandidateKind.ENTITY_EVENT,
+            MemoryDisciplineAction.UPDATE_PLAN: MemoryCandidateKind.PLAN,
             MemoryDisciplineAction.CREATE_MILESTONE: MemoryCandidateKind.PLAN_MILESTONE,
             MemoryDisciplineAction.UPDATE_MILESTONE: MemoryCandidateKind.PLAN_MILESTONE,
             MemoryDisciplineAction.CREATE_COMMITMENT: MemoryCandidateKind.COMMITMENT,
             MemoryDisciplineAction.UPDATE_COMMITMENT: MemoryCandidateKind.COMMITMENT,
             MemoryDisciplineAction.ASK_CONFIRMATION: MemoryCandidateKind.PLAN,
+            MemoryDisciplineAction.IGNORE_NOISY_CANDIDATE: candidate.kind,
         }
         target_table = None
-        if plan_decision.action in {
+        target_id = plan_decision.target_milestone_id
+        if plan_decision.action == MemoryDisciplineAction.CREATE_ENTITY_EVENT:
+            target_table = "entity_events"
+        elif plan_decision.action == MemoryDisciplineAction.UPDATE_PLAN:
+            target_table = "plans"
+            target_id = plan_decision.parent_plan_id
+        elif plan_decision.action in {
             MemoryDisciplineAction.CREATE_MILESTONE,
             MemoryDisciplineAction.UPDATE_MILESTONE,
         }:
@@ -562,7 +662,7 @@ class MemoryDisciplineService:
             reason=plan_decision.reason,
             confidence=plan_decision.confidence,
             target_table=target_table,
-            target_id=plan_decision.target_milestone_id,
+            target_id=target_id,
             requires_confirmation=plan_decision.requires_confirmation,
             related_records=related_records,
             metadata=metadata,
@@ -764,6 +864,7 @@ def _create_action_for_kind(
 ) -> MemoryDisciplineAction | None:
     return {
         MemoryCandidateKind.ENTITY: MemoryDisciplineAction.CREATE_ENTITY,
+        MemoryCandidateKind.ENTITY_EVENT: MemoryDisciplineAction.CREATE_ENTITY_EVENT,
         MemoryCandidateKind.PERSONAL_RULE: MemoryDisciplineAction.CREATE_RULE,
         MemoryCandidateKind.PLAN: MemoryDisciplineAction.CREATE_PLAN,
         MemoryCandidateKind.PLAN_MILESTONE: MemoryDisciplineAction.CREATE_MILESTONE,
@@ -786,6 +887,7 @@ def _update_action_for_kind(
 def _create_method_for_action(action: MemoryDisciplineAction) -> str | None:
     return {
         MemoryDisciplineAction.CREATE_ENTITY: "create_entity",
+        MemoryDisciplineAction.CREATE_ENTITY_EVENT: "create_entity_event",
         MemoryDisciplineAction.CREATE_PLAN: "create_plan",
         MemoryDisciplineAction.CREATE_MILESTONE: "create_plan_milestone",
         MemoryDisciplineAction.CREATE_COMMITMENT: "create_commitment",

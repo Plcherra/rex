@@ -27,6 +27,7 @@ class PlanConsolidationReport:
     scanned: int = 0
     clusters: list[dict[str, Any]] = field(default_factory=list)
     milestones_created: list[dict[str, Any]] = field(default_factory=list)
+    plans_updated: list[dict[str, Any]] = field(default_factory=list)
     archived: list[dict[str, Any]] = field(default_factory=list)
     errors: list[dict[str, str]] = field(default_factory=list)
 
@@ -36,6 +37,7 @@ class PlanConsolidationReport:
             "scanned": self.scanned,
             "clusters": self.clusters,
             "milestones_created": self.milestones_created,
+            "plans_updated": self.plans_updated,
             "archived": self.archived,
             "errors": self.errors,
         }
@@ -70,23 +72,41 @@ async def consolidate_plans(
 
         for plan in archive:
             try:
-                milestone = await _create_consolidated_milestone(
-                    memory_service,
-                    milestones,
-                    cluster.name,
-                    cluster.keep,
-                    plan,
-                )
-                if milestone:
-                    milestones.append(milestone)
-                    report.milestones_created.append(
-                        {
-                            "id": milestone.get("id"),
-                            "plan_id": milestone.get("plan_id"),
-                            "title": milestone.get("title"),
-                            "source_plan_id": plan.get("id"),
-                        }
+                if _source_plan_should_be_milestone(plan):
+                    milestone = await _create_consolidated_milestone(
+                        memory_service,
+                        milestones,
+                        cluster.name,
+                        cluster.keep,
+                        plan,
                     )
+                    if milestone:
+                        milestones.append(milestone)
+                        report.milestones_created.append(
+                            {
+                                "id": milestone.get("id"),
+                                "plan_id": milestone.get("plan_id"),
+                                "title": milestone.get("title"),
+                                "source_plan_id": plan.get("id"),
+                            }
+                        )
+                else:
+                    updated_keep = await _merge_plan_detail_into_keep(
+                        memory_service,
+                        cluster.name,
+                        cluster.keep,
+                        plan,
+                    )
+                    if updated_keep:
+                        cluster.keep.update(updated_keep)
+                        report.plans_updated.append(
+                            {
+                                "id": cluster.keep.get("id"),
+                                "title": cluster.keep.get("title"),
+                                "merged_source_plan_id": plan.get("id"),
+                                "merged_source_title": plan.get("title"),
+                            }
+                        )
 
                 updated = await memory_service.update_plan(
                     str(plan["id"]),
@@ -345,6 +365,95 @@ async def _create_consolidated_milestone(
     return await memory_service.create_plan_milestone(payload)
 
 
+async def _merge_plan_detail_into_keep(
+    memory_service: SupabaseMemoryService,
+    cluster_name: str,
+    keep: dict[str, Any],
+    source: dict[str, Any],
+) -> dict[str, Any] | None:
+    detail = _source_plan_detail_with_title(source)
+    if not detail:
+        return None
+    current_description = _clean_text(keep.get("description")) or ""
+    if _normalize(detail) in _normalize(current_description):
+        return None
+    merged_description = (
+        f"{current_description} Consolidated context: {detail}"
+        if current_description
+        else detail
+    )
+    metadata = {
+        **(keep.get("metadata") or {}),
+        "consolidation_version": CONSOLIDATION_VERSION,
+        "consolidation_cluster": cluster_name,
+        "merged_plan_details": [
+            *(
+                (keep.get("metadata") or {}).get("merged_plan_details")
+                if isinstance((keep.get("metadata") or {}).get("merged_plan_details"), list)
+                else []
+            ),
+            {
+                "source_plan_id": source.get("id"),
+                "source_title": source.get("title"),
+            },
+        ],
+    }
+    return await memory_service.update_plan(
+        str(keep["id"]),
+        description=merged_description,
+        metadata=metadata,
+    )
+
+
+def _source_plan_should_be_milestone(plan: dict[str, Any]) -> bool:
+    text = _plan_text(plan)
+    if "first million" in text:
+        return False
+    if plan.get("plan_type") == "dating":
+        return False
+    if _looks_like_strategy_variant(text):
+        return False
+    if re.search(r"(?:[$€]\s*)?\d+(?:\.\d+)?\s*k\b|[$€]\s*\d{3,}", text):
+        return True
+    tokens = set(text.split())
+    if tokens & {
+        "approval",
+        "approved",
+        "complete",
+        "completed",
+        "finish",
+        "finished",
+        "launch",
+        "launched",
+        "secure",
+        "secured",
+        "ship",
+        "shipped",
+        "submit",
+        "submitted",
+    }:
+        return True
+    return False
+
+
+def _looks_like_strategy_variant(text: str) -> bool:
+    if text.startswith(("europe relocation via", "european relocation via")):
+        return True
+    return bool(
+        {
+            "plan",
+            "strategy",
+            "roadmap",
+            "sequence",
+            "route",
+            "routes",
+            "considering",
+            "exploring",
+        }
+        & set(text.split())
+    )
+
+
 def _milestone_exists(
     milestones: list[dict[str, Any]],
     payload: dict[str, Any],
@@ -393,6 +502,16 @@ def _cluster_preview(
                 "source_plan_id": plan.get("id"),
             }
             for plan in archive
+            if _source_plan_should_be_milestone(plan)
+        ],
+        "plan_details_to_merge": [
+            {
+                "plan_id": keep.get("id"),
+                "title": plan.get("title"),
+                "source_plan_id": plan.get("id"),
+            }
+            for plan in archive
+            if not _source_plan_should_be_milestone(plan)
         ],
     }
 
@@ -408,6 +527,16 @@ def _plan_preview(plan: dict[str, Any]) -> dict[str, Any]:
 
 def _source_plan_detail(plan: dict[str, Any]) -> str | None:
     parts = [
+        _clean_text(plan.get("description")),
+        _clean_text(plan.get("desired_outcome")),
+    ]
+    detail = " ".join(part for part in parts if part)
+    return detail or None
+
+
+def _source_plan_detail_with_title(plan: dict[str, Any]) -> str | None:
+    parts = [
+        _clean_text(plan.get("title")),
         _clean_text(plan.get("description")),
         _clean_text(plan.get("desired_outcome")),
     ]

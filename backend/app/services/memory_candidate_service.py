@@ -12,8 +12,10 @@ from app.models.memory_candidate import (
 )
 from app.models.memory_discipline import MemoryCandidateKind, MemoryDisciplineCandidate
 from app.models.memory_discipline import MemoryDisciplineAction
+from app.services.memory_correction_service import MemoryCorrectionService
 from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
+from app.services.memory_verification_service import MemoryVerificationService
 
 
 class MemoryCandidateServiceError(Exception):
@@ -28,10 +30,18 @@ class MemoryCandidateService:
         self,
         memory_service: SupabaseMemoryService,
         memory_discipline_service: MemoryDisciplineService | None = None,
+        memory_correction_service: MemoryCorrectionService | None = None,
+        memory_verification_service: MemoryVerificationService | None = None,
     ) -> None:
         self.memory_service = memory_service
         self.memory_discipline_service = (
             memory_discipline_service or MemoryDisciplineService(memory_service)
+        )
+        self.memory_correction_service = (
+            memory_correction_service or MemoryCorrectionService(memory_service)
+        )
+        self.memory_verification_service = (
+            memory_verification_service or MemoryVerificationService(memory_service)
         )
 
     async def create_candidate(
@@ -148,14 +158,18 @@ class MemoryCandidateService:
             )
             return _with_preview(failed)
 
+        verification = await self._verification_for_applied(
+            candidate=row,
+            apply_result=apply_result,
+        )
         record = apply_result.get("record") or {}
         updated = await self._update_candidate(
             candidate_id,
             {
-                "status": "applied",
+                "status": "applied" if verification.get("passed") else "failed",
                 "approved_by": _clean_optional(request.approved_by) or "user",
                 "approved_at": approved_at,
-                "applied_at": _now_iso(),
+                "applied_at": _now_iso() if verification.get("passed") else None,
                 "reason": _clean_optional(request.reason) or row.get("reason"),
                 "decision": {
                     **decision,
@@ -166,7 +180,7 @@ class MemoryCandidateService:
                 },
                 "applied_record_table": apply_result.get("table"),
                 "applied_record_id": record.get("id"),
-                "verification": self._verification_for_applied(apply_result),
+                "verification": verification,
             },
         )
         return _with_preview(updated)
@@ -323,6 +337,34 @@ class MemoryCandidateService:
                 "record": record,
             }
 
+        if candidate_type == "correction":
+            text = _clean_optional(payload.get("text") or payload.get("content"))
+            if not text:
+                return {
+                    "applied": False,
+                    "reason": "Correction candidate is missing correction text.",
+                }
+            report = await self.memory_correction_service.apply_correction(
+                text,
+                source_conversation_id=source_conversation_id,
+                source_message_id=source_message_id,
+                force=True,
+            )
+            report_payload = report.as_dict()
+            return {
+                "action": "apply_correction",
+                "applied": bool(report.applied),
+                "table": "memory_corrections",
+                "record": _correction_record(report_payload),
+                "correction_report": report_payload,
+                "stale_terms": _correction_stale_terms(report_payload),
+                "reason": (
+                    None
+                    if report.applied
+                    else "Correction did not affect any active records."
+                ),
+            }
+
         kind = _candidate_kind(candidate_type)
         if kind is None:
             return {
@@ -367,31 +409,39 @@ class MemoryCandidateService:
         if not applied.get("applied"):
             return {
                 **applied,
-                "table": _table_for_candidate_type(candidate_type),
+                "table": _table_for_apply_action(applied.get("action"))
+                or _table_for_candidate_type(candidate_type),
             }
         return {
             **applied,
-            "table": _table_for_candidate_type(candidate_type),
+            "table": _table_for_apply_action(applied.get("action"))
+            or _table_for_candidate_type(candidate_type),
         }
 
-    def _verification_for_applied(self, apply_result: dict[str, Any]) -> dict[str, Any]:
+    async def _verification_for_applied(
+        self,
+        *,
+        candidate: dict[str, Any],
+        apply_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if candidate.get("candidate_type") == "correction":
+            report = apply_result.get("correction_report") or {}
+            verification = await self.memory_verification_service.verify_correction(
+                stale_terms=apply_result.get("stale_terms") or [],
+                applied_record={
+                    "table": apply_result.get("table"),
+                    "id": (apply_result.get("record") or {}).get("id"),
+                },
+            )
+            verification["correction_report"] = report
+            return verification
+
         record = apply_result.get("record") or {}
         table = apply_result.get("table")
-        passed = bool(table and record.get("id"))
-        return {
-            "passed": passed,
-            "checked_tables": [table] if table else [],
-            "remaining_conflicts": [],
-            "applied_record": {
-                "table": table,
-                "id": record.get("id"),
-            },
-            "message": (
-                "Candidate applied and returned a durable record."
-                if passed
-                else "Candidate apply did not return a durable record id."
-            ),
-        }
+        return await self.memory_verification_service.verify_applied_record(
+            table=table,
+            record_id=record.get("id"),
+        )
 
 
 def _clean_payload(payload: object) -> dict[str, Any]:
@@ -452,6 +502,7 @@ def _now_iso() -> str:
 def _candidate_kind(candidate_type: str) -> MemoryCandidateKind | None:
     return {
         "entity": MemoryCandidateKind.ENTITY,
+        "entity_event": MemoryCandidateKind.ENTITY_EVENT,
         "personal_rule": MemoryCandidateKind.PERSONAL_RULE,
         "plan": MemoryCandidateKind.PLAN,
         "plan_milestone": MemoryCandidateKind.PLAN_MILESTONE,
@@ -462,6 +513,7 @@ def _candidate_kind(candidate_type: str) -> MemoryCandidateKind | None:
 def _create_action_for_kind(kind: MemoryCandidateKind) -> MemoryDisciplineAction | None:
     return {
         MemoryCandidateKind.ENTITY: MemoryDisciplineAction.CREATE_ENTITY,
+        MemoryCandidateKind.ENTITY_EVENT: MemoryDisciplineAction.CREATE_ENTITY_EVENT,
         MemoryCandidateKind.PERSONAL_RULE: MemoryDisciplineAction.CREATE_RULE,
         MemoryCandidateKind.PLAN: MemoryDisciplineAction.CREATE_PLAN,
         MemoryCandidateKind.PLAN_MILESTONE: MemoryDisciplineAction.CREATE_MILESTONE,
@@ -478,4 +530,56 @@ def _table_for_candidate_type(candidate_type: str) -> str | None:
         "plan": "plans",
         "plan_milestone": "plan_milestones",
         "commitment": "commitments",
+        "correction": "memory_corrections",
     }.get(candidate_type)
+
+
+def _table_for_apply_action(action: object) -> str | None:
+    return {
+        "create_entity": "entities",
+        "update_entity": "entities",
+        "create_entity_event": "entity_events",
+        "create_plan": "plans",
+        "update_plan": "plans",
+        "create_milestone": "plan_milestones",
+        "update_milestone": "plan_milestones",
+        "create_commitment": "commitments",
+        "update_commitment": "commitments",
+        "create_rule": "personal_rules",
+        "update_rule": "personal_rules",
+    }.get(str(action or ""))
+
+
+def _correction_record(report: dict[str, Any]) -> dict[str, Any]:
+    corrections = report.get("corrections") or []
+    if corrections:
+        first = corrections[0]
+        return {
+            "id": first.get("id"),
+            "correction_ids": [
+                correction.get("id")
+                for correction in corrections
+                if correction.get("id") is not None
+            ],
+        }
+    affected = report.get("affected_records") or []
+    if affected:
+        first = affected[0]
+        return {
+            "id": f"{first.get('table')}:{first.get('id')}",
+            "affected_records": affected,
+        }
+    return {"id": None}
+
+
+def _correction_stale_terms(report: dict[str, Any]) -> list[str]:
+    stale_terms = report.get("verification_stale_terms") or []
+    if stale_terms:
+        return [
+            term
+            for term in (_clean_optional(stale_term) for stale_term in stale_terms)
+            if term
+        ]
+    intent = report.get("intent") or {}
+    old_value = _clean_optional(intent.get("old_value"))
+    return [old_value] if old_value else []

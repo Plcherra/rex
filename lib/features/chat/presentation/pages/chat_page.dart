@@ -163,6 +163,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _sendMemoryCommand(String command) async {
+    await ref.read(chatProvider.notifier).sendMessage(command);
+  }
+
+  void _editMemoryCandidate(MemoryCandidateCard candidate) {
+    _messageController.text = 'Edit pending memory ${candidate.id}: ';
+    _messageController.selection = TextSelection.collapsed(
+      offset: _messageController.text.length,
+    );
+  }
+
   void _openVoiceCall() {
     FocusScope.of(context).unfocus();
     Navigator.of(context).push(
@@ -288,6 +299,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                   text: message.content,
                                   isUser: message.role == ChatMessageRole.user,
                                   isStreaming: message.isStreaming,
+                                  memoryCandidates: message.memoryCandidates,
+                                  onApproveAllCandidates: () =>
+                                      _sendMemoryCommand('approve all pending'),
+                                  onRejectAllCandidates: () =>
+                                      _sendMemoryCommand('reject all pending'),
+                                  onApproveCandidate: (candidate) =>
+                                      _sendMemoryCommand(
+                                        'confirm memory candidate ${candidate.id}',
+                                      ),
+                                  onRejectCandidate: (candidate) =>
+                                      _sendMemoryCommand(
+                                        'do not save memory candidate ${candidate.id}',
+                                      ),
+                                  onEditCandidate: _editMemoryCandidate,
                                 ),
                               ),
                             ),

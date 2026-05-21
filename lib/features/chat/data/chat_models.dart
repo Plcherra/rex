@@ -36,6 +36,7 @@ abstract class ChatApiResponse with _$ChatApiResponse {
     @JsonKey(name: 'conversation_id') required String conversationId,
     required String response,
     required List<ChatApiMessage> messages,
+    @JsonKey(name: 'memory_changes') Map<String, dynamic>? memoryChanges,
   }) = _ChatApiResponse;
 
   factory ChatApiResponse.fromJson(Map<String, dynamic> json) =>

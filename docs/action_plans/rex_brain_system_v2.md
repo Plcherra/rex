@@ -664,8 +664,8 @@ Make corrections reliable and make verification a standard post-write step. A co
 
 ### Checklist
 
-1. [ ] Create `MemoryVerificationService`.
-2. [ ] Add cross-table search for stale terms across:
+1. [x] Create `MemoryVerificationService`.
+2. [x] Add cross-table search for stale terms across:
    - long-term memory
    - entities
    - entity events
@@ -673,18 +673,18 @@ Make corrections reliable and make verification a standard post-write step. A co
    - milestones
    - commitments
    - rules
-3. [ ] Add correction candidate type.
-4. [ ] Make correction apply path update canonical records and archive stale records.
-5. [ ] Run verification after correction.
-6. [ ] Store verification result on the candidate.
-7. [ ] If verification fails, return remaining stale records to the chat/UI.
-8. [ ] Add multi-entity correction tests:
+3. [x] Add correction candidate type.
+4. [x] Make correction apply path update canonical records and archive stale records.
+5. [x] Run verification after correction.
+6. [x] Store verification result on the candidate.
+7. [x] If verification fails, return remaining stale records to the chat/UI.
+8. [x] Add multi-entity correction tests:
    - Lara got fired.
    - Stephanie did not get fired.
    - Stephanie quit about a month ago.
-9. [ ] Add tests that Rex cannot report full success when stale records remain.
-10. [ ] Reuse verification service for every approved candidate, not only corrections.
-11. [ ] Add standard verification payload:
+9. [x] Add tests that Rex cannot report full success when stale records remain.
+10. [x] Reuse verification service for every approved candidate, not only corrections.
+11. [x] Add standard verification payload:
     - `passed`
     - `checked_tables`
     - `remaining_conflicts`
@@ -736,21 +736,21 @@ Stop using milestones as a dumping ground. Plans become rich containers, tasks b
 
 ### Checklist
 
-1. [ ] Require top-level plan descriptions.
-2. [ ] Add plan description quality validator.
-3. [ ] Add milestone classifier:
+1. [x] Require top-level plan descriptions.
+2. [x] Add plan description quality validator.
+3. [x] Add milestone classifier:
    - achievement
    - task
    - entity_event
    - duplicate
    - noisy_ignore
-4. [ ] Prevent recursive milestones where title matches parent plan.
-5. [ ] Prevent duplicate milestones under the same plan.
-6. [ ] Stop consolidation script from creating milestone for every archived plan.
-7. [ ] Merge useful duplicate plan details into parent plan description instead.
-8. [ ] Route concrete actions into commitments/tasks.
-9. [ ] Route historical context into entity events.
-10. [ ] Add regression cases for relocation, app launch, Melissa, and income targets.
+4. [x] Prevent recursive milestones where title matches parent plan.
+5. [x] Prevent duplicate milestones under the same plan.
+6. [x] Stop consolidation script from creating milestone for every archived plan.
+7. [x] Merge useful duplicate plan details into parent plan description instead.
+8. [x] Route concrete actions into commitments/tasks.
+9. [x] Route historical context into entity events.
+10. [x] Add regression cases for relocation, app launch, Melissa, and income targets.
 
 ### Milestone Acceptance Rules
 
@@ -817,23 +817,23 @@ Make chat memory behavior truthful. Rex should propose memory changes, ask for c
 
 ### Checklist
 
-1. [ ] Add pending candidate cards/chips in chat.
-2. [ ] Cards should show candidate type, risk level, preview, and expected write action.
-3. [ ] Add Approve/Edit/Reject buttons.
-4. [ ] Add Approve All / Reject All controls when multiple candidates are pending.
-5. [ ] Support "yes", "ok", "confirm", "do it", "apply", "save that", "looks good", "approve all", and "reject" as chat confirmation.
-6. [ ] Keep candidate IDs linked to the conversation.
-7. [ ] After approval, show exact applied changes:
+1. [x] Add pending candidate cards/chips in chat.
+2. [x] Cards should show candidate type, risk level, preview, and expected write action.
+3. [x] Add Approve/Edit/Reject buttons.
+4. [x] Add Approve All / Reject All controls when multiple candidates are pending.
+5. [x] Support "yes", "ok", "confirm", "do it", "apply", "save that", "looks good", "approve all", and "reject" as chat confirmation.
+6. [x] Keep candidate IDs linked to the conversation.
+7. [x] After approval, show exact applied changes:
    - updated
    - created
    - archived
    - merged
    - verification status
-8. [ ] If verification fails, show what remains wrong.
-9. [ ] Prevent assistant from inventing memory write results.
-10. [ ] Make streaming and non-streaming chat return consistent memory status.
-11. [ ] Add UX guardrail: high-risk candidates show a stronger confirmation state and cannot be approved accidentally by vague `ok`.
-12. [ ] Add optional low-risk auto-apply setting, disabled by default.
+8. [x] If verification fails, show what remains wrong.
+9. [x] Prevent assistant from inventing memory write results.
+10. [x] Make streaming and non-streaming chat return consistent memory status.
+11. [x] Add UX guardrail: high-risk candidates show a stronger confirmation state and cannot be approved accidentally by vague `ok`.
+12. [x] Add optional low-risk auto-apply setting, disabled by default.
 
 ### Prompt Rules To Add
 
@@ -884,20 +884,20 @@ Make the UI reflect the real memory model. Accountability should guide the user,
 
 ### Checklist
 
-1. [ ] Add duplicate warnings for milestones.
-2. [ ] Add duplicate warnings for commitments.
-3. [ ] Add conflicting-fact warnings for entities.
-4. [ ] Change Accountability plan cards to show:
+1. [x] Add duplicate warnings for milestones.
+2. [x] Add duplicate warnings for commitments.
+3. [x] Add conflicting-fact warnings for entities.
+4. [x] Change Accountability plan cards to show:
    - title
    - rich description
    - current task checklist
    - completed milestone badges
    - optional upcoming achievement targets
-5. [ ] Hide raw open milestones by default.
-6. [ ] Add "Internal memory" expansion section for raw milestones/candidates.
-7. [ ] Add pending candidate review section.
-8. [ ] Add cleanup warning if a plan has too many open milestones or duplicate clusters.
-9. [ ] Add edit/delete/archive controls where appropriate.
+5. [x] Hide raw open milestones by default.
+6. [x] Add "Internal memory" expansion section for raw milestones/candidates.
+7. [x] Add pending candidate review section.
+8. [x] Add cleanup warning if a plan has too many open milestones or duplicate clusters.
+9. [x] Add edit/delete/archive controls where appropriate.
 
 ### UI Display Rules
 
@@ -981,10 +981,10 @@ People:
 
 ### Checklist
 
-1. [ ] Build dry-run cleanup script.
-2. [ ] Output exact affected records before applying.
-3. [ ] Require explicit `--apply`.
-4. [ ] Run verification after cleanup.
+1. [x] Build dry-run cleanup script.
+2. [x] Output exact affected records before applying.
+3. [x] Require explicit `--apply`.
+4. [x] Run verification after cleanup.
 5. [ ] Confirm production overview has acceptable counts.
 6. [ ] Confirm duplicate warnings are zero for real reasons.
 7. [ ] Confirm UI shows clean plan descriptions and tasks.

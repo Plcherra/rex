@@ -50,6 +50,7 @@ class CorrectionReport:
     corrections: list[dict[str, Any]] = field(default_factory=list)
     errors: list[dict[str, str]] = field(default_factory=list)
     confirmation_payload: Optional[dict[str, Any]] = None
+    verification_stale_terms: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +76,7 @@ class CorrectionReport:
             "corrections": self.corrections,
             "errors": self.errors,
             "confirmation_payload": self.confirmation_payload,
+            "verification_stale_terms": self.verification_stale_terms,
         }
 
 
@@ -293,6 +295,21 @@ class MemoryCorrectionService:
         intent = self.detect_correction_intent(text)
         report = CorrectionReport(intent=intent)
         if intent.intent_type == CorrectionIntentType.UNKNOWN:
+            person_affected = await self._apply_person_fact_correction(text)
+            if not person_affected:
+                return report
+            report.affected_records = person_affected
+            report.applied = True
+            report.verification_stale_terms = _person_fact_stale_terms(text)
+            for affected_record in person_affected:
+                correction = await self._record_correction(
+                    intent,
+                    affected_record,
+                    source_conversation_id=source_conversation_id,
+                    source_message_id=source_message_id,
+                )
+                if correction:
+                    report.corrections.append(correction)
             return report
 
         if intent.requires_confirmation and not force:
@@ -330,6 +347,81 @@ class MemoryCorrectionService:
             if correction:
                 report.corrections.append(correction)
         return report
+
+    async def _apply_person_fact_correction(
+        self,
+        text: str,
+    ) -> list[CorrectionAffectedRecord]:
+        affected: list[CorrectionAffectedRecord] = []
+        entities = await self._safe_list(_spec_for_table("entities"))
+        if not entities:
+            return affected
+
+        for entity in entities:
+            updates = _person_fact_entity_updates(entity, text)
+            if not updates:
+                continue
+            updated = await self._safe_update(
+                _spec_for_table("entities"),
+                str(entity["id"]),
+                updates,
+            )
+            if updated is None:
+                continue
+            affected.append(
+                CorrectionAffectedRecord(
+                    table="entities",
+                    id=str(entity["id"]),
+                    action="updated",
+                    title=_record_title(entity),
+                    previous=entity,
+                    updated=updated,
+                )
+            )
+
+        negative_fired = _negative_fired_fact(text)
+        if negative_fired:
+            affected.extend(
+                await self._replace_person_stale_fired_fact(
+                    person_name=negative_fired["name"],
+                    replacement=negative_fired["replacement"],
+                )
+            )
+        return _dedupe_affected(affected)
+
+    async def _replace_person_stale_fired_fact(
+        self,
+        *,
+        person_name: str,
+        replacement: str,
+    ) -> list[CorrectionAffectedRecord]:
+        affected: list[CorrectionAffectedRecord] = []
+        person_key = _normalize_key(person_name)
+        if not person_key or not replacement:
+            return affected
+
+        for spec in TABLE_SPECS:
+            records = await self._safe_list(spec)
+            for record in records:
+                if not _record_contains(record, spec, person_name):
+                    continue
+                updates = _replace_fired_fact_updates(record, spec, replacement)
+                if not updates:
+                    continue
+                updated = await self._safe_update(spec, str(record["id"]), updates)
+                if updated is None:
+                    continue
+                affected.append(
+                    CorrectionAffectedRecord(
+                        table=spec.table,
+                        id=str(record["id"]),
+                        action="updated",
+                        title=_record_title(record),
+                        previous=record,
+                        updated=updated,
+                    )
+                )
+        return affected
 
     async def _preview_affected_count(self, intent: CorrectionIntent) -> int:
         if intent.intent_type not in {
@@ -573,6 +665,165 @@ def _replacement_updates(
         )
         updates["metadata"] = metadata
     return updates
+
+
+def _person_fact_entity_updates(record: dict[str, Any], text: str) -> dict[str, Any]:
+    names = [
+        record.get("display_name"),
+        record.get("normalized_name"),
+        *(record.get("aliases") or []),
+    ]
+    sentences = _sentences(text)
+    summary_parts: list[str] = []
+    relationship = None
+    for name in names:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        pattern = re.compile(
+            rf"\b{re.escape(name.strip())}\s+(?:is|was)\s+(.+)$",
+            flags=re.IGNORECASE,
+        )
+        for sentence in sentences:
+            match = pattern.search(sentence)
+            if not match:
+                continue
+            fact = _trim(match.group(1))
+            if fact:
+                summary_parts.append(_capitalize_sentence(fact))
+                if relationship is None:
+                    relationship = _short_relationship(fact)
+
+        quit_pattern = re.compile(
+            rf"\b{re.escape(name.strip())}\s+quit\s+([^.!?]+)",
+            flags=re.IGNORECASE,
+        )
+        for sentence in sentences:
+            match = quit_pattern.search(sentence)
+            if match:
+                summary_parts.append(
+                    _capitalize_sentence(f"{name.strip()} quit {_trim(match.group(1))}")
+                )
+
+    if not summary_parts:
+        return {}
+
+    summary = _join_unique_sentences(summary_parts)
+    updates: dict[str, Any] = {
+        "summary": summary,
+        "metadata": {
+            **(record.get("metadata") or {}),
+            "correction_version": CORRECTION_VERSION,
+            "correction_action": "person_fact_update",
+        },
+    }
+    if relationship:
+        updates["relationship"] = relationship
+    return updates
+
+
+def _negative_fired_fact(text: str) -> Optional[dict[str, str]]:
+    for sentence in _sentences(text):
+        negative = re.search(
+            r"\b([A-Z][a-z]+)\s+(?:was\s+)?not\s+fired\b",
+            sentence,
+        )
+        if not negative:
+            continue
+        name = negative.group(1)
+        replacement = _quit_fact_for_person(text, name)
+        if replacement:
+            return {"name": name, "replacement": replacement}
+    return None
+
+
+def _quit_fact_for_person(text: str, name: str) -> str | None:
+    pattern = re.compile(
+        rf"\b{re.escape(name)}\s+quit\s+([^.!?]+)",
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return None
+    return f"{name} quit {_trim(match.group(1))}"
+
+
+def _replace_fired_fact_updates(
+    record: dict[str, Any],
+    spec: _TableSpec,
+    replacement: str,
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    for field_name in spec.text_fields:
+        value = record.get(field_name)
+        replaced = _replace_fired_fact(value, replacement)
+        if replaced != value:
+            updates[field_name] = replaced
+    if updates:
+        updates["metadata"] = {
+            **(record.get("metadata") or {}),
+            "correction_version": CORRECTION_VERSION,
+            "correction_action": "person_negative_fact_replace",
+            "new_value": replacement,
+        }
+    return updates
+
+
+def _replace_fired_fact(value: Any, replacement: str) -> Any:
+    if isinstance(value, list):
+        return [_replace_fired_fact(item, replacement) for item in value]
+    if not isinstance(value, str):
+        return value
+    if "fired" not in value.casefold():
+        return value
+    patterns = [
+        r"\bgot\s+fired(?:\s+(?:at|in|on)\s+the\s+beginning\s+of\s+this\s+year)?",
+        r"\bwas\s+fired(?:\s+(?:at|in|on)\s+the\s+beginning\s+of\s+this\s+year)?",
+    ]
+    replaced = value
+    for pattern in patterns:
+        replaced = re.sub(pattern, replacement, replaced, flags=re.IGNORECASE)
+    return replaced
+
+
+def _person_fact_stale_terms(text: str) -> list[str]:
+    negative = _negative_fired_fact(text)
+    if not negative:
+        return []
+    return [f"{negative['name']} got fired", f"{negative['name']} was fired"]
+
+
+def _sentences(text: str) -> list[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"[.!?]+", text)
+        if sentence.strip()
+    ]
+
+
+def _capitalize_sentence(text: str) -> str:
+    text = _trim(text)
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _short_relationship(fact: str) -> str:
+    lowered = fact.casefold()
+    if "friend" in lowered:
+        return "friend"
+    if "supervisor" in lowered:
+        return "kitchen supervisor" if "kitchen" in lowered else "supervisor"
+    return fact.split(",", 1)[0][:120]
+
+
+def _join_unique_sentences(parts: list[str]) -> str:
+    seen: set[str] = set()
+    result: list[str] = []
+    for part in parts:
+        key = _normalize_key(part)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(part)
+    return ". ".join(result)
 
 
 def _replace_value(value: Any, old_value: str, new_value: str) -> Any:

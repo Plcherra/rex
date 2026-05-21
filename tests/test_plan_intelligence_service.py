@@ -236,3 +236,128 @@ def test_unrelated_durable_health_goal_can_create_top_level_plan():
 
     assert decision.action == MemoryDisciplineAction.CREATE_PLAN
     assert decision.payload["title"] == "Build a consistent strength training routine"
+
+
+def test_recursive_parent_plan_candidate_updates_description_not_milestone():
+    service = PlanIntelligenceService()
+    context = {
+        "active_plans": [
+            {
+                "id": "plan-move",
+                "plan_type": "immigration",
+                "title": "Move out of the country next year",
+                "description": "Move abroad after reaching stable income.",
+                "desired_outcome": "Live outside the USA with stable remote income.",
+                "priority": 5,
+                "active": True,
+            }
+        ],
+        "active_milestones": [],
+    }
+    candidate = {
+        "plan_type": "immigration",
+        "title": "Move out of the country next year",
+        "description": "Primary route is Italian citizenship, with Portugal D7 as backup.",
+        "desired_outcome": "Portugal or Italy route clarified.",
+        "priority": 5,
+    }
+
+    decision = service.classify_plan_candidate(candidate, context)
+
+    assert decision.action == MemoryDisciplineAction.UPDATE_PLAN
+    assert decision.parent_plan_id == "plan-move"
+    assert "Italian citizenship" in decision.payload["description"]
+
+
+def test_duplicate_income_target_updates_existing_milestone():
+    service = PlanIntelligenceService()
+    context = {
+        "active_plans": [
+            {
+                "id": "plan-move",
+                "plan_type": "immigration",
+                "title": "Move out of the country next year",
+                "description": "Move after reaching income targets.",
+                "priority": 5,
+                "active": True,
+            }
+        ],
+        "active_milestones": [
+            {
+                "id": "milestone-income",
+                "plan_id": "plan-move",
+                "title": "Reach $5k monthly income",
+                "description": "Reach stable monthly income before leaving.",
+                "status": "open",
+                "active": True,
+            }
+        ],
+    }
+    candidate = {
+        "plan_type": "finance",
+        "title": "$5k monthly revenue target",
+        "description": "Hit $5k/month in income before moving.",
+        "priority": 5,
+    }
+
+    decision = service.classify_plan_candidate(candidate, context)
+
+    assert decision.action == MemoryDisciplineAction.UPDATE_MILESTONE
+    assert decision.target_milestone_id == "milestone-income"
+
+
+def test_first_million_exploration_is_ignored_not_milestone():
+    service = PlanIntelligenceService()
+    context = {
+        "active_plans": [
+            {
+                "id": "plan-move",
+                "plan_type": "immigration",
+                "title": "Move out of the country next year",
+                "description": "Move after reaching income targets.",
+                "priority": 5,
+                "active": True,
+            }
+        ],
+        "active_milestones": [],
+    }
+    candidate = {
+        "plan_type": "finance",
+        "title": "Reach first million",
+        "description": "User asked how long it would take to reach the first million.",
+        "priority": 3,
+    }
+
+    decision = service.classify_plan_candidate(candidate, context)
+
+    assert decision.action == MemoryDisciplineAction.IGNORE_NOISY_CANDIDATE
+
+
+def test_historical_person_context_routes_to_entity_event_when_entity_known():
+    service = PlanIntelligenceService()
+    context = {
+        "active_plans": [
+            {
+                "id": "plan-melissa",
+                "plan_type": "dating",
+                "title": "Ask Melissa out for dinner",
+                "description": "One active dating follow-up plan with Melissa.",
+                "primary_entity_id": "entity-melissa",
+                "priority": 4,
+                "active": True,
+            }
+        ],
+        "active_milestones": [],
+    }
+    candidate = {
+        "plan_type": "dating",
+        "title": "Melissa said she would let me know",
+        "description": "Melissa said she would let me know as her response.",
+        "primary_entity_id": "entity-melissa",
+        "priority": 4,
+    }
+
+    decision = service.classify_plan_candidate(candidate, context)
+
+    assert decision.action == MemoryDisciplineAction.CREATE_ENTITY_EVENT
+    assert decision.payload["entity_id"] == "entity-melissa"

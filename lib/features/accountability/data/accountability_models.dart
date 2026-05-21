@@ -37,7 +37,9 @@ class AccountabilityOverview {
     required this.openCommitments,
     required this.activePlans,
     required this.openMilestones,
+    required this.completedMilestones,
     required this.planHierarchy,
+    required this.pendingMemoryCandidates,
     required this.duplicateWarnings,
     required this.metadata,
   });
@@ -55,9 +57,14 @@ class AccountabilityOverview {
       openCommitments: _list(json['open_commitments'], Commitment.fromJson),
       activePlans: _list(json['active_plans'], PlanRecord.fromJson),
       openMilestones: _list(json['open_milestones'], PlanMilestone.fromJson),
-      planHierarchy: _list(
-        json['plan_hierarchy'],
-        PlanHierarchyItem.fromJson,
+      completedMilestones: _list(
+        json['completed_milestones'],
+        PlanMilestone.fromJson,
+      ),
+      planHierarchy: _list(json['plan_hierarchy'], PlanHierarchyItem.fromJson),
+      pendingMemoryCandidates: _list(
+        json['pending_memory_candidates'],
+        PendingMemoryCandidate.fromJson,
       ),
       duplicateWarnings: _list(
         json['duplicate_warnings'],
@@ -75,7 +82,9 @@ class AccountabilityOverview {
   final List<Commitment> openCommitments;
   final List<PlanRecord> activePlans;
   final List<PlanMilestone> openMilestones;
+  final List<PlanMilestone> completedMilestones;
   final List<PlanHierarchyItem> planHierarchy;
+  final List<PendingMemoryCandidate> pendingMemoryCandidates;
   final List<DuplicateWarning> duplicateWarnings;
   final Map<String, dynamic> metadata;
 
@@ -85,7 +94,9 @@ class AccountabilityOverview {
       openCommitments.isEmpty &&
       activePlans.isEmpty &&
       openMilestones.isEmpty &&
+      completedMilestones.isEmpty &&
       planHierarchy.isEmpty &&
+      pendingMemoryCandidates.isEmpty &&
       duplicateWarnings.isEmpty;
 
   int get activePlanCount =>
@@ -94,8 +105,15 @@ class AccountabilityOverview {
   int get openMilestoneCount =>
       _int(metadata['open_milestone_count']) ?? openMilestones.length;
 
+  int get completedMilestoneCount =>
+      _int(metadata['completed_milestone_count']) ?? completedMilestones.length;
+
   int get openTaskCount =>
       _int(metadata['open_task_count']) ?? openCommitments.length;
+
+  int get pendingMemoryCandidateCount =>
+      _int(metadata['pending_memory_candidate_count']) ??
+      pendingMemoryCandidates.length;
 }
 
 class AccountabilitySignal {
@@ -269,6 +287,7 @@ class PlanHierarchyItem {
   const PlanHierarchyItem({
     required this.plan,
     required this.openMilestones,
+    required this.completedMilestones,
     required this.openCommitments,
     required this.counts,
   });
@@ -276,22 +295,53 @@ class PlanHierarchyItem {
   factory PlanHierarchyItem.fromJson(Map<String, dynamic> json) {
     return PlanHierarchyItem(
       plan: PlanRecord.fromJson(_map(json['plan'])),
-      openMilestones: _list(
-        json['open_milestones'],
+      openMilestones: _list(json['open_milestones'], PlanMilestone.fromJson),
+      completedMilestones: _list(
+        json['completed_milestones'],
         PlanMilestone.fromJson,
       ),
-      openCommitments: _list(
-        json['open_commitments'],
-        Commitment.fromJson,
-      ),
+      openCommitments: _list(json['open_commitments'], Commitment.fromJson),
       counts: _map(json['counts']),
     );
   }
 
   final PlanRecord plan;
   final List<PlanMilestone> openMilestones;
+  final List<PlanMilestone> completedMilestones;
   final List<Commitment> openCommitments;
   final Map<String, dynamic> counts;
+}
+
+class PendingMemoryCandidate {
+  const PendingMemoryCandidate({
+    required this.id,
+    required this.candidateType,
+    required this.status,
+    required this.riskLevel,
+    required this.preview,
+    required this.reason,
+  });
+
+  factory PendingMemoryCandidate.fromJson(Map<String, dynamic> json) {
+    return PendingMemoryCandidate(
+      id: _string(json['id']) ?? '',
+      candidateType: _string(json['candidate_type']) ?? 'memory_update',
+      status: _string(json['status']) ?? 'pending',
+      riskLevel: _string(json['risk_level']) ?? 'medium',
+      preview:
+          _string(json['preview']) ??
+          _string(json['proposed_summary']) ??
+          'Pending memory change',
+      reason: _string(json['reason']) ?? _string(json['rationale']) ?? '',
+    );
+  }
+
+  final String id;
+  final String candidateType;
+  final String status;
+  final String riskLevel;
+  final String preview;
+  final String reason;
 }
 
 class DuplicateWarning {

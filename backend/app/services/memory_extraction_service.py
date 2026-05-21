@@ -177,9 +177,15 @@ Memory Discipline rules:
 - Corrections from the user override prior memory.
 - A duplicate active plan/rule/entity is a memory quality error.
 - Use top-level plans only for durable major areas.
-- Use milestones for sub-goals, deadlines, and progress details.
+- Use milestones only for achievement checkpoints that would make sense as
+  completed badges/trophies: launches, approvals, submissions, completed
+  applications, secured money, or measurable thresholds.
+- Do not use milestones for alternate plan titles, broad strategy, exploratory
+  questions, repeated dating logistics, or chat fragments.
 - Use commitments for concrete actions, habits, or checklist items.
 - Use entity events for relationship changes, interactions, or historical notes.
+- Use plan descriptions for strategy, routes, success criteria, and background
+  context that guides the plan.
 - Never preserve stale wrong names as current truth.
 
 Do not extract:

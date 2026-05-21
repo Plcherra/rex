@@ -538,7 +538,7 @@ async def test_memory_extraction_saves_structured_candidates():
             "plan_milestones": [
               {
                 "plan_id": "plan-1",
-                "title": "Save relocation runway",
+                "title": "Save $5k relocation runway",
                 "milestone_type": "goal",
                 "priority": 4,
                 "rationale": "Concrete progress marker."
@@ -1162,7 +1162,7 @@ async def test_memory_extraction_deduplicates_and_links_structured_candidates():
             "plan_milestones": [
               {
                 "plan_title": "Move abroad",
-                "title": "Save relocation runway",
+                "title": "Save $5k relocation runway",
                 "milestone_type": "goal",
                 "priority": 4,
                 "rationale": "Progress marker."

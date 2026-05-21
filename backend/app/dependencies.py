@@ -12,6 +12,7 @@ from app.services.file_service import FileService
 from app.services.google_tts_service import GoogleTTSService
 from app.services.memory_extraction_service import MemoryExtractionService
 from app.services.memory_correction_service import MemoryCorrectionService
+from app.services.memory_candidate_service import MemoryCandidateService
 from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.memory_service import SupabaseMemoryService
 from app.services.plan_service import PlanService
@@ -65,6 +66,12 @@ def get_memory_correction_service(
     memory_service: SupabaseMemoryService = Depends(get_memory_service),
 ) -> MemoryCorrectionService:
     return MemoryCorrectionService(memory_service)
+
+
+def get_memory_candidate_service(
+    memory_service: SupabaseMemoryService = Depends(get_memory_service),
+) -> MemoryCandidateService:
+    return MemoryCandidateService(memory_service)
 
 
 def get_deepgram_service() -> DeepgramService:

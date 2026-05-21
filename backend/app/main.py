@@ -10,6 +10,7 @@ from app.routes.commitments import router as commitments_router
 from app.routes.conversations import router as conversations_router
 from app.routes.entities import router as entities_router
 from app.routes.memory import router as memory_router
+from app.routes.memory_candidates import router as memory_candidates_router
 from app.routes.plans import router as plans_router
 from app.routes.rules import router as rules_router
 from app.routes.voice import router as voice_router
@@ -88,6 +89,7 @@ def readiness_check() -> dict:
 app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(memory_router)
+app.include_router(memory_candidates_router)
 app.include_router(entities_router)
 app.include_router(rules_router)
 app.include_router(plans_router)

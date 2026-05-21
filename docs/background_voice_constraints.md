@@ -19,6 +19,21 @@ iPhone microphone
 
 The upload-per-turn route remains a fallback. The Phase 5 implementation prepares the app for streaming by configuring mobile audio sessions, Android foreground-service declarations, and interruption handling. Physical-device testing is still required.
 
+## 2026-05-21 Device Scan Result
+`flutter devices` found one physical iPhone available for validation:
+
+```text
+Pedro Martins (mobile) - iOS 26.5 23F77 - 00008150-000C03C83A2B401C
+```
+
+No physical Android device was connected during this scan, so Android background voice validation is blocked until one is available.
+
+Physical iPhone testing showed that the current streaming call can stop hearing the user when the screen is locked or the app is backgrounded. This is not a missing `Info.plist` permission: the app already declares microphone access and `UIBackgroundModes/audio`. The remaining gap is that the active microphone capture and WebSocket streaming path still run through Flutter/Dart (`record.startStream` -> WebSocket). iOS can suspend that Dart path when the app leaves the foreground.
+
+The active call controller now restarts the listening stream on app resume so app switching does not leave Rex silently stuck. That is a recovery fix, not a full locked-screen native voice implementation.
+
+The physical-device validation checklist is tracked in `docs/testing/background_voice_checklist.md`.
+
 ## iOS Constraints
 Apple allows background audio behavior when the app declares `UIBackgroundModes` with `audio` and configures the audio session correctly. For Rex, the right first configuration is:
 
@@ -68,6 +83,12 @@ Not guaranteed until physical-device validation:
 - Bluetooth stability across all devices.
 - OS-specific edge cases during incoming calls or network loss.
 
+Requires deeper native work:
+
+- iOS locked-screen voice needs a native `AVAudioEngine`/`AVAudioSession` capture path that owns recording while the app is backgrounded, then bridges audio/transcript events back to Flutter.
+- Android locked-screen voice should move microphone ownership into the foreground service, not just show a notification while Flutter owns capture.
+- Flutter/Dart lifecycle handling can recover after resume, but it should not be treated as proof of continuous background capture.
+
 ## Physical Test Checklist
 - iPhone foreground voice turn.
 - iPhone lock screen during recording.
@@ -83,4 +104,6 @@ Not guaranteed until physical-device validation:
 - Android: microphone foreground services require the microphone foreground-service type, and microphone access is constrained by while-in-use permission rules.
 
 ## Revision History
+- 2026-05-21 - Added physical validation checklist path and latest device inventory; Android validation is blocked until a real device is connected.
+- 2026-05-21 - Added real-device scan result: active Flutter streaming does not reliably survive iPhone lock/background; resume recovery added, native capture still required.
 - 2026-05-15 - Initial background voice constraints for Rex Phase 5.

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rex/core/config/app_config.dart';
@@ -56,7 +57,8 @@ typedef VoiceCallNow = DateTime Function();
 
 final voiceCallNowProvider = Provider<VoiceCallNow>((ref) => DateTime.now);
 
-class VoiceCallController extends Notifier<VoiceCallState> {
+class VoiceCallController extends Notifier<VoiceCallState>
+    with WidgetsBindingObserver {
   int _callGeneration = 0;
   AudioCaptureService? _activeCaptureService;
   StreamingAudioCaptureService? _activeStreamingCaptureService;
@@ -70,10 +72,14 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   var _partialTranscriptBuffer = '';
   var _isStartingCall = false;
   var _isBargeInMonitoring = false;
+  var _isHandlingLifecycleResume = false;
 
   @override
   VoiceCallState build() {
+    WidgetsFlutterBinding.ensureInitialized();
+    WidgetsBinding.instance.addObserver(this);
     ref.onDispose(() {
+      WidgetsBinding.instance.removeObserver(this);
       _callGeneration++;
       final captureService = _activeCaptureService;
       final playbackService = _activePlaybackService;
@@ -109,6 +115,29 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       }
     });
     return const VoiceCallState();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      endCall();
+      return;
+    }
+    if (!this.state.isCallActive) {
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_handleLifecycleResume());
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      unawaited(_audioSessionService.configureForVoiceTurn());
+      unawaited(_backgroundVoiceService.start());
+    }
   }
 
   Future<bool> startCall({String? conversationId}) async {
@@ -410,6 +439,41 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       unawaited(_streamNextUtterance(generation));
     } else {
       unawaited(_captureNextUtterance(generation));
+    }
+  }
+
+  Future<void> _handleLifecycleResume() async {
+    if (_isHandlingLifecycleResume) {
+      return;
+    }
+    _isHandlingLifecycleResume = true;
+    try {
+      await _audioSessionService.configureForVoiceTurn();
+      await _backgroundVoiceService.start();
+      if (!state.isCallActive ||
+          state.phase != VoiceCallPhase.listening ||
+          state.isMuted) {
+        return;
+      }
+
+      final generation = ++_callGeneration;
+      await _captureService.cancel();
+      await _streamingCaptureService.cancel();
+      _stopBargeInMonitoring();
+      final streamingSession = _activeStreamingSession;
+      _activeStreamingSession = null;
+      streamingSession?.interrupt();
+      unawaited(streamingSession?.endSession());
+
+      state = state.copyWith(
+        phase: VoiceCallPhase.listening,
+        clearCurrentTranscript: true,
+        clearError: true,
+      );
+      _clearVisibleTranscript();
+      _startListeningCycle(generation);
+    } finally {
+      _isHandlingLifecycleResume = false;
     }
   }
 

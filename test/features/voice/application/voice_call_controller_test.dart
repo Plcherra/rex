@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:cross_file/cross_file.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
@@ -620,6 +621,36 @@ void main() {
         'Rex stream answer.',
       );
       expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
+    },
+  );
+
+  test(
+    'VoiceCallController restarts listening stream after app resume',
+    () async {
+      final streamingCaptureService = FakePendingStreamingAudioCaptureService();
+      final container = voiceCallTestContainer(
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceEnabled: true,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+
+      expect(streamingCaptureService.captureCount, 1);
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      expect(streamingCaptureService.cancelCount, greaterThanOrEqualTo(1));
+      expect(streamingCaptureService.captureCount, greaterThanOrEqualTo(2));
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.listening);
     },
   );
 

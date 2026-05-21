@@ -57,6 +57,10 @@ typedef VoiceCallNow = DateTime Function();
 
 final voiceCallNowProvider = Provider<VoiceCallNow>((ref) => DateTime.now);
 
+final voiceCallThinkingTimeoutProvider = Provider<Duration>(
+  (ref) => const Duration(seconds: 45),
+);
+
 class VoiceCallController extends Notifier<VoiceCallState>
     with WidgetsBindingObserver {
   int _callGeneration = 0;
@@ -73,6 +77,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
   var _isStartingCall = false;
   var _isBargeInMonitoring = false;
   var _isHandlingLifecycleResume = false;
+  Timer? _thinkingTimeoutTimer;
 
   @override
   VoiceCallState build() {
@@ -81,6 +86,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     ref.onDispose(() {
       WidgetsBinding.instance.removeObserver(this);
       _callGeneration++;
+      _cancelThinkingTimeout();
       final captureService = _activeCaptureService;
       final playbackService = _activePlaybackService;
       final streamingPlaybackQueue = _activeStreamingPlaybackQueue;
@@ -229,6 +235,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     state = state.copyWith(phase: VoiceCallPhase.thinking, clearError: true);
+    _armThinkingTimeout(_callGeneration);
   }
 
   void startTranscribing() {
@@ -237,6 +244,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     state = state.copyWith(phase: VoiceCallPhase.thinking, clearError: true);
+    _armThinkingTimeout(_callGeneration);
   }
 
   void startThinking({String? finalTranscript}) {
@@ -253,6 +261,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
       currentTranscript: _visibleTranscript(),
       clearError: true,
     );
+    _armThinkingTimeout(_callGeneration);
   }
 
   void startSpeaking(String responseText) {
@@ -260,6 +269,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
       return;
     }
 
+    _cancelThinkingTimeout();
     state = state.copyWith(
       phase: VoiceCallPhase.speaking,
       lastAssistantResponse: responseText,
@@ -286,6 +296,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
       return;
     }
     _callGeneration++;
+    _cancelThinkingTimeout();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -308,6 +319,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     final generation = ++_callGeneration;
+    _cancelThinkingTimeout();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -335,6 +347,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     state = state.copyWith(isMuted: isMuted);
     if (isMuted) {
       _callGeneration++;
+      _cancelThinkingTimeout();
       unawaited(_captureService.cancel());
       unawaited(_streamingCaptureService.cancel());
       _stopBargeInMonitoring();
@@ -362,12 +375,14 @@ class VoiceCallController extends Notifier<VoiceCallState>
       clearCurrentTranscript: true,
       clearError: true,
     );
+    _cancelThinkingTimeout();
     _clearVisibleTranscript();
     _startListeningCycle(_callGeneration);
   }
 
   void fail(String message) {
     _callGeneration++;
+    _cancelThinkingTimeout();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -392,6 +407,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     _callGeneration++;
+    _cancelThinkingTimeout();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -413,6 +429,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
 
   void reset() {
     _callGeneration++;
+    _cancelThinkingTimeout();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -429,6 +446,9 @@ class VoiceCallController extends Notifier<VoiceCallState>
   }
 
   void _startListeningCycle(int generation) {
+    if (state.phase == VoiceCallPhase.listening) {
+      _cancelThinkingTimeout();
+    }
     if (!_isCurrentCall(generation) ||
         state.phase != VoiceCallPhase.listening ||
         state.isMuted) {
@@ -450,6 +470,11 @@ class VoiceCallController extends Notifier<VoiceCallState>
     try {
       await _audioSessionService.configureForVoiceTurn();
       await _backgroundVoiceService.start();
+      if (state.isCallActive &&
+          state.phase == VoiceCallPhase.thinking &&
+          !state.isMuted) {
+        _armThinkingTimeout(_callGeneration);
+      }
       if (!state.isCallActive ||
           state.phase != VoiceCallPhase.listening ||
           state.isMuted) {
@@ -724,9 +749,11 @@ class VoiceCallController extends Notifier<VoiceCallState>
             if (state.phase != VoiceCallPhase.thinking) {
               startThinking(finalTranscript: state.currentTranscript);
             }
+            _armThinkingTimeout(generation);
             beginStreamingAudioIfNeeded();
           case 'assistant.token':
             assistantText += event.token ?? '';
+            _armThinkingTimeout(generation);
             state = state.copyWith(lastAssistantResponse: assistantText);
           case 'assistant.audio_chunk':
             final audioBase64 = event.audioBase64;
@@ -758,6 +785,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
                   );
             }
           case 'assistant.done':
+            _cancelThinkingTimeout();
             beginStreamingAudioIfNeeded();
             if (event.conversationId != null) {
               state = state.copyWith(
@@ -801,6 +829,51 @@ class VoiceCallController extends Notifier<VoiceCallState>
   }
 
   bool _isCurrentCall(int generation) => generation == _callGeneration;
+
+  void _armThinkingTimeout(int generation) {
+    _thinkingTimeoutTimer?.cancel();
+    final timeout = ref.read(voiceCallThinkingTimeoutProvider);
+    if (timeout <= Duration.zero) {
+      return;
+    }
+    _thinkingTimeoutTimer = Timer(timeout, () {
+      _recoverFromStuckThinking(generation);
+    });
+  }
+
+  void _cancelThinkingTimeout() {
+    _thinkingTimeoutTimer?.cancel();
+    _thinkingTimeoutTimer = null;
+  }
+
+  void _recoverFromStuckThinking(int generation) {
+    if (!_isCurrentCall(generation) ||
+        !state.isCallActive ||
+        state.phase != VoiceCallPhase.thinking) {
+      return;
+    }
+
+    final nextGeneration = ++_callGeneration;
+    _cancelThinkingTimeout();
+    unawaited(_captureService.cancel());
+    unawaited(_streamingCaptureService.cancel());
+    _stopBargeInMonitoring();
+    final streamingSession = _activeStreamingSession;
+    _activeStreamingSession = null;
+    streamingSession?.interrupt();
+    unawaited(_streamingPlaybackQueue.cancel());
+    unawaited(streamingSession?.endSession());
+    unawaited(_playbackService.stop());
+    unawaited(_audioSessionService.configureForVoiceTurn());
+    unawaited(_backgroundVoiceService.start());
+
+    state = state.copyWith(
+      phase: VoiceCallPhase.listening,
+      errorMessage:
+          'Rex got stuck thinking, so I reset the voice stream. Try again.',
+    );
+    _startListeningCycle(nextGeneration);
+  }
 
   void _startBargeInMonitoring(int generation) {
     if (_isBargeInMonitoring ||

@@ -32,6 +32,8 @@ Physical iPhone testing showed that the current streaming call can stop hearing 
 
 The active call controller now restarts the listening stream on app resume so app switching does not leave Rex silently stuck. That is a recovery fix, not a full locked-screen native voice implementation.
 
+Real iPhone testing also found a separate state-machine bug: if Rex entered `thinking` while the app was backgrounded, it could capture the user's background speech but never receive or process the assistant response events, leaving the UI stuck on `Thinking` for several minutes after reopening. The controller now has a thinking watchdog that interrupts the stale stream and returns to `Listening` with a recoverable error message. This prevents indefinite hangs, but it still does not replace native locked-screen voice ownership.
+
 The physical-device validation checklist is tracked in `docs/testing/background_voice_checklist.md`.
 
 ## iOS Constraints
@@ -104,6 +106,7 @@ Requires deeper native work:
 - Android: microphone foreground services require the microphone foreground-service type, and microphone access is constrained by while-in-use permission rules.
 
 ## Revision History
+- 2026-05-21 - Documented and fixed iPhone background thinking deadlock with a controller watchdog; retest required on release build.
 - 2026-05-21 - Added physical validation checklist path and latest device inventory; Android validation is blocked until a real device is connected.
 - 2026-05-21 - Added real-device scan result: active Flutter streaming does not reliably survive iPhone lock/background; resume recovery added, native capture still required.
 - 2026-05-15 - Initial background voice constraints for Rex Phase 5.

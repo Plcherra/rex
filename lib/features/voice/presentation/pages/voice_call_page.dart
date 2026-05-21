@@ -215,6 +215,8 @@ class _CallConversation extends StatelessWidget {
     final hasResponse = response.isNotEmpty;
     final isThinking = call.phase == VoiceCallPhase.thinking;
     final isFailed = call.phase == VoiceCallPhase.failed;
+    final hasRecoverableError =
+        !isFailed && (call.errorMessage?.trim().isNotEmpty ?? false);
 
     return Align(
       alignment: Alignment.topCenter,
@@ -233,6 +235,10 @@ class _CallConversation extends StatelessWidget {
               _RexBubble(text: response, isThinking: isThinking)
             else if (isThinking)
               const _RexThinkingBubble(),
+            if (hasRecoverableError) ...[
+              const SizedBox(height: 14),
+              _CallError(message: call.errorMessage),
+            ],
             if (isFailed) _CallError(message: call.errorMessage),
           ],
         ),

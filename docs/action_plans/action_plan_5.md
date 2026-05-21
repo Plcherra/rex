@@ -163,7 +163,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
 9. [ ] **Run real-device validation on iOS and Android - in progress**
    - Exact files to create or modify: `docs/background_voice_constraints.md`, optionally `docs/testing/background_voice_checklist.md`
    - What must be implemented: Test real app behavior on physical devices: foreground voice, app switch, screen lock, headphones, incoming call interruption, notification interruption, Bluetooth route change, and long response TTS playback.
-   - Current result: iPhone `Pedro Martins` on iOS 26.5 is connected and ready for release-build validation. Android is blocked because no physical Android device is connected. iPhone foreground voice works, but screen lock/app background can stop microphone streaming because capture is still Flutter/Dart-owned.
+   - Current result: iPhone `Pedro Martins` on iOS 26.5 is connected and ready for release-build validation. Android is blocked because no physical Android device is connected. iPhone foreground voice works, but screen lock/app background can stop microphone streaming because capture is still Flutter/Dart-owned. A real iPhone app-switch test found a stuck `Thinking` state after background speech; a watchdog fix now resets stale streams back to `Listening` and needs release-build retest.
    - Validation artifact: `docs/testing/background_voice_checklist.md`
    - Success criteria: Real-device results are documented by platform, known limitations are written down, and major bugs found during device testing are fixed or explicitly deferred.
    - Verification / test command: `flutter analyze && flutter test`
@@ -219,6 +219,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Rough time estimate: 1-2 days.
 
 ## Revision History
+- 2026-05-21 - Added fix for iPhone app-switch/background stuck-thinking bug; release-build retest required.
 - 2026-05-21 - Rescanned implementation and split native locked-screen voice into bridge, iOS, Android, hardening, and device acceptance layers.
 - 2026-05-21 - Real-device scan found Flutter-owned streaming does not reliably survive iPhone lock/background. Added native locked-screen capture as the remaining Action Plan 5 work.
 - 2026-05-12 - Action Plan 5 created from Alignment Plan and updated REX_VISION.md

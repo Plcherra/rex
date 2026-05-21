@@ -655,6 +655,48 @@ void main() {
   );
 
   test(
+    'VoiceCallController recovers when streaming response stays stuck thinking',
+    () async {
+      final streamingCaptureService =
+          FakeFirstUtteranceThenPendingStreamingAudioCaptureService();
+      final streamingSession = FakeStreamingVoiceSession(autoRespond: false);
+      final streamingApi = FakeStreamingVoiceApi(session: streamingSession);
+      final container = voiceCallTestContainer(
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+        overrides: [
+          voiceCallThinkingTimeoutProvider.overrideWithValue(
+            const Duration(milliseconds: 10),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
+
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await pumpEventQueue();
+
+      final state = container.read(voiceCallProvider);
+      expect(state.phase, VoiceCallPhase.listening);
+      expect(
+        state.errorMessage,
+        'Rex got stuck thinking, so I reset the voice stream. Try again.',
+      );
+      expect(streamingSession.interruptCount, 1);
+      expect(streamingSession.sessionEnded, true);
+      expect(streamingCaptureService.captureCount, greaterThanOrEqualTo(2));
+    },
+  );
+
+  test(
     'VoiceEndpointDetector detects speech, silence, and no-speech timeout',
     () {
       final config = VoiceCaptureConfig(
@@ -901,6 +943,39 @@ class FakePendingStreamingAudioCaptureService
   }
 }
 
+class FakeFirstUtteranceThenPendingStreamingAudioCaptureService
+    implements StreamingAudioCaptureService {
+  var cancelCount = 0;
+  var captureCount = 0;
+  Completer<bool>? _pendingCompleter;
+
+  @override
+  Future<void> cancel() async {
+    cancelCount++;
+    if (_pendingCompleter != null && !_pendingCompleter!.isCompleted) {
+      _pendingCompleter!.complete(false);
+    }
+  }
+
+  @override
+  Future<bool> streamUtterance({
+    required VoiceCaptureConfig config,
+    required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
+    required AudioChunkCallback onAudioChunk,
+  }) async {
+    captureCount++;
+    if (captureCount > 1) {
+      _pendingCompleter = Completer<bool>();
+      return _pendingCompleter!.future;
+    }
+    onSpeechStart();
+    await onAudioChunk(Uint8List.fromList([1, 2, 3]));
+    onSpeechEnded();
+    return true;
+  }
+}
+
 class FakeBargeInDetectionService implements BargeInDetectionService {
   BargeInCallback? _onBargeIn;
   var startCount = 0;
@@ -1067,8 +1142,10 @@ class FakeStreamingVoiceApi extends StreamingVoiceApi {
 }
 
 class FakeStreamingVoiceSession extends StreamingVoiceSession {
-  FakeStreamingVoiceSession() : super(FakeVoiceWebSocket());
+  FakeStreamingVoiceSession({this.autoRespond = true})
+    : super(FakeVoiceWebSocket());
 
+  final bool autoRespond;
   final sentAudioChunks = <List<int>>[];
   final _controller = StreamController<VoiceStreamEvent>();
   var utteranceEnded = false;
@@ -1088,6 +1165,9 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
   void endUtterance() {
     utteranceEnded = true;
     utteranceEndCount++;
+    if (!autoRespond) {
+      return;
+    }
     final turnNumber = utteranceEndCount;
     final answer = turnNumber == 1
         ? 'Rex stream answer.'

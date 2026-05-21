@@ -50,7 +50,7 @@ Use these values in the tables below:
 | --- | --- | --- | --- |
 | Foreground voice turn | User starts Rex voice, speaks, gets response, Rex returns to listening. | pending | Test on release build. |
 | App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | pending | Current controller has resume recovery. |
-| App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | pending | Watch for stale loading state. |
+| App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | fail -> fixed in code | 2026-05-21: iPhone captured the background speech but returned stuck on `Thinking` for 2-5 minutes. Added a thinking watchdog that resets the stale voice stream and returns to listening. Retest on release build. |
 | App switch during TTS playback | Audio either continues or fails clearly; returning to app is recoverable. | pending | Playback is still Flutter-owned. |
 | Screen lock while listening | Rex continues hearing a second utterance while locked. | fail | Known limitation with Flutter-owned capture. Native iOS session required. |
 | Screen off after Rex speaks | Rex hears the next user utterance without reopening the app. | fail | Known limitation until native iOS capture/WebSocket exists. |
@@ -107,3 +107,32 @@ Action Plan 5 step 9 is complete only when:
 - Any major crash, zombie microphone, unrecoverable state, or backend session leak is fixed before moving forward.
 - `flutter analyze && flutter test` passes after any fixes.
 
+## Findings
+
+### 2026-05-21 - iPhone background thinking deadlock
+
+Result: `fail -> fixed in code`
+
+Observed behavior:
+
+- Rex was speaking or processing a response.
+- The app was minimized and another app was opened.
+- The user continued speaking in the background.
+- Rex captured the speech, but did not reply.
+- Returning to Rex showed the call stuck in `Thinking` for several minutes.
+
+Likely cause:
+
+- The Flutter-owned streaming session can enter `thinking` after ending an utterance, then miss or stall the assistant response events while the app is backgrounded.
+- The previous resume recovery only restarted capture when the phase was already `listening`, so a `thinking` state had no fail-safe.
+
+Fix:
+
+- Added a thinking watchdog in `VoiceCallController`.
+- If Rex remains in `thinking` too long, the controller interrupts and closes the stale stream, cancels playback/capture, restarts background/audio-session scaffolding, returns to `listening`, and shows a recoverable message.
+
+Retest required:
+
+- Repeat the same iPhone background/app-switch scenario on a release build.
+- Confirm Rex no longer stays stuck indefinitely.
+- Confirm it either responds normally or resets to `Listening` with the visible recovery message.

@@ -49,7 +49,7 @@ Use these values in the tables below:
 | Case | Expected behavior | Result | Notes |
 | --- | --- | --- | --- |
 | Foreground voice turn | User starts Rex voice, speaks, gets response, Rex returns to listening. | pending | Test on release build. |
-| App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | pending | Current controller has resume recovery. |
+| App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | fail -> fixed in code | 2026-05-21: iPhone completed one minimized follow-up turn, then failed trying to restart the next mic stream in background. Recorder restart failure is now recoverable and waits for foreground resume. Retest on release build. |
 | App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | fail -> fixed in code | 2026-05-21: iPhone captured the background speech but returned stuck on `Thinking` for 2-5 minutes. Added a thinking watchdog and immediate `utterance.end` send on speech endpoint. Retest on release build. |
 | App switch during TTS playback | Audio either continues or fails clearly; returning to app is recoverable. | pending | Playback is still Flutter-owned. |
 | Screen lock while listening | Rex continues hearing a second utterance while locked. | fail -> partial fix in code | 2026-05-21: iPhone can buffer/capture locked-screen speech, but silence endpointing can pause until unlock. Resume now submits a buffered transcript immediately instead of restarting the stream. Retest required. Native iOS session still required for true locked-screen behavior. |
@@ -165,6 +165,37 @@ Retest required:
 - Speak in Rex, minimize the app while still talking, then stop speaking.
 - Wait 5-10 seconds, reopen Rex, and verify the assistant has either started responding or the watchdog resets cleanly.
 - Watch VPS logs for `/voice/stream` errors if the app still reaches `Thinking` without a reply.
+
+### 2026-05-21 - Background response completed, next mic restart failed
+
+Result: `fail -> fixed in code`
+
+Observed behavior:
+
+- Rex answered while the app was minimized.
+- After that answer, the app tried to continue the call and listen for the next user reply.
+- The phone returned to Rex in an `Issue` state with `Could not stream voice audio.`
+- VPS logs showed WebSocket sessions opening and closing, with no backend crash.
+
+Likely cause:
+
+- The response pipeline could complete in the background.
+- The next turn failed when Flutter tried to start a fresh microphone stream while iOS still had the app backgrounded.
+- The previous controller path treated any streaming capture start exception as a fatal call failure.
+
+Fix:
+
+- If streaming capture fails while the app is not in the foreground, the controller now keeps the call active in `Listening` instead of moving to `Failed`.
+- It closes the stale stream and shows a recoverable message.
+- On app resume, the existing resume path restarts the listening stream and clears the recovery message.
+
+Retest required:
+
+- Start a release call.
+- Speak, let Rex answer, minimize during the answer, and speak a follow-up.
+- If Rex answers in background, leave the app minimized until it tries to listen again.
+- Reopen Rex and confirm it is not in the fatal `Issue` screen.
+- Confirm it either kept listening or resumed listening cleanly after foregrounding.
 
 ### 2026-05-21 - iPhone locked-screen utterance waits until unlock
 

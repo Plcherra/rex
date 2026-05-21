@@ -77,6 +77,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
   var _isStartingCall = false;
   var _isBargeInMonitoring = false;
   var _isHandlingLifecycleResume = false;
+  var _isAppInForeground = true;
   Timer? _thinkingTimeoutTimer;
 
   @override
@@ -126,9 +127,18 @@ class VoiceCallController extends Notifier<VoiceCallState>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.detached) {
+      _isAppInForeground = false;
       endCall();
       return;
     }
+    if (state == AppLifecycleState.resumed) {
+      _isAppInForeground = true;
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _isAppInForeground = false;
+    }
+
     if (!this.state.isCallActive) {
       return;
     }
@@ -581,7 +591,11 @@ class VoiceCallController extends Notifier<VoiceCallState>
       );
     } on Object {
       if (_isCurrentCall(generation)) {
-        fail('Could not stream voice audio.');
+        if (_isAppInForeground) {
+          fail('Could not stream voice audio.');
+        } else {
+          _deferBackgroundStreamingRestart(session);
+        }
       }
       unawaited(session.endSession());
       return;
@@ -603,6 +617,18 @@ class VoiceCallController extends Notifier<VoiceCallState>
 
     endpointUtterance();
     sendUtteranceEndIfNeeded();
+  }
+
+  void _deferBackgroundStreamingRestart(StreamingVoiceSession session) {
+    if (identical(_activeStreamingSession, session)) {
+      _activeStreamingSession = null;
+    }
+    _cancelThinkingTimeout();
+    state = state.copyWith(
+      phase: VoiceCallPhase.listening,
+      errorMessage:
+          'Rex could not restart the microphone in the background. Open Rex to continue.',
+    );
   }
 
   Future<void> _captureNextUtterance(int generation) async {

@@ -38,6 +38,8 @@ Follow-up iPhone testing showed a related locked-screen behavior: Rex can buffer
 
 Follow-up app-switch testing found a client-to-backend pipeline issue: the UI could move to `Thinking` when speech endpointing fired, while the actual `utterance.end` WebSocket event was delayed until the recorder future returned. If iOS paused that Dart continuation after the app was minimized, the VPS never received the turn boundary, so Rex had no reason to start the assistant response. The controller now sends `utterance.end` immediately inside the speech-ended callback and keeps the later cleanup path guarded so the event is sent only once.
 
+Further iPhone testing showed that the first minimized follow-up turn can work, but Rex may fail after speaking if it tries to start the next microphone stream while still backgrounded. The call controller now treats that recorder restart failure as a background recovery case instead of a fatal call failure: it keeps the call active, closes the stale stream, and restarts listening when the app returns to the foreground.
+
 The physical-device validation checklist is tracked in `docs/testing/background_voice_checklist.md`.
 
 ## iOS Constraints
@@ -110,6 +112,7 @@ Requires deeper native work:
 - Android: microphone foreground services require the microphone foreground-service type, and microphone access is constrained by while-in-use permission rules.
 
 ## Revision History
+- 2026-05-21 - Kept background recorder restart failures recoverable instead of ending the voice call.
 - 2026-05-21 - Fixed app-switch pipeline bug by sending `utterance.end` immediately when speech endpointing fires; retest required on iPhone release build.
 - 2026-05-21 - Documented and fixed iPhone background thinking deadlock with a controller watchdog; retest required on release build.
 - 2026-05-21 - Added physical validation checklist path and latest device inventory; Android validation is blocked until a real device is connected.

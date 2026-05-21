@@ -656,6 +656,56 @@ void main() {
   );
 
   test(
+    'VoiceCallController keeps call alive when background restart capture fails',
+    () async {
+      final streamingCaptureService = FakeSecondStreamingCaptureThrowsService();
+      final streamingApi = FakeStreamingVoiceApi();
+      final playbackService = FakeAudioPlaybackService();
+      final container = voiceCallTestContainer(
+        playbackService: playbackService,
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.speaking);
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+      playbackService.complete();
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      var state = container.read(voiceCallProvider);
+      expect(state.phase, VoiceCallPhase.listening);
+      expect(state.isCallActive, true);
+      expect(state.callEndedAt, isNull);
+      expect(
+        state.errorMessage,
+        'Rex could not restart the microphone in the background. Open Rex to continue.',
+      );
+      expect(streamingCaptureService.captureCount, 2);
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      state = container.read(voiceCallProvider);
+      expect(state.phase, VoiceCallPhase.listening);
+      expect(state.errorMessage, isNull);
+      expect(streamingCaptureService.captureCount, 3);
+    },
+  );
+
+  test(
     'VoiceCallController restarts listening stream after app resume',
     () async {
       final streamingCaptureService = FakePendingStreamingAudioCaptureService();
@@ -1084,6 +1134,42 @@ class FakeSpeechEndedPendingStreamingAudioCaptureService
     if (_completer != null && !_completer!.isCompleted) {
       _completer!.complete(true);
     }
+  }
+}
+
+class FakeSecondStreamingCaptureThrowsService
+    implements StreamingAudioCaptureService {
+  var cancelCount = 0;
+  var captureCount = 0;
+  Completer<bool>? _pendingCompleter;
+
+  @override
+  Future<void> cancel() async {
+    cancelCount++;
+    if (_pendingCompleter != null && !_pendingCompleter!.isCompleted) {
+      _pendingCompleter!.complete(false);
+    }
+  }
+
+  @override
+  Future<bool> streamUtterance({
+    required VoiceCaptureConfig config,
+    required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
+    required AudioChunkCallback onAudioChunk,
+  }) async {
+    captureCount++;
+    if (captureCount == 2) {
+      throw StateError('Recorder cannot restart in background.');
+    }
+    if (captureCount > 2) {
+      _pendingCompleter = Completer<bool>();
+      return _pendingCompleter!.future;
+    }
+    onSpeechStart();
+    await onAudioChunk(Uint8List.fromList([1, 2, 3]));
+    onSpeechEnded();
+    return true;
   }
 }
 

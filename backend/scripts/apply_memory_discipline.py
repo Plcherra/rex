@@ -56,12 +56,21 @@ async def run_audit(
         *_duplicate_clusters(rules, "rule", ("title", "rule_text")),
         *_duplicate_clusters(entities, "entity", ("display_name", "normalized_name")),
     ]
+    archives = []
+    errors = []
+    if apply:
+        rule_archives, rule_errors = await _archive_duplicate_rules(
+            memory_service,
+            rules,
+        )
+        archives.extend(rule_archives)
+        errors.extend(rule_errors)
 
     return {
         "dry_run": not apply,
-        "applied": False,
+        "applied": bool(archives),
         "message": (
-            "Audit only. Use specific correction text with --apply for now."
+            "Applied safe duplicate rule cleanup. Use plan consolidation for duplicate plans."
             if apply
             else "Dry-run audit only. No records were changed."
         ),
@@ -74,10 +83,10 @@ async def run_audit(
         },
         "duplicate_clusters": duplicate_clusters,
         "updates": [],
-        "archives": [],
+        "archives": archives,
         "milestones_created": [],
         "tasks_created": [],
-        "errors": [],
+        "errors": errors,
     }
 
 
@@ -128,8 +137,79 @@ def _duplicate_clusters(
     return clusters
 
 
+async def _archive_duplicate_rules(
+    memory_service: Any,
+    rules: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    method = getattr(memory_service, "deactivate_personal_rule", None)
+    if method is None:
+        return [], [
+            {
+                "record_type": "rule",
+                "error": "memory service does not support deactivate_personal_rule",
+            }
+        ]
+
+    archives = []
+    errors = []
+    groups = _duplicate_record_groups(rules, ("title", "rule_text"))
+    for group in groups:
+        keep = _select_keep_record(group)
+        for rule in group:
+            if rule.get("id") == keep.get("id"):
+                continue
+            try:
+                archived = await method(str(rule["id"]))
+                if archived:
+                    archives.append(
+                        {
+                            "record_type": "rule",
+                            "id": rule.get("id"),
+                            "title": rule.get("title"),
+                            "consolidated_into_id": keep.get("id"),
+                            "consolidated_into_title": keep.get("title"),
+                        }
+                    )
+            except Exception as error:
+                errors.append(
+                    {
+                        "record_type": "rule",
+                        "id": str(rule.get("id") or ""),
+                        "error": str(error),
+                    }
+                )
+    return archives, errors
+
+
+def _duplicate_record_groups(
+    records: list[dict],
+    fields: tuple[str, ...],
+) -> list[list[dict]]:
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for record in records:
+        if record.get("_error") or record.get("active") is False:
+            continue
+        key = _duplicate_key(record, fields)
+        if key:
+            groups[key].append(record)
+    return [group for group in groups.values() if len(group) > 1]
+
+
+def _select_keep_record(group: list[dict]) -> dict:
+    return max(
+        group,
+        key=lambda record: (
+            int(record.get("priority") or 3),
+            str(record.get("updated_at") or record.get("created_at") or ""),
+        ),
+    )
+
+
 def _duplicate_key(record: dict, fields: tuple[str, ...]) -> str:
     text = " ".join(str(record.get(field) or "") for field in fields).casefold()
+    semantic_key = _semantic_duplicate_key(text)
+    if semantic_key:
+        return semantic_key
     tokens = [
         token
         for token in re.findall(r"[a-z0-9$]+", text)
@@ -137,6 +217,45 @@ def _duplicate_key(record: dict, fields: tuple[str, ...]) -> str:
         and token not in {"active", "and", "for", "from", "plan", "the", "this", "with"}
     ]
     return " ".join(tokens[:8])
+
+
+def _semantic_duplicate_key(text: str) -> str:
+    tokens = set(re.findall(r"[a-z0-9$]+", text.casefold()))
+    if tokens & {"doordash", "uber", "delivery"}:
+        return "semantic:avoid_delivery_transport"
+    if tokens & {"paycheck", "save", "saving", "savings", "transfer"}:
+        return "semantic:paycheck_savings"
+    if tokens & {"ship", "shipment", "shipments", "shipping", "weekly"}:
+        return "semantic:weekly_small_shipments"
+    if tokens & {
+        "abroad",
+        "citizenship",
+        "digital",
+        "estonia",
+        "europe",
+        "immigration",
+        "italian",
+        "italy",
+        "nomad",
+        "relocate",
+        "relocation",
+        "residency",
+        "visa",
+    }:
+        return "semantic:life_freedom_relocation"
+    if tokens & {
+        "app",
+        "apps",
+        "clarity",
+        "development",
+        "echodesk",
+        "flowforce",
+        "launch",
+        "rex",
+        "ship",
+    }:
+        return "semantic:app_development_roadmap"
+    return ""
 
 
 async def main() -> None:

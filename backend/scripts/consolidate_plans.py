@@ -251,7 +251,7 @@ def _is_income_or_relocation_plan(plan: dict[str, Any]) -> bool:
 
 
 def _is_app_development_plan(plan: dict[str, Any]) -> bool:
-    if plan.get("plan_type") not in {"career", "creative", "other"}:
+    if plan.get("plan_type") not in {"career", "creative", "other", "personal"}:
         return False
     text = _plan_text(plan)
     if "income" in text or "5k" in text or "3k" in text:

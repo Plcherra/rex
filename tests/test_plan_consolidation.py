@@ -168,6 +168,33 @@ def test_build_plan_clusters_groups_immigration_variants_under_europe_root():
     }
 
 
+def test_build_plan_clusters_groups_personal_rex_launch_under_app_root():
+    clusters = build_plan_clusters(
+        [
+            _plan(
+                "plan-apps",
+                "Three-month app development plan",
+                "career",
+                description="Prioritize building and shipping EchoDesk, FlowForce, and Rex.",
+                priority=5,
+            ),
+            _plan(
+                "plan-rex",
+                "Launch Rex Melissa",
+                "personal",
+                description="Polish Rex for first usable version and external testing.",
+                priority=5,
+            ),
+        ]
+    )
+
+    app_cluster = next(
+        cluster for cluster in clusters if cluster.name == "app_development_roadmap"
+    )
+    assert app_cluster.keep["id"] == "plan-apps"
+    assert [plan["id"] for plan in app_cluster.archive] == ["plan-rex"]
+
+
 @pytest.mark.asyncio
 async def test_consolidate_plans_dry_run_does_not_write():
     memory = FakeConsolidationMemoryService()

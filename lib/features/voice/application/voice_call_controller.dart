@@ -547,6 +547,15 @@ class VoiceCallController extends Notifier<VoiceCallState>
       return;
     }
 
+    var utteranceEndSent = false;
+    void sendUtteranceEndIfNeeded() {
+      if (utteranceEndSent) {
+        return;
+      }
+      utteranceEndSent = true;
+      session.endUtterance();
+    }
+
     final bool capturedAudio;
     try {
       capturedAudio = await _streamingCaptureService.streamUtterance(
@@ -561,6 +570,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
           if (_isCurrentCall(generation) &&
               state.phase == VoiceCallPhase.listening) {
             endpointUtterance();
+            sendUtteranceEndIfNeeded();
           }
         },
         onAudioChunk: (chunk) async {
@@ -592,7 +602,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     endpointUtterance();
-    session.endUtterance();
+    sendUtteranceEndIfNeeded();
   }
 
   Future<void> _captureNextUtterance(int generation) async {

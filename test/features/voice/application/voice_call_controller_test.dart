@@ -506,6 +506,37 @@ void main() {
   );
 
   test(
+    'VoiceCallController sends utterance end as soon as speech ends',
+    () async {
+      final streamingCaptureService =
+          FakeSpeechEndedPendingStreamingAudioCaptureService();
+      final streamingSession = FakeStreamingVoiceSession(autoRespond: false);
+      final streamingApi = FakeStreamingVoiceApi(session: streamingSession);
+      final container = voiceCallTestContainer(
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
+      expect(streamingSession.utteranceEndCount, 1);
+
+      streamingCaptureService.complete();
+      await pumpEventQueue();
+
+      expect(streamingSession.utteranceEndCount, 1);
+    },
+  );
+
+  test(
     'VoiceCallController interrupts streaming playback and notifies backend',
     () async {
       final streamingCaptureService = FakeStreamingAudioCaptureService();
@@ -1017,6 +1048,42 @@ class FakeFirstUtteranceThenPendingStreamingAudioCaptureService
     await onAudioChunk(Uint8List.fromList([1, 2, 3]));
     onSpeechEnded();
     return true;
+  }
+}
+
+class FakeSpeechEndedPendingStreamingAudioCaptureService
+    implements StreamingAudioCaptureService {
+  var cancelCount = 0;
+  var captureCount = 0;
+  Completer<bool>? _completer;
+
+  @override
+  Future<void> cancel() async {
+    cancelCount++;
+    if (_completer != null && !_completer!.isCompleted) {
+      _completer!.complete(false);
+    }
+  }
+
+  @override
+  Future<bool> streamUtterance({
+    required VoiceCaptureConfig config,
+    required SpeechStartCallback onSpeechStart,
+    required SpeechEndCallback onSpeechEnded,
+    required AudioChunkCallback onAudioChunk,
+  }) async {
+    captureCount++;
+    onSpeechStart();
+    await onAudioChunk(Uint8List.fromList([1, 2, 3]));
+    onSpeechEnded();
+    _completer = Completer<bool>();
+    return _completer!.future;
+  }
+
+  void complete() {
+    if (_completer != null && !_completer!.isCompleted) {
+      _completer!.complete(true);
+    }
   }
 }
 

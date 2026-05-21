@@ -50,7 +50,7 @@ Use these values in the tables below:
 | --- | --- | --- | --- |
 | Foreground voice turn | User starts Rex voice, speaks, gets response, Rex returns to listening. | pending | Test on release build. |
 | App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | pending | Current controller has resume recovery. |
-| App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | fail -> fixed in code | 2026-05-21: iPhone captured the background speech but returned stuck on `Thinking` for 2-5 minutes. Added a thinking watchdog that resets the stale voice stream and returns to listening. Retest on release build. |
+| App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | fail -> fixed in code | 2026-05-21: iPhone captured the background speech but returned stuck on `Thinking` for 2-5 minutes. Added a thinking watchdog and immediate `utterance.end` send on speech endpoint. Retest on release build. |
 | App switch during TTS playback | Audio either continues or fails clearly; returning to app is recoverable. | pending | Playback is still Flutter-owned. |
 | Screen lock while listening | Rex continues hearing a second utterance while locked. | fail -> partial fix in code | 2026-05-21: iPhone can buffer/capture locked-screen speech, but silence endpointing can pause until unlock. Resume now submits a buffered transcript immediately instead of restarting the stream. Retest required. Native iOS session still required for true locked-screen behavior. |
 | Screen off after Rex speaks | Rex hears the next user utterance without reopening the app. | fail | Known limitation until native iOS capture/WebSocket exists. |
@@ -136,6 +136,35 @@ Retest required:
 - Repeat the same iPhone background/app-switch scenario on a release build.
 - Confirm Rex no longer stays stuck indefinitely.
 - Confirm it either responds normally or resets to `Listening` with the visible recovery message.
+
+### 2026-05-21 - App switch delayed the backend turn boundary
+
+Result: `fail -> fixed in code`
+
+Observed behavior:
+
+- Rex kept the iOS microphone indicator active after the app was minimized.
+- After the user stopped speaking, the mic indicator stopped after a short delay.
+- Returning to Rex showed the captured transcript, but the assistant response did not start or stayed stuck in `Thinking`.
+
+Likely cause:
+
+- The mobile client changed the UI to `Thinking` inside the speech-ended callback.
+- The actual WebSocket `utterance.end` event was sent only after `streamUtterance()` returned.
+- On iOS, the app can be minimized or partially suspended between those two steps, leaving the VPS without the turn boundary it needs to start transcription finalization and the assistant response.
+
+Fix:
+
+- `VoiceCallController` now sends `utterance.end` immediately when `onSpeechEnded` fires.
+- The later capture-completion path uses the same guarded sender, so the event is not duplicated.
+- A regression test verifies that `utterance.end` is sent even while the capture future remains pending.
+
+Retest required:
+
+- Start a release call on iPhone.
+- Speak in Rex, minimize the app while still talking, then stop speaking.
+- Wait 5-10 seconds, reopen Rex, and verify the assistant has either started responding or the watchdog resets cleanly.
+- Watch VPS logs for `/voice/stream` errors if the app still reaches `Thinking` without a reply.
 
 ### 2026-05-21 - iPhone locked-screen utterance waits until unlock
 

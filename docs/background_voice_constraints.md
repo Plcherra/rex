@@ -36,6 +36,8 @@ Real iPhone testing also found a separate state-machine bug: if Rex entered `thi
 
 Follow-up iPhone testing showed a related locked-screen behavior: Rex can buffer the user's words while the screen is locked, but Dart-side silence detection may not transition to `thinking` until the phone is unlocked. On resume, Rex now submits any buffered transcript by ending the active streaming utterance instead of canceling and restarting the stream. This improves unlock recovery, but true processing while still locked remains native work.
 
+Follow-up app-switch testing found a client-to-backend pipeline issue: the UI could move to `Thinking` when speech endpointing fired, while the actual `utterance.end` WebSocket event was delayed until the recorder future returned. If iOS paused that Dart continuation after the app was minimized, the VPS never received the turn boundary, so Rex had no reason to start the assistant response. The controller now sends `utterance.end` immediately inside the speech-ended callback and keeps the later cleanup path guarded so the event is sent only once.
+
 The physical-device validation checklist is tracked in `docs/testing/background_voice_checklist.md`.
 
 ## iOS Constraints
@@ -108,6 +110,7 @@ Requires deeper native work:
 - Android: microphone foreground services require the microphone foreground-service type, and microphone access is constrained by while-in-use permission rules.
 
 ## Revision History
+- 2026-05-21 - Fixed app-switch pipeline bug by sending `utterance.end` immediately when speech endpointing fires; retest required on iPhone release build.
 - 2026-05-21 - Documented and fixed iPhone background thinking deadlock with a controller watchdog; retest required on release build.
 - 2026-05-21 - Added physical validation checklist path and latest device inventory; Android validation is blocked until a real device is connected.
 - 2026-05-21 - Added real-device scan result: active Flutter streaming does not reliably survive iPhone lock/background; resume recovery added, native capture still required.

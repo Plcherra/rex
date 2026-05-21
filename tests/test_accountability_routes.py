@@ -398,6 +398,32 @@ def test_overview_reports_entity_fact_conflict_warning(client):
     )
 
 
+def test_overview_does_not_report_negated_fired_fact_as_conflict(client):
+    memory_service = FakeMemoryService()
+    memory_service.entities = [
+        _entity_row(
+            id="entity-stephanie",
+            display_name="Stephanie",
+            summary=(
+                "Lara's friend who lives with her; quit about a month ago. "
+                "Stephanie was not fired at the beginning of this year."
+            ),
+        )
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert not any(
+        warning["record_type"] == "entity"
+        and warning["reason"] == "possible_conflicting_entity_facts"
+        for warning in payload["duplicate_warnings"]
+    )
+
+
 def test_overview_reports_plan_cleanup_warning_for_noisy_milestones(client):
     memory_service = FakeMemoryService()
     memory_service.milestones = [

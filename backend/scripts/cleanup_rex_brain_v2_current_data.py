@@ -184,6 +184,9 @@ def build_cleanup_operations(
     app_plan = _select_plan(plans, _is_app_plan)
     melissa_plan = _select_plan(plans, _is_melissa_plan)
 
+    if not app_plan and _has_app_evidence(plans=plans, milestones=milestones):
+        operations.append(_create_app_plan_operation())
+
     if relocation_plan:
         operations.append(
             _update_plan_operation(
@@ -194,19 +197,19 @@ def build_cleanup_operations(
                 reason="make relocation plan Portugal/Italy aligned and remove Greece as primary target",
             )
         )
-        operations.extend(
-            _canonical_milestone_operations(
-                milestones=milestones,
-                plan=relocation_plan,
-                canonical=RELOCATION_MILESTONES,
-                reason="keep only achievement-style relocation milestones",
-            )
+        relocation_milestone_operations = _canonical_milestone_operations(
+            milestones=milestones,
+            plan=relocation_plan,
+            canonical=RELOCATION_MILESTONES,
+            reason="keep only achievement-style relocation milestones",
         )
+        operations.extend(relocation_milestone_operations)
         operations.extend(
             _archive_noisy_milestones(
                 milestones=milestones,
                 plan=relocation_plan,
                 keep_titles={title for title, _ in RELOCATION_MILESTONES},
+                keep_ids=_operation_record_ids(relocation_milestone_operations),
                 matcher=_is_noisy_relocation_milestone,
             )
         )
@@ -221,19 +224,19 @@ def build_cleanup_operations(
                 reason="align app plan around Clarity, EchoDesk, and FlowForce",
             )
         )
-        operations.extend(
-            _canonical_milestone_operations(
-                milestones=milestones,
-                plan=app_plan,
-                canonical=APP_MILESTONES,
-                reason="keep only launch and revenue achievement milestones",
-            )
+        app_milestone_operations = _canonical_milestone_operations(
+            milestones=milestones,
+            plan=app_plan,
+            canonical=APP_MILESTONES,
+            reason="keep only launch and revenue achievement milestones",
         )
+        operations.extend(app_milestone_operations)
         operations.extend(
             _archive_noisy_milestones(
                 milestones=milestones,
                 plan=app_plan,
                 keep_titles={title for title, _ in APP_MILESTONES},
+                keep_ids=_operation_record_ids(app_milestone_operations),
                 matcher=_is_noisy_app_milestone,
             )
         )
@@ -271,6 +274,8 @@ def build_cleanup_operations(
             operations.append(_archive_plan_operation(plan, target))
 
     operations.extend(_entity_correction_operations(entities))
+    operations.extend(_orphan_milestone_operations(milestones, plan_by_id))
+    operations.extend(_duplicate_commitment_operations(commitments))
     operations.extend(_orphan_commitment_operations(commitments, plan_by_id))
     return _dedupe_operations(operations)
 
@@ -318,16 +323,34 @@ def verify_cleanup_state(
         if any(name in _record_text(milestone) for name in ("ecodesk", "flow force"))
     ]
     failures = []
+    active_plan_ids = {str(plan.get("id") or "") for plan in active_plans}
+    orphan_milestones = [
+        milestone
+        for milestone in open_milestones
+        if str(milestone.get("plan_id") or "") not in active_plan_ids
+    ]
+    app_plans = [
+        plan
+        for plan in active_plans
+        if _normalize(plan.get("title")) == _normalize(APP_PLAN_TITLE)
+    ]
     if stephanie_bad:
         failures.append("active_stephanie_record_still_says_fired")
     if greece_primary:
         failures.append("active_relocation_plan_still_uses_greece_as_primary")
+    if orphan_milestones:
+        failures.append("active_orphan_milestones_remain")
+    if not app_plans:
+        failures.append("active_app_plan_missing")
     if noisy_melissa:
         failures.append("active_melissa_milestones_remain")
     if noisy_first_million:
         failures.append("first_million_still_active_as_milestone")
     if wrong_app_names:
         failures.append("wrong_app_name_still_active_in_milestones")
+    duplicate_commitments = _duplicate_commitment_groups(commitments)
+    if duplicate_commitments:
+        failures.append("duplicate_commitments_remain")
 
     return {
         "passed": not failures,
@@ -346,9 +369,15 @@ def verify_cleanup_state(
         "remaining_noisy_record_ids": {
             "stephanie": [entity.get("id") for entity in stephanie_bad],
             "greece_primary": [plan.get("id") for plan in greece_primary],
+            "orphan_milestones": [milestone.get("id") for milestone in orphan_milestones],
             "melissa_milestones": [milestone.get("id") for milestone in noisy_melissa],
             "first_million": [milestone.get("id") for milestone in noisy_first_million],
             "wrong_app_names": [milestone.get("id") for milestone in wrong_app_names],
+            "duplicate_commitments": [
+                commitment.get("id")
+                for group in duplicate_commitments.values()
+                for commitment in group
+            ],
         },
     }
 
@@ -388,6 +417,8 @@ async def _apply_operation(
     memory_service: SupabaseMemoryService,
     operation: CleanupOperation,
 ) -> Any:
+    if operation.action == "create_plan":
+        return await memory_service.create_plan(operation.updates)
     if operation.action == "create_plan_milestone":
         return await memory_service.create_plan_milestone(operation.updates)
     if not operation.record_id:
@@ -407,6 +438,30 @@ async def _apply_operation(
     if operation.record_type == "entity":
         return await memory_service.update_entity(operation.record_id, **operation.updates)
     return None
+
+
+def _create_app_plan_operation() -> CleanupOperation:
+    return CleanupOperation(
+        action="create_plan",
+        record_type="plan",
+        record_id=None,
+        title=APP_PLAN_TITLE,
+        reason="recreate canonical app launch plan after duplicate plan cleanup",
+        updates={
+            "plan_type": "career",
+            "title": APP_PLAN_TITLE,
+            "description": APP_PLAN_DESCRIPTION,
+            "desired_outcome": APP_PLAN_OUTCOME,
+            "priority": 5,
+            "status": "active",
+            "active": True,
+            "metadata": {
+                "rex_brain_v2_cleanup": True,
+                "cleanup_version": CLEANUP_VERSION,
+                "created_by_cleanup": True,
+            },
+        },
+    )
 
 
 def _update_plan_operation(
@@ -516,13 +571,17 @@ def _archive_noisy_milestones(
     milestones: list[dict[str, Any]],
     plan: dict[str, Any],
     keep_titles: set[str],
+    keep_ids: set[str] | None = None,
     matcher: Any,
 ) -> list[CleanupOperation]:
     operations = []
     plan_id = str(plan.get("id") or "")
     normalized_keep = {_normalize(title) for title in keep_titles}
+    protected_ids = keep_ids or set()
     for milestone in milestones:
         if milestone.get("plan_id") != plan_id or not _active(milestone):
+            continue
+        if str(milestone.get("id") or "") in protected_ids:
             continue
         title = str(milestone.get("title") or "")
         if _normalize(title) in normalized_keep:
@@ -532,10 +591,15 @@ def _archive_noisy_milestones(
     return operations
 
 
-def _archive_milestone_operation(milestone: dict[str, Any]) -> CleanupOperation:
+def _archive_milestone_operation(
+    milestone: dict[str, Any],
+    *,
+    cleanup_reason: str = "rex_brain_v2_noisy_or_duplicate_milestone",
+    reason: str = "archive noisy duplicate milestone or chat fragment",
+) -> CleanupOperation:
     metadata = {
         **_metadata(milestone),
-        "cleanup_reason": "rex_brain_v2_noisy_or_duplicate_milestone",
+        "cleanup_reason": cleanup_reason,
         "cleanup_version": CLEANUP_VERSION,
     }
     return CleanupOperation(
@@ -543,7 +607,7 @@ def _archive_milestone_operation(milestone: dict[str, Any]) -> CleanupOperation:
         record_type="milestone",
         record_id=str(milestone.get("id") or ""),
         title=str(milestone.get("title") or "Milestone"),
-        reason="archive noisy duplicate milestone or chat fragment",
+        reason=reason,
         updates={"active": False, "status": "canceled", "metadata": metadata},
     )
 
@@ -636,6 +700,84 @@ def _orphan_commitment_operations(
     return operations
 
 
+def _duplicate_commitment_operations(
+    commitments: list[dict[str, Any]],
+) -> list[CleanupOperation]:
+    operations = []
+    for group in _duplicate_commitment_groups(commitments).values():
+        keep = _best_commitment(group)
+        for commitment in group:
+            if commitment is keep:
+                continue
+            operations.append(
+                CleanupOperation(
+                    action="archive_commitment",
+                    record_type="commitment",
+                    record_id=str(commitment.get("id") or ""),
+                    title=str(commitment.get("title") or "Commitment"),
+                    reason="archive duplicate open commitment",
+                    updates={
+                        "active": False,
+                        "status": "archived",
+                        "metadata": {
+                            **_metadata(commitment),
+                            "cleanup_version": CLEANUP_VERSION,
+                            "cleanup_reason": "duplicate_commitment",
+                            "consolidated_into_commitment_id": keep.get("id"),
+                            "consolidated_into_title": keep.get("title"),
+                        },
+                    },
+                )
+            )
+    return operations
+
+
+def _duplicate_commitment_groups(
+    commitments: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for commitment in commitments:
+        if not _active(commitment):
+            continue
+        status = str(commitment.get("status") or "open")
+        if status not in {"open", "in_progress"}:
+            continue
+        key = _semantic_commitment_key(commitment)
+        if not key:
+            continue
+        groups.setdefault(key, []).append(commitment)
+    return {key: group for key, group in groups.items() if len(group) > 1}
+
+
+def _best_commitment(group: list[dict[str, Any]]) -> dict[str, Any]:
+    return max(
+        group,
+        key=lambda commitment: (
+            int(commitment.get("priority") or 3),
+            str(commitment.get("updated_at") or commitment.get("created_at") or ""),
+        ),
+    )
+
+
+def _orphan_milestone_operations(
+    milestones: list[dict[str, Any]],
+    plan_by_id: dict[str, dict[str, Any]],
+) -> list[CleanupOperation]:
+    operations = []
+    for milestone in milestones:
+        plan_id = str(milestone.get("plan_id") or "")
+        if not _active(milestone) or plan_id in plan_by_id:
+            continue
+        operations.append(
+            _archive_milestone_operation(
+                milestone,
+                cleanup_reason="orphaned_milestone",
+                reason="archive milestone linked to inactive or missing parent plan",
+            )
+        )
+    return operations
+
+
 def _target_plan_for_archive(
     plan: dict[str, Any],
     relocation_plan: dict[str, Any] | None,
@@ -708,12 +850,21 @@ def _is_noisy_relocation_milestone(milestone: dict[str, Any]) -> bool:
         phrase in text
         for phrase in (
             "europe move",
+            "europe relocation via",
+            "european relocation via",
             "relocate to europe",
             "relocation to portugal",
+            "digital nomad visa",
             "move out of the country",
             "international relocation",
             "income generation and europe relocation",
+            "eu business setup",
+            "estonia e-residency",
+            "estonia e residency",
+            "italian ancestry residency",
+            "relocating abroad from the usa",
             "one-year location-independent income",
+            "one year location independent income",
             "minimum monthly income",
             "monthly savings",
             "client acquisition",
@@ -732,10 +883,13 @@ def _is_noisy_app_milestone(milestone: dict[str, Any]) -> bool:
         for phrase in (
             "launch rex melissa",
             "three-month app development",
+            "three month app development",
             "rex ai assistant",
             "3-month app development push",
+            "3 month app development push",
             "project sequence",
             "monetize multi-user rex",
+            "monetize multi user rex",
             "launch three apps",
             "build and launch flowforce app",
             "ecodesk",
@@ -746,6 +900,36 @@ def _is_noisy_app_milestone(milestone: dict[str, Any]) -> bool:
 
 def _is_melissa_milestone(milestone: dict[str, Any]) -> bool:
     return "melissa" in _record_text(milestone)
+
+
+def _semantic_commitment_key(commitment: dict[str, Any]) -> str | None:
+    text = _record_text(commitment)
+    tokens = set(text.split())
+    if tokens & {"saving", "savings", "save"} and (
+        tokens & {"automatic", "auto", "paycheck", "transfer", "transferred"}
+    ):
+        return "automatic_savings"
+    if tokens & {"weekly", "shipping", "ship", "release", "releases"}:
+        return "weekly_shipping"
+    if tokens & {"greek", "practice"}:
+        return "greek_practice"
+    return None
+
+
+def _operation_record_ids(operations: list[CleanupOperation]) -> set[str]:
+    return {str(operation.record_id) for operation in operations if operation.record_id}
+
+
+def _has_app_evidence(
+    *,
+    plans: list[dict[str, Any]],
+    milestones: list[dict[str, Any]],
+) -> bool:
+    records = [*plans, *milestones]
+    return any(
+        _is_app_plan(record) or _is_noisy_app_milestone(record)
+        for record in records
+    )
 
 
 def _select_plan(plans: list[dict[str, Any]], matcher: Any) -> dict[str, Any] | None:

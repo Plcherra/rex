@@ -552,9 +552,8 @@ def _entity_conflict_warnings(entities: list[dict]) -> list[dict]:
         if isinstance(aliases, list):
             text = f"{text} {' '.join(str(alias) for alias in aliases)}"
         normalized = text.casefold()
-        has_job_conflict = (
-            "fired" in normalized
-            and any(term in normalized for term in ("quit", "resigned", "left"))
+        has_job_conflict = _has_affirmative_fired_fact(normalized) and any(
+            term in normalized for term in ("quit", "resigned", "left")
         )
         has_route_conflict = (
             "primary" in normalized
@@ -574,6 +573,28 @@ def _entity_conflict_warnings(entities: list[dict]) -> list[dict]:
             }
         )
     return warnings
+
+
+def _has_affirmative_fired_fact(normalized_text: str) -> bool:
+    negated_phrases = (
+        "not fired",
+        "never fired",
+        "was not fired",
+        "wasn't fired",
+        "wasn t fired",
+    )
+    if any(phrase in normalized_text for phrase in negated_phrases):
+        return False
+    return any(
+        phrase in normalized_text
+        for phrase in (
+            "got fired",
+            "was fired",
+            "fired at",
+            "fired from",
+            "got laid off",
+        )
+    )
 
 
 def _duplicate_warning_group(

@@ -31,6 +31,11 @@ class FakeCleanupMemoryService:
     async def update_plan(self, plan_id, **updates):
         return _update(self.plans, plan_id, updates)
 
+    async def create_plan(self, payload):
+        row = {"id": f"plan-created-{len(self.plans) + 1}", **payload}
+        self.plans.append(row)
+        return row
+
     async def create_plan_milestone(self, payload):
         row = {"id": f"milestone-created-{len(self.milestones) + 1}", **payload}
         self.milestones.append(row)
@@ -85,6 +90,11 @@ def test_build_cleanup_operations_targets_current_mess_without_writes():
         and "not fired" in operation.updates["summary"]
         for operation in operations
     )
+    assert any(
+        operation.record_type == "commitment"
+        and operation.reason == "archive duplicate open commitment"
+        for operation in operations
+    )
 
 
 @pytest.mark.asyncio
@@ -130,6 +140,57 @@ async def test_cleanup_apply_updates_canonical_records_and_verifies():
         and milestone["milestone_type"] == "achievement"
         for milestone in memory.milestones
     )
+    duplicate_savings = [
+        commitment
+        for commitment in memory.commitments
+        if commitment["id"] in {"commitment-savings-1", "commitment-savings-2"}
+    ]
+    assert sum(1 for commitment in duplicate_savings if commitment["active"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_archives_milestones_from_inactive_parent_plans():
+    memory = _messy_memory()
+    memory.plans.append(
+        _plan(
+            "plan-archived-app",
+            "Old app launch plan",
+            "career",
+            description="Archived duplicate app plan.",
+            priority=3,
+            active=False,
+            status="archived",
+        )
+    )
+    memory.milestones.append(
+        _milestone(
+            "milestone-orphan-app",
+            "plan-archived-app",
+            "Launch Rex Melissa",
+        )
+    )
+
+    report = await cleanup_rex_brain_v2_current_data(memory, apply=True)
+
+    assert report.verification["passed"] is True
+    orphan = next(
+        milestone
+        for milestone in memory.milestones
+        if milestone["id"] == "milestone-orphan-app"
+    )
+    assert orphan["active"] is False
+    assert orphan["metadata"]["cleanup_reason"] == "orphaned_milestone"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_recreates_app_plan_when_only_app_milestones_remain():
+    memory = _messy_memory()
+    memory.plans = [plan for plan in memory.plans if plan["id"] != "plan-apps"]
+
+    report = await cleanup_rex_brain_v2_current_data(memory, apply=True)
+
+    assert report.verification["passed"] is True
+    assert any(plan["title"] == APP_PLAN_TITLE for plan in memory.plans)
 
 
 def _messy_memory():
@@ -203,6 +264,23 @@ def _messy_memory():
             "Laura's friend who got fired at the beginning of this year.",
         ),
     ]
+    memory.commitments = [
+        _commitment(
+            "commitment-savings-1",
+            "Automatic savings",
+            "Use automatic savings to build buffer for lawyer fees and move",
+        ),
+        _commitment(
+            "commitment-savings-2",
+            "Initial Savings Transfer",
+            "Transferred $350 to savings account this month as first step",
+        ),
+        _commitment(
+            "commitment-shipping",
+            "Weekly shipping habit",
+            "Maintain weekly shipping habit to support income goals",
+        ),
+    ]
     return memory
 
 
@@ -226,7 +304,16 @@ def _update(rows, record_id, updates):
     return None
 
 
-def _plan(plan_id, title, plan_type, *, description, priority):
+def _plan(
+    plan_id,
+    title,
+    plan_type,
+    *,
+    description,
+    priority,
+    active=True,
+    status="active",
+):
     return {
         "id": plan_id,
         "title": title,
@@ -234,8 +321,8 @@ def _plan(plan_id, title, plan_type, *, description, priority):
         "description": description,
         "desired_outcome": "",
         "priority": priority,
-        "status": "active",
-        "active": True,
+        "status": status,
+        "active": active,
         "metadata": {},
     }
 
@@ -247,6 +334,18 @@ def _milestone(milestone_id, plan_id, title):
         "title": title,
         "description": "",
         "milestone_type": "goal",
+        "priority": 4,
+        "status": "open",
+        "active": True,
+        "metadata": {},
+    }
+
+
+def _commitment(commitment_id, title, commitment_text):
+    return {
+        "id": commitment_id,
+        "title": title,
+        "commitment_text": commitment_text,
         "priority": 4,
         "status": "open",
         "active": True,

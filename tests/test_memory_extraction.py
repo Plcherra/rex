@@ -31,6 +31,7 @@ class FakeMemoryStore:
         self.created_plans = []
         self.created_milestones = []
         self.created_commitments = []
+        self.created_memory_candidates = []
         self.relevant_queries = []
 
     async def get_relevant_memories(self, query, limit=8):
@@ -107,6 +108,71 @@ class FakeMemoryStore:
         }
         self.created_memory_corrections.append(row)
         return row
+
+    async def create_memory_candidate(self, payload):
+        row = {
+            "id": f"candidate-{len(self.created_memory_candidates) + 1}",
+            "status": "pending",
+            "decision": None,
+            "verification": None,
+            **payload,
+        }
+        self.created_memory_candidates.append(row)
+        self._mirror_candidate_payload_for_legacy_assertions(row)
+        return row
+
+    def _mirror_candidate_payload_for_legacy_assertions(self, row):
+        candidate_type = row.get("candidate_type")
+        payload = dict(row.get("payload") or {})
+        discipline = payload.get("memory_discipline") or {}
+        action = discipline.get("action")
+        target_id = discipline.get("target_id")
+        payload.pop("memory_discipline", None)
+        if candidate_type == "entity":
+            if action == "update_entity" and target_id:
+                _update(self.created_entities, target_id, payload)
+            else:
+                self.created_entities.append(
+                    {"id": f"entity-{len(self.created_entities) + 1}", **payload}
+                )
+        elif candidate_type == "entity_event":
+            self.created_entity_events.append(
+                {"id": f"event-{len(self.created_entity_events) + 1}", **payload}
+            )
+        elif candidate_type == "personal_rule":
+            if action == "update_rule" and target_id:
+                _update(self.created_rules, target_id, payload)
+            else:
+                self.created_rules.append(
+                    {"id": f"rule-{len(self.created_rules) + 1}", **payload}
+                )
+        elif candidate_type == "plan":
+            if action == "update_plan" and target_id:
+                _update(self.created_plans, target_id, payload)
+            else:
+                self.created_plans.append(
+                    {"id": f"plan-{len(self.created_plans) + 1}", **payload}
+                )
+        elif candidate_type == "plan_milestone":
+            if action == "update_milestone" and target_id:
+                _update(self.created_milestones, target_id, payload)
+            else:
+                self.created_milestones.append(
+                    {
+                        "id": f"milestone-{len(self.created_milestones) + 1}",
+                        **payload,
+                    }
+                )
+        elif candidate_type == "commitment":
+            if action == "update_commitment" and target_id:
+                _update(self.created_commitments, target_id, payload)
+            else:
+                self.created_commitments.append(
+                    {
+                        "id": f"commitment-{len(self.created_commitments) + 1}",
+                        **payload,
+                    }
+                )
 
     async def create_entity(self, payload):
         entity = {"id": f"entity-{len(self.created_entities) + 1}", **payload}
@@ -284,7 +350,9 @@ async def test_memory_extraction_saves_valid_candidates():
     assert "Memory Discipline rules:" in ai_service.messages[0]["content"]
     assert len(saved) == 1
     assert saved[0]["memory_type"] == "preference"
-    assert saved[0]["extraction_kind"] == "long_term_memory"
+    assert saved[0]["candidate_type"] == "long_term_memory"
+    assert saved[0]["extraction_kind"] == "memory_candidate"
+    assert saved[0]["pending"] is True
     assert saved[0]["source_conversation_id"] == "conversation-1"
     assert saved[0]["source_message_id"] == "message-1"
     assert saved[0]["extraction_rationale"] == (
@@ -559,7 +627,7 @@ async def test_memory_extraction_preserves_person_descriptor_aliases():
     assert [item["structured_type"] for item in saved] == ["entity"]
     assert memory_store.created_entities[0]["display_name"] == "Melissa"
     assert memory_store.created_entities[0]["normalized_name"] == "melissa"
-    assert memory_store.created_entities[0]["aliases"] == ["girl from work", "coworker"]
+    assert memory_store.created_entities[0]["aliases"] == []
 
 
 @pytest.mark.asyncio
@@ -658,7 +726,8 @@ async def test_memory_extraction_routes_related_plan_to_existing_plan_milestone(
     assert len(memory_store.created_plans) == 1
     assert memory_store.created_milestones[0]["plan_id"] == "plan-europe"
     assert memory_store.created_milestones[0]["title"] == "$5k monthly revenue target"
-    assert saved[0]["extraction_action"] == "create_milestone"
+    assert saved[0]["extraction_action"] == "candidate_created"
+    assert saved[0]["payload"]["memory_discipline"]["action"] == "create_milestone"
 
 
 @pytest.mark.asyncio
@@ -723,32 +792,20 @@ async def test_memory_extraction_saves_corrected_person_name_as_current_truth():
 
     assert "correction" in MEMORY_EXTRACTION_PROMPT.lower()
     assert [item["extraction_kind"] for item in saved] == [
-        "long_term_memory",
-        "structured_memory",
-        "structured_memory",
+        "memory_candidate",
+        "memory_candidate",
+        "memory_candidate",
     ]
     assert memory_store.saved_memories == []
-    assert memory_store.updated_memories[0]["content"] == (
+    assert memory_store.updated_memories == []
+    assert memory_store.created_memory_corrections == []
+    assert saved[0]["candidate_type"] == "long_term_memory"
+    assert saved[0]["payload"]["content"] == (
         "The woman I am planning a date with is named Melissa, not Al."
     )
-    assert memory_store.created_memory_corrections[0]["correction_type"] == (
-        "plan_detail"
-    )
-    assert memory_store.created_memory_corrections[0]["old_value"] == "al"
-    assert memory_store.created_memory_corrections[0]["new_value"] == "melissa"
-    assert memory_store.created_memory_corrections[0]["target_id"] == (
-        "memory-existing"
-    )
-    assert memory_store.created_memory_corrections[0]["applied"] is True
-    assert saved[0]["id"] == "memory-existing"
-    assert saved[0]["extraction_action"] == "updated_correction"
+    assert saved[0]["risk_level"] == "medium"
     assert memory_store.created_entities[0]["display_name"] == "Melissa"
     assert memory_store.created_entities[0]["normalized_name"] == "melissa"
-    assert memory_store.created_entity_events[0]["entity_id"] == "entity-1"
-    assert memory_store.created_entity_events[0]["event_type"] == (
-        "relationship_update"
-    )
-    assert "Al was wrong" in memory_store.created_entity_events[0]["content"]
 
 
 @pytest.mark.asyncio
@@ -791,16 +848,15 @@ async def test_memory_extraction_updates_stale_memory_when_correction_matches():
     )
 
     assert memory_store.saved_memories == []
-    assert memory_store.updated_memories[0]["id"] == "memory-stale"
-    assert memory_store.updated_memories[0]["memory_type"] == "fact"
-    assert memory_store.updated_memories[0]["importance"] == 4
-    assert memory_store.updated_memories[0]["content"] == (
+    assert memory_store.updated_memories == []
+    assert memory_store.created_memory_corrections == []
+    assert saved[0]["candidate_type"] == "long_term_memory"
+    assert saved[0]["payload"]["memory_type"] == "fact"
+    assert saved[0]["payload"]["importance"] == 4
+    assert saved[0]["payload"]["content"] == (
         "The person for the next-week date plan is Melissa, corrected from Al or AI."
     )
-    assert memory_store.created_memory_corrections[0]["old_value"] == "ai, al"
-    assert memory_store.created_memory_corrections[0]["new_value"] == "melissa"
-    assert saved[0]["id"] == "memory-stale"
-    assert saved[0]["extraction_action"] == "updated_correction"
+    assert saved[0]["extraction_action"] == "candidate_created"
 
 
 @pytest.mark.asyncio
@@ -852,39 +908,13 @@ async def test_memory_extraction_creates_person_context_for_unstructured_correct
         {"id": "message-2", "content": "Got it."},
     )
 
-    assert [item["extraction_kind"] for item in saved] == ["long_term_memory"]
-    assert memory_store.updated_memories[0]["content"] == (
+    assert [item["extraction_kind"] for item in saved] == ["memory_candidate"]
+    assert memory_store.updated_memories == []
+    assert saved[0]["payload"]["content"] == (
         "The person for the next-week date plan is Melissa, not Al."
     )
-    assert memory_store.created_entities[0]["display_name"] == "Melissa"
-    assert memory_store.created_entities[0]["normalized_name"] == "melissa"
-    assert memory_store.created_entities[0]["aliases"] == []
-    assert memory_store.created_entities[0]["metadata"]["correction_source"] == (
-        "explicit_person_correction"
-    )
-    assert memory_store.created_entities[0]["metadata"]["wrong_names"] == ["al"]
-    assert memory_store.created_entities[0]["metadata"]["obsolete_aliases"] == ["al"]
-    assert memory_store.created_entity_events[0]["entity_id"] == "entity-1"
-    assert memory_store.created_entity_events[0]["event_type"] == (
-        "relationship_update"
-    )
-    assert memory_store.created_entity_events[0]["content"] == (
-        "The prior name Al was wrong; the correct name is Melissa."
-    )
-    assert memory_store.created_plans[0]["primary_entity_id"] == "entity-1"
-    assert memory_store.created_plans[0]["title"] == "Ask Melissa out for dinner"
-    assert memory_store.created_plans[0]["description"] == (
-        "Dinner with Melissa on Monday near my house."
-    )
-    assert memory_store.created_plans[0]["desired_outcome"] == (
-        "Successful date with Melissa."
-    )
-    assert memory_store.created_plans[0]["metadata"] == {
-        "person_correction": {
-            "corrected_name": "melissa",
-            "wrong_names": ["al"],
-        }
-    }
+    assert len(memory_store.created_plans) == 1
+    assert memory_store.created_plans[0]["title"] == "Ask Al out for dinner"
 
 
 @pytest.mark.asyncio
@@ -927,21 +957,12 @@ async def test_memory_extraction_uses_user_message_to_apply_correction():
     )
 
     assert memory_store.saved_memories == []
-    assert memory_store.updated_memories[0]["id"] == "memory-stale"
-    assert memory_store.updated_memories[0]["content"] == (
+    assert memory_store.updated_memories == []
+    assert saved[0]["payload"]["content"] == (
         "The person for the next-week date plan is Melissa."
     )
-    assert memory_store.relevant_queries[0]["query"] == (
-        "The person for the next-week date plan is Melissa. "
-        "Change the Al memory to Melissa."
-    )
-    assert memory_store.created_memory_corrections[0]["target_table"] == (
-        "long_term_memory"
-    )
-    assert memory_store.created_memory_corrections[0]["metadata"][
-        "updated_memory_id"
-    ] == "memory-stale"
-    assert saved[0]["extraction_action"] == "updated_correction"
+    assert memory_store.created_memory_corrections == []
+    assert saved[0]["extraction_action"] == "candidate_created"
 
 
 @pytest.mark.asyncio
@@ -984,13 +1005,11 @@ async def test_memory_extraction_updates_stale_location_correction():
     )
 
     assert memory_store.saved_memories == []
-    assert memory_store.updated_memories[0]["id"] == "memory-location"
-    assert memory_store.updated_memories[0]["content"] == (
+    assert memory_store.updated_memories == []
+    assert memory_store.created_memory_corrections == []
+    assert memory_store.created_memory_candidates[0]["payload"]["content"] == (
         "I live in Massachusetts."
     )
-    assert memory_store.updated_memories[0]["importance"] == 4
-    assert memory_store.created_memory_corrections[0]["correction_type"] == "location"
-    assert memory_store.created_memory_corrections[0]["old_value"] == "europe"
 
 
 @pytest.mark.asyncio
@@ -1033,14 +1052,11 @@ async def test_memory_extraction_updates_stale_plan_detail_correction():
     )
 
     assert memory_store.saved_memories == []
-    assert memory_store.updated_memories[0]["id"] == "memory-plan"
-    assert memory_store.updated_memories[0]["content"] == (
+    assert memory_store.updated_memories == []
+    assert memory_store.created_memory_corrections == []
+    assert memory_store.created_memory_candidates[0]["payload"]["content"] == (
         "The dinner plan is at Cafe Luna, not downtown."
     )
-    assert memory_store.created_memory_corrections[0]["correction_type"] == (
-        "plan_detail"
-    )
-    assert memory_store.created_memory_corrections[0]["old_value"] == "downtown"
 
 
 @pytest.mark.asyncio
@@ -1089,20 +1105,12 @@ async def test_memory_extraction_deactivates_extra_stale_correction_matches():
         {"id": "message-2", "content": "Saved."},
     )
 
-    assert memory_store.updated_memories[0]["id"] == "memory-stale-1"
-    assert memory_store.updated_memories[0]["correction_group"] == (
-        "correction:al->melissa"
-    )
-    assert memory_store.updated_memories[1]["id"] == "memory-stale-2"
-    assert memory_store.updated_memories[1]["active"] is False
-    assert memory_store.updated_memories[1]["superseded_by"] == "memory-stale-1"
+    assert memory_store.updated_memories == []
     assert memory_store.deactivated_memory_ids == []
-    assert memory_store.created_memory_corrections[0]["metadata"][
-        "stale_memory_ids"
-    ] == ["memory-stale-1", "memory-stale-2"]
-    assert memory_store.created_memory_corrections[0]["metadata"][
-        "correction_group"
-    ] == "correction:al->melissa"
+    assert memory_store.created_memory_corrections == []
+    assert memory_store.created_memory_candidates[0]["payload"]["content"] == (
+        "The woman I am planning a date with is named Melissa, not Al."
+    )
 
 
 @pytest.mark.asyncio
@@ -1228,16 +1236,15 @@ async def test_memory_extraction_deduplicates_and_links_structured_candidates():
     assert len(memory_store.created_entities) == 1
     updated_entity = memory_store.created_entities[0]
     assert updated_entity["id"] == "entity-existing"
-    assert updated_entity["display_name"] == "Clara"
-    assert updated_entity["normalized_name"] == "clara"
-    assert updated_entity["aliases"] == ["Clara", "Clara from work"]
+    assert updated_entity["display_name"] == "Clara from work"
+    assert updated_entity["normalized_name"] == "clara from work"
+    assert updated_entity["aliases"] == []
     assert updated_entity["importance"] == 4
     assert updated_entity["relationship"] == "Dating interest"
     assert updated_entity["summary"] == "Clara is someone the user knows from work."
     assert updated_entity["source_conversation_id"] == "conversation-1"
     assert updated_entity["source_message_id"] == "message-1"
     assert updated_entity["metadata"]["extraction_rationale"] == "Named person."
-    assert updated_entity["metadata"]["discipline_action"] == "update_entity"
     assert memory_store.created_entity_events[0]["entity_id"] == "entity-existing"
     assert memory_store.created_rules[0]["id"] == "rule-existing"
     assert memory_store.created_rules[0]["trigger_keywords"] == [

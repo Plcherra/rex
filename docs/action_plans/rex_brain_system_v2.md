@@ -581,17 +581,17 @@ Stop direct structured memory writes from chat extraction. Chat extraction shoul
 
 ### Checklist
 
-1. [ ] Change `MemoryExtractionService` so structured sections create `memory_candidates` instead of durable records.
-2. [ ] Keep long-term memory extraction conservative; convert durable long-term memory writes to candidates unless explicitly confirmed by the user.
-3. [ ] Stop using assistant response text as authoritative extraction source.
-4. [ ] Keep assistant response only as non-authoritative context when needed.
-5. [ ] Attach `source_conversation_id` and `source_message_id` to every candidate.
-6. [ ] Add candidate risk-level classifier.
-7. [ ] Make top-level plan candidates require rich descriptions before approval.
-8. [ ] On approval, apply through `MemoryDisciplineService`.
-9. [ ] Run verification after every approved candidate.
-10. [ ] Store verification result on the candidate.
-11. [ ] Support approval phrases in chat:
+1. [x] Change `MemoryExtractionService` so structured sections create `memory_candidates` instead of durable records.
+2. [x] Keep long-term memory extraction conservative; convert durable long-term memory writes to candidates unless explicitly confirmed by the user.
+3. [x] Stop using assistant response text as authoritative extraction source.
+4. [x] Keep assistant response only as non-authoritative context when needed.
+5. [x] Attach `source_conversation_id` and `source_message_id` to every candidate.
+6. [x] Add candidate risk-level classifier.
+7. [x] Make top-level plan candidates require rich descriptions before approval.
+8. [x] On approval, apply through `MemoryDisciplineService`.
+9. [x] Run verification after every approved candidate.
+10. [x] Store verification result on the candidate.
+11. [x] Support approval phrases in chat:
     - `yes`
     - `ok`
     - `confirm`
@@ -600,10 +600,10 @@ Stop direct structured memory writes from chat extraction. Chat extraction shoul
     - `save that`
     - `looks good`
     - `approve all`
-12. [ ] If the confirmation is ambiguous and multiple candidates exist, ask a short clarification.
-13. [ ] Make `approve all` skip high-risk candidates unless the user explicitly confirms them.
-14. [ ] Ensure `stream_message()` does not silently apply structured writes in the background.
-15. [ ] Return pending/applied candidate status in chat responses.
+12. [x] If the confirmation is ambiguous and multiple candidates exist, ask a short clarification.
+13. [x] Make `approve all` skip high-risk candidates unless the user explicitly confirms them.
+14. [x] Ensure `stream_message()` does not silently apply structured writes in the background.
+15. [x] Return pending/applied candidate status in chat responses.
 
 ### Natural Confirmation Behavior
 

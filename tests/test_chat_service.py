@@ -205,6 +205,23 @@ class FakeMemoryCorrectionService:
         return FakeCorrectionReport(self.payload)
 
 
+class FakeMemoryCandidateService:
+    def __init__(self):
+        self.created = []
+
+    async def create_candidate(self, request):
+        candidate = {
+            "id": f"candidate-{len(self.created) + 1}",
+            "candidate_type": request.candidate_type,
+            "payload": request.payload,
+            "risk_level": request.risk_level,
+            "status": "pending",
+            "preview": f"{request.candidate_type}: pending memory change",
+        }
+        self.created.append(candidate)
+        return candidate
+
+
 class BlockingMemoryExtractionService:
     def __init__(self):
         self.calls = []
@@ -293,28 +310,29 @@ async def test_chat_service_applies_memory_correction_and_prompts_summary():
             ],
         }
     )
+    candidate_service = FakeMemoryCandidateService()
     chat_service = ChatService(
         ai_service,
         FileService(),
         memory_service,
         memory_correction_service=correction_service,
+        memory_candidate_service=candidate_service,
     )
 
     result = await chat_service.send_message("not Flowfirst, it is FlowForce")
 
-    assert result["memory_correction"]["applied"] is True
-    assert correction_service.calls[-1] == (
-        "apply",
-        "not Flowfirst, it is FlowForce",
-        "conversation-1",
-        "message-1",
+    assert result["memory_correction"]["applied"] is False
+    assert result["memory_correction"]["requires_confirmation"] is True
+    assert candidate_service.created[0]["payload"]["content"] == (
+        "User correction: not Flowfirst, it is FlowForce"
     )
+    assert correction_service.calls == [("detect", "not Flowfirst, it is FlowForce")]
     assert "Memory correction status" in ai_service.messages[-1]["content"]
     assert any(
         message["content"] == "not Flowfirst, it is FlowForce"
         for message in ai_service.messages
     )
-    assert result["memory_changes"]["skipped"] == 1
+    assert result["memory_changes"]["confirmation_required"] == 1
     assert result["memory_changes"]["records"][-1]["reason"] == (
         "correction_already_handled"
     )
@@ -341,18 +359,21 @@ async def test_chat_service_skips_extraction_after_applied_correction():
             "updated": [{"table": "entities", "id": "entity-1"}],
         }
     )
+    candidate_service = FakeMemoryCandidateService()
     chat_service = ChatService(
         ai_service,
         FileService(),
         memory_service,
         extraction_service,
         memory_correction_service=correction_service,
+        memory_candidate_service=candidate_service,
     )
 
     result = await chat_service.send_message("wrong name, fix it")
 
     assert extraction_service.calls == []
-    assert result["memory_changes"]["updated"] == 1
+    assert result["memory_changes"]["updated"] == 0
+    assert result["memory_changes"]["confirmation_required"] == 1
     assert result["memory_changes"]["skipped"] == 1
 
 

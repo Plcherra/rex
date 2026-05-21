@@ -5,6 +5,7 @@ from typing import Any, Optional, Protocol
 
 from app.models.commitment import CommitmentCreateRequest, CommitmentType
 from app.models.entity import EntityCreateRequest, EntityEventCreateRequest, EntityType
+from app.models.memory_candidate import MemoryCandidateCreateRequest
 from app.models.memory_discipline import (
     MemoryCandidateKind,
     MemoryDisciplineAction,
@@ -185,6 +186,7 @@ Do not extract:
 - one-off emotions without durable context
 - generic requests or instructions to answer the current question
 - assistant advice
+- assistant summaries or assistant claims that something was saved, fixed, updated, or archived
 - duplicates of existing memories
 - private sensitive details unless the user clearly stated them as personal context
 - vague entities like "someone", "a girl", "work", or "money" unless named or clearly durable
@@ -196,6 +198,11 @@ Use importance:
 5 = critical identity, legal, financial, health, relationship, or life context
 
 If there is nothing worth remembering, return {"memories": [], "structured_memories": {}}.
+
+Important save discipline:
+- Treat the assistant response as non-authoritative context only.
+- Durable memory must be proposed as a pending candidate before it can be saved.
+- Extract durable truth only from user-stated facts, user corrections, or confirmed backend operation results.
 """.strip()
 
 
@@ -269,6 +276,9 @@ class MemoryStore(Protocol):
     async def create_commitment(self, payload: dict) -> dict:
         pass
 
+    async def create_memory_candidate(self, payload: dict) -> dict:
+        pass
+
 
 class MemoryExtractionService:
     def __init__(
@@ -309,43 +319,37 @@ class MemoryExtractionService:
 
         extraction_payload = self._parse_extraction_payload(raw_response)
         candidates = extraction_payload["memories"]
-        saved_memories = []
+        pending_candidates = []
 
         for candidate in candidates:
             normalized = self._normalize_candidate(candidate)
             if normalized is None:
                 continue
-            corrected_memory = await self._upsert_corrected_memory(
-                normalized,
+            if await self._is_duplicate(normalized["content"]):
+                continue
+
+            pending = await self._create_pending_memory_candidate(
+                candidate_type="long_term_memory",
+                payload={
+                    "memory_type": normalized["memory_type"],
+                    "content": normalized["content"],
+                    "importance": normalized["importance"],
+                    "metadata": {
+                        "extraction_rationale": normalized["rationale"],
+                    },
+                },
+                rationale=normalized["rationale"],
                 conversation_id=conversation_id,
                 user_message_id=str(user_message.get("id"))
                 if user_message.get("id")
                 else None,
-                source_text=str(user_message.get("content", "")),
-                structured_memories=extraction_payload["structured_memories"],
+                risk_level=self._candidate_risk_level(
+                    candidate_type="long_term_memory",
+                    payload=normalized,
+                ),
             )
-            if corrected_memory is not None:
-                saved_memories.append(corrected_memory)
-                continue
-            if await self._is_duplicate(normalized["content"]):
-                continue
-
-            saved = await self.memory_service.save_long_term_memory(
-                memory_type=normalized["memory_type"],
-                content=normalized["content"],
-                source_conversation_id=conversation_id,
-                source_message_id=str(user_message.get("id"))
-                if user_message.get("id")
-                else None,
-                importance=normalized["importance"],
-            )
-            saved_memories.append(
-                {
-                    **saved,
-                    "extraction_kind": "long_term_memory",
-                    "extraction_rationale": normalized["rationale"],
-                }
-            )
+            if pending:
+                pending_candidates.append(pending)
 
         structured_memories = await self._save_structured_memories(
             extraction_payload["structured_memories"],
@@ -354,15 +358,17 @@ class MemoryExtractionService:
             if user_message.get("id")
             else None,
         )
-        saved_memories.extend(structured_memories)
+        pending_candidates.extend(structured_memories)
 
-        return saved_memories
+        return pending_candidates
 
     def _turn_payload(self, user_message: dict, assistant_message: dict) -> str:
         return json.dumps(
             {
                 "user_message": str(user_message.get("content", "")),
-                "assistant_response": str(assistant_message.get("content", "")),
+                "assistant_response_context_only": str(
+                    assistant_message.get("content", "")
+                ),
             },
             ensure_ascii=True,
         )
@@ -464,6 +470,8 @@ class MemoryExtractionService:
         saved: list[dict] = []
         entity_ids_by_key: dict[str, str] = {}
         plan_ids_by_key: dict[str, str] = {}
+        await self._load_existing_entity_keys(entity_ids_by_key)
+        await self._load_existing_plan_keys(plan_ids_by_key)
 
         for candidate in structured_memories.get("entities", []):
             normalized = self._normalize_entity_candidate(
@@ -484,7 +492,6 @@ class MemoryExtractionService:
                 ),
             )
             if saved_entity:
-                self._remember_entity_keys(saved_entity, entity_ids_by_key)
                 saved.append(saved_entity)
 
         for candidate in structured_memories.get("entity_events", []):
@@ -496,18 +503,19 @@ class MemoryExtractionService:
             )
             if normalized is None:
                 continue
-            saved_event = await self._call_optional_store_method(
-                "create_entity_event",
-                normalized["payload"],
+            saved_event = await self._create_pending_memory_candidate(
+                candidate_type="entity_event",
+                payload=normalized["payload"],
+                rationale=normalized["rationale"],
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                risk_level=self._candidate_risk_level(
+                    candidate_type="entity_event",
+                    payload=normalized["payload"],
+                ),
             )
             if saved_event:
-                saved.append(
-                    self._saved_structured_result(
-                        saved_event,
-                        "entity_event",
-                        normalized["rationale"],
-                    )
-                )
+                saved.append(saved_event)
 
         for candidate in structured_memories.get("personal_rules", []):
             normalized = self._normalize_rule_candidate(
@@ -550,8 +558,6 @@ class MemoryExtractionService:
                 ),
             )
             if saved_plan:
-                if saved_plan.get("structured_type") == "plan":
-                    self._remember_plan_keys(saved_plan, plan_ids_by_key)
                 saved.append(saved_plan)
 
         for candidate in structured_memories.get("plan_milestones", []):
@@ -1314,6 +1320,34 @@ class MemoryExtractionService:
             if key:
                 plan_ids_by_key[key] = plan_id
 
+    async def _load_existing_entity_keys(
+        self,
+        entity_ids_by_key: dict[str, str],
+    ) -> None:
+        method = getattr(self.memory_service, "list_entities", None)
+        if method is None:
+            return
+        try:
+            entities = await method(active=True, limit=100)
+        except Exception:
+            return
+        for entity in entities:
+            self._remember_entity_keys(entity, entity_ids_by_key)
+
+    async def _load_existing_plan_keys(
+        self,
+        plan_ids_by_key: dict[str, str],
+    ) -> None:
+        method = getattr(self.memory_service, "list_plans", None)
+        if method is None:
+            return
+        try:
+            plans = await method(active=True, limit=100)
+        except Exception:
+            return
+        for plan in plans:
+            self._remember_plan_keys(plan, plan_ids_by_key)
+
     async def _resolve_entity_reference(
         self,
         candidate: dict[str, Any],
@@ -1433,17 +1467,6 @@ class MemoryExtractionService:
         rationale: str,
         fallback: Any,
     ) -> Optional[dict]:
-        if self.memory_discipline_service is None:
-            saved = await fallback()
-            if not saved:
-                return None
-            return self._saved_structured_result(
-                saved,
-                structured_type,
-                rationale,
-                extraction_action="create",
-            )
-
         candidate = MemoryDisciplineCandidate(
             kind=kind,
             payload=payload,
@@ -1454,38 +1477,33 @@ class MemoryExtractionService:
         try:
             decision = await self.memory_discipline_service.decide(candidate)
         except Exception:
+            decision = None
+
+        decision_kind = decision.candidate_kind if decision is not None else kind
+        candidate_type = self._candidate_type_for_kind(decision_kind)
+        if candidate_type is None:
             return None
-
-        if decision.action == self._create_action_for_kind(kind):
-            saved = await fallback()
-            if not saved:
-                return None
-            return self._saved_structured_result(
-                saved,
-                structured_type,
-                rationale,
-                extraction_action=decision.action.value,
-                discipline_decision=decision,
-            )
-
-        try:
-            applied = await self.memory_discipline_service.apply_decision(decision)
-        except Exception:
-            return None
-
-        if not applied.get("applied"):
-            return None
-
-        record = applied.get("record")
-        if not isinstance(record, dict):
-            return None
-
-        return self._saved_structured_result(
-            record,
-            self._structured_type_for_decision(decision, structured_type),
-            rationale,
-            extraction_action=applied.get("action") or decision.action.value,
-            discipline_decision=decision,
+        candidate_payload = dict(decision.payload if decision is not None else payload)
+        if decision is not None:
+            candidate_payload["memory_discipline"] = {
+                "action": decision.action.value,
+                "reason": decision.reason,
+                "confidence": decision.confidence,
+                "target_table": decision.target_table,
+                "target_id": decision.target_id,
+                "requires_confirmation": decision.requires_confirmation,
+            }
+        return await self._create_pending_memory_candidate(
+            candidate_type=candidate_type,
+            payload=candidate_payload,
+            rationale=rationale,
+            conversation_id=str(payload.get("source_conversation_id") or ""),
+            user_message_id=self._clean_text(payload.get("source_message_id")),
+            risk_level=self._candidate_risk_level(
+                candidate_type=candidate_type,
+                payload=candidate_payload,
+                decision=decision,
+            ),
         )
 
     def _create_action_for_kind(
@@ -1499,6 +1517,78 @@ class MemoryExtractionService:
             MemoryCandidateKind.PLAN_MILESTONE: MemoryDisciplineAction.CREATE_MILESTONE,
             MemoryCandidateKind.COMMITMENT: MemoryDisciplineAction.CREATE_COMMITMENT,
         }.get(kind)
+
+    def _candidate_type_for_kind(self, kind: MemoryCandidateKind) -> Optional[str]:
+        return {
+            MemoryCandidateKind.ENTITY: "entity",
+            MemoryCandidateKind.PERSONAL_RULE: "personal_rule",
+            MemoryCandidateKind.PLAN: "plan",
+            MemoryCandidateKind.PLAN_MILESTONE: "plan_milestone",
+            MemoryCandidateKind.COMMITMENT: "commitment",
+        }.get(kind)
+
+    async def _create_pending_memory_candidate(
+        self,
+        *,
+        candidate_type: str,
+        payload: dict[str, Any],
+        rationale: str,
+        conversation_id: str,
+        user_message_id: Optional[str],
+        risk_level: str,
+    ) -> Optional[dict]:
+        create_candidate = getattr(self.memory_service, "create_memory_candidate", None)
+        if create_candidate is None:
+            return None
+        try:
+            row = await create_candidate(
+                MemoryCandidateCreateRequest(
+                    candidate_type=candidate_type,
+                    payload=payload,
+                    risk_level=risk_level,
+                    reason=rationale,
+                    source_conversation_id=conversation_id,
+                    source_message_id=user_message_id,
+                ).model_dump(exclude_none=True)
+            )
+        except Exception:
+            return None
+        return {
+            **payload,
+            **row,
+            "extraction_kind": "memory_candidate",
+            "structured_type": candidate_type
+            if candidate_type != "long_term_memory"
+            else None,
+            "memory_type": payload.get("memory_type")
+            if candidate_type == "long_term_memory"
+            else None,
+            "extraction_action": "candidate_created",
+            "extraction_rationale": rationale,
+            "pending": True,
+        }
+
+    def _candidate_risk_level(
+        self,
+        *,
+        candidate_type: str,
+        payload: dict[str, Any],
+        decision: Optional[MemoryDisciplineDecision] = None,
+    ) -> str:
+        if candidate_type in {"plan", "correction", "archive", "merge"}:
+            return "high"
+        if decision is not None and (
+            decision.requires_confirmation
+            or decision.target_id
+            or decision.action.value.startswith(("archive", "update"))
+        ):
+            return "high"
+        if candidate_type in {"commitment", "entity_event"}:
+            return "low"
+        if candidate_type == "long_term_memory":
+            importance = int(payload.get("importance") or 3)
+            return "high" if importance >= 5 else "medium"
+        return "medium"
 
     async def _call_service_create(self, method: Any, request: Any) -> Optional[dict]:
         try:

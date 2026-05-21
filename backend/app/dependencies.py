@@ -70,8 +70,14 @@ def get_memory_correction_service(
 
 def get_memory_candidate_service(
     memory_service: SupabaseMemoryService = Depends(get_memory_service),
+    memory_discipline_service: MemoryDisciplineService = Depends(
+        get_memory_discipline_service
+    ),
 ) -> MemoryCandidateService:
-    return MemoryCandidateService(memory_service)
+    return MemoryCandidateService(
+        memory_service,
+        memory_discipline_service=memory_discipline_service,
+    )
 
 
 def get_deepgram_service() -> DeepgramService:
@@ -95,6 +101,9 @@ def get_chat_service(
     memory_correction_service: MemoryCorrectionService = Depends(
         get_memory_correction_service
     ),
+    memory_candidate_service: MemoryCandidateService = Depends(
+        get_memory_candidate_service
+    ),
 ) -> ChatService:
     settings = get_settings()
     return ChatService(
@@ -110,4 +119,5 @@ def get_chat_service(
         accountability_service=get_accountability_service(),
         memory_discipline_service=memory_discipline_service,
         memory_correction_service=memory_correction_service,
+        memory_candidate_service=memory_candidate_service,
     )

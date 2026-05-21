@@ -5,9 +5,16 @@ from typing import Optional, Protocol
 
 from fastapi import UploadFile
 
+from app.models.memory_candidate import (
+    MemoryCandidateApproveRequest,
+    MemoryCandidateBulkDecisionRequest,
+    MemoryCandidateCreateRequest,
+    MemoryCandidateRejectRequest,
+)
 from app.services.ai_service import AIService
 from app.services.accountability_service import AccountabilityService
 from app.services.file_service import FileService
+from app.services.memory_candidate_service import MemoryCandidateService
 from app.services.memory_extraction_service import MemoryExtractionService
 from app.services.memory_correction_service import MemoryCorrectionService
 from app.services.memory_discipline_service import MemoryDisciplineService
@@ -19,6 +26,38 @@ PROFILE_MEMORY_QUERY = (
     "important identity facts"
 )
 PROFILE_MEMORY_LIMIT = 4
+APPROVE_ALL_PHRASES = {
+    "approve all",
+    "approve all pending",
+    "apply all",
+    "apply all pending",
+    "confirm all",
+    "save all",
+    "save all pending",
+}
+APPROVE_PHRASES = {
+    "yes",
+    "yep",
+    "yeah",
+    "ok",
+    "okay",
+    "confirm",
+    "confirmed",
+    "do it",
+    "apply",
+    "save it",
+    "save that",
+    "looks good",
+}
+REJECT_PHRASES = {
+    "no",
+    "nope",
+    "reject",
+    "discard",
+    "dont save",
+    "do not save",
+    "cancel",
+}
 
 
 class ConversationNotFoundError(Exception):
@@ -86,6 +125,7 @@ class ChatService:
         accountability_service: Optional[AccountabilityService] = None,
         memory_discipline_service: Optional[MemoryDisciplineService] = None,
         memory_correction_service: Optional[MemoryCorrectionService] = None,
+        memory_candidate_service: Optional[MemoryCandidateService] = None,
     ) -> None:
         self.ai_service = ai_service
         self.file_service = file_service
@@ -96,6 +136,7 @@ class ChatService:
         self.accountability_service = accountability_service or AccountabilityService()
         self.memory_discipline_service = memory_discipline_service
         self.memory_correction_service = memory_correction_service
+        self.memory_candidate_service = memory_candidate_service
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def send_message(
@@ -143,6 +184,28 @@ class ChatService:
             "user",
             message,
         )
+        candidate_decision = await self._handle_memory_candidate_decision(
+            message,
+            conversation_id=conversation_id,
+        )
+        if candidate_decision:
+            assistant_message = await self.memory_service.save_message(
+                conversation_id,
+                "assistant",
+                candidate_decision["response"],
+            )
+            return {
+                "conversation_id": conversation_id,
+                "response": candidate_decision["response"],
+                "user_message": user_message,
+                "assistant_message": assistant_message,
+                "memory_correction": None,
+                "memory_changes": candidate_decision["memory_changes"],
+                "messages": await self.memory_service.get_recent_messages(
+                    conversation_id,
+                    limit=20,
+                ),
+            }
         memory_correction = await self._apply_memory_correction(
             message,
             conversation_id=conversation_id,
@@ -262,6 +325,32 @@ class ChatService:
             message,
         )
         yield {"event": "conversation", "conversation_id": conversation_id}
+        candidate_decision = await self._handle_memory_candidate_decision(
+            message,
+            conversation_id=conversation_id,
+        )
+        if candidate_decision:
+            assistant_message = await self.memory_service.save_message(
+                conversation_id,
+                "assistant",
+                candidate_decision["response"],
+            )
+            yield {
+                "event": "memory_candidate_decision",
+                "memory_candidate_decision": candidate_decision,
+            }
+            yield {
+                "event": "done",
+                "conversation_id": conversation_id,
+                "response": candidate_decision["response"],
+                "messages": await self.memory_service.get_recent_messages(
+                    conversation_id,
+                    limit=20,
+                ),
+                "memory_changes": candidate_decision["memory_changes"],
+                "assistant_message": assistant_message,
+            }
+            return
         memory_correction = await self._apply_memory_correction(
             message,
             conversation_id=conversation_id,
@@ -464,17 +553,43 @@ class ChatService:
             intent = self.memory_correction_service.detect_correction_intent(message)
             if intent.confidence < 0.5:
                 return None
-            report = await self.memory_correction_service.apply_correction(
-                message,
-                source_conversation_id=conversation_id,
-                source_message_id=user_message_id or None,
+        except Exception:
+            return None
+        if self.memory_candidate_service is None:
+            return None
+        try:
+            candidate = await self.memory_candidate_service.create_candidate(
+                MemoryCandidateCreateRequest(
+                    candidate_type="long_term_memory",
+                    payload={
+                        "memory_type": "fact",
+                        "content": f"User correction: {message}",
+                        "importance": 5,
+                        "metadata": {
+                            "correction_intent": True,
+                            "phase": "1b_pending_confirmation",
+                        },
+                    },
+                    risk_level="high",
+                    reason=(
+                        "User correction detected. It must be confirmed before "
+                        "anything durable is changed."
+                    ),
+                    source_conversation_id=conversation_id,
+                    source_message_id=user_message_id or None,
+                )
             )
         except Exception:
             return None
-        data = report.as_dict()
-        if not data.get("applied") and not data.get("requires_confirmation"):
-            return None
-        return data
+        return {
+            "applied": False,
+            "requires_confirmation": True,
+            "candidate_id": candidate.get("id"),
+            "candidate_type": candidate.get("candidate_type"),
+            "risk_level": candidate.get("risk_level"),
+            "preview": candidate.get("preview"),
+            "message": "Correction captured as a pending memory candidate.",
+        }
 
     def _memory_correction_prompt(self, memory_correction: dict) -> dict:
         payload = json.dumps(memory_correction, sort_keys=True)
@@ -553,6 +668,8 @@ class ChatService:
                 summary["merged"] += 1
             elif action in {"ask_confirmation", "confirmation_required"}:
                 summary["confirmation_required"] += 1
+            elif action == "candidate_created":
+                summary["confirmation_required"] += 1
             elif action.startswith("skip") or action.startswith("ignore"):
                 summary["skipped"] += 1
 
@@ -582,6 +699,193 @@ class ChatService:
         ):
             return None
         return summary
+
+    async def _handle_memory_candidate_decision(
+        self,
+        message: str,
+        *,
+        conversation_id: str,
+    ) -> Optional[dict]:
+        if self.memory_candidate_service is None:
+            return None
+
+        intent = self._memory_candidate_decision_intent(message)
+        if intent is None:
+            return None
+
+        pending = await self.memory_candidate_service.list_candidates(
+            status="pending",
+            source_conversation_id=conversation_id,
+            limit=20,
+        )
+        if not pending:
+            return None
+
+        if intent == "approve_all":
+            result = await self.memory_candidate_service.bulk_approve_candidates(
+                MemoryCandidateBulkDecisionRequest(
+                    source_conversation_id=conversation_id,
+                    decided_by="user",
+                    reason="Approved from chat confirmation.",
+                    include_high_risk=False,
+                )
+            )
+            return self._candidate_decision_response(result)
+
+        if intent == "reject":
+            candidate = pending[0]
+            rejected = await self.memory_candidate_service.reject_candidate(
+                candidate["id"],
+                MemoryCandidateRejectRequest(reason="Rejected from chat."),
+            )
+            return self._candidate_decision_response(
+                {"approved": [], "rejected": [rejected], "skipped": []}
+            )
+
+        if len(pending) > 1:
+            return {
+                "response": (
+                    f"I found {len(pending)} pending memory changes. Say "
+                    "\"approve all pending\" to apply the low/medium-risk ones, "
+                    "or reject the latest one with \"do not save\"."
+                ),
+                "memory_changes": {
+                    "created": 0,
+                    "updated": 0,
+                    "archived": 0,
+                    "merged": 0,
+                    "skipped": 0,
+                    "confirmation_required": len(pending),
+                    "records": [
+                        {
+                            "kind": "memory_candidate",
+                            "action": "pending",
+                            "id": candidate.get("id"),
+                            "title": candidate.get("preview"),
+                        }
+                        for candidate in pending
+                    ],
+                },
+            }
+
+        approved = await self.memory_candidate_service.approve_candidate(
+            pending[0]["id"],
+            MemoryCandidateApproveRequest(
+                approved_by="user",
+                reason="Approved from chat confirmation.",
+            ),
+        )
+        return self._candidate_decision_response(
+            {"approved": [approved], "rejected": [], "skipped": []}
+        )
+
+    def _memory_candidate_decision_intent(self, message: str) -> Optional[str]:
+        normalized = self._normalized_confirmation_text(message)
+        if not normalized:
+            return None
+        if normalized in APPROVE_ALL_PHRASES:
+            return "approve_all"
+        if (
+            ("approve" in normalized or "apply" in normalized or "save" in normalized)
+            and ("all" in normalized or "pending" in normalized or "these" in normalized)
+        ):
+            return "approve_all"
+        if normalized in REJECT_PHRASES:
+            return "reject"
+        if normalized in APPROVE_PHRASES:
+            return "approve"
+        return None
+
+    def _candidate_decision_response(self, result: dict) -> dict:
+        approved = result.get("approved") or []
+        rejected = result.get("rejected") or []
+        skipped = result.get("skipped") or []
+        failed = [
+            candidate
+            for candidate in approved
+            if candidate.get("status") == "failed"
+            or not (candidate.get("verification") or {}).get("passed", False)
+        ]
+        applied = [
+            candidate
+            for candidate in approved
+            if candidate.get("status") == "applied"
+            and (candidate.get("verification") or {}).get("passed", False)
+        ]
+
+        parts: list[str] = []
+        if applied:
+            parts.append(f"Applied {len(applied)} pending memory change(s).")
+        if rejected:
+            parts.append(f"Rejected {len(rejected)} pending memory change(s).")
+        if skipped:
+            parts.append(
+                f"Skipped {len(skipped)} high-risk pending change(s); those need "
+                "explicit individual confirmation."
+            )
+        if failed:
+            parts.append(
+                "Some pending changes failed verification, so I did not mark them done."
+            )
+        response = " ".join(parts) or "No pending memory changes were applied."
+
+        return {
+            "response": response,
+            "memory_changes": {
+                "created": len(applied),
+                "updated": 0,
+                "archived": 0,
+                "merged": 0,
+                "skipped": len(skipped) + len(failed),
+                "confirmation_required": len(skipped),
+                "records": [
+                    *[
+                        {
+                            "kind": "memory_candidate",
+                            "action": candidate.get("status"),
+                            "id": candidate.get("id"),
+                            "title": candidate.get("preview"),
+                        }
+                        for candidate in applied
+                    ],
+                    *[
+                        {
+                            "kind": "memory_candidate",
+                            "action": "rejected",
+                            "id": candidate.get("id"),
+                            "title": candidate.get("preview"),
+                        }
+                        for candidate in rejected
+                    ],
+                    *[
+                        {
+                            "kind": "memory_candidate",
+                            "action": "skipped_high_risk",
+                            "id": candidate.get("id"),
+                            "title": candidate.get("preview"),
+                        }
+                        for candidate in skipped
+                    ],
+                    *[
+                        {
+                            "kind": "memory_candidate",
+                            "action": "verification_failed",
+                            "id": candidate.get("id"),
+                            "title": candidate.get("preview"),
+                        }
+                        for candidate in failed
+                    ],
+                ],
+            },
+        }
+
+    def _normalized_confirmation_text(self, message: str) -> str:
+        normalized = message.lower().replace("'", "")
+        normalized = "".join(
+            character if character.isalnum() or character.isspace() else " "
+            for character in normalized
+        )
+        return " ".join(normalized.split())
 
     def _last_message_timestamp(self, conversation_history: list[dict]) -> Optional[str]:
         if not conversation_history:

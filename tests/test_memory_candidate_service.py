@@ -88,6 +88,48 @@ class FakeMemoryCandidateRepository:
         self.durable_writes.append(("plans", payload))
         return {"id": "plan-1", **payload}
 
+    async def create_commitment(self, payload):
+        self.durable_writes.append(("commitments", payload))
+        return {"id": "commitment-1", **payload}
+
+    async def create_plan_milestone(self, payload):
+        self.durable_writes.append(("plan_milestones", payload))
+        return {"id": "milestone-1", **payload}
+
+    async def create_entity(self, payload):
+        self.durable_writes.append(("entities", payload))
+        return {"id": "entity-1", **payload}
+
+    async def create_personal_rule(self, payload):
+        self.durable_writes.append(("personal_rules", payload))
+        return {"id": "rule-1", **payload}
+
+    async def save_long_term_memory(self, **payload):
+        self.durable_writes.append(("long_term_memory", payload))
+        return {"id": "memory-1", **payload}
+
+    async def create_entity_event(self, payload):
+        self.durable_writes.append(("entity_events", payload))
+        return {"id": "event-1", **payload}
+
+    async def list_long_term_memory(self, **kwargs):
+        return []
+
+    async def list_entities(self, **kwargs):
+        return []
+
+    async def list_personal_rules(self, **kwargs):
+        return []
+
+    async def list_plans(self, **kwargs):
+        return []
+
+    async def list_plan_milestones(self, **kwargs):
+        return []
+
+    async def list_commitments(self, **kwargs):
+        return []
+
 
 @pytest.mark.asyncio
 async def test_create_list_update_and_preview_candidate():
@@ -126,13 +168,16 @@ async def test_create_list_update_and_preview_candidate():
 
 
 @pytest.mark.asyncio
-async def test_approve_candidate_marks_approved_without_durable_write():
+async def test_approve_candidate_applies_durable_write():
     repo = FakeMemoryCandidateRepository()
     service = MemoryCandidateService(repo)
     created = await service.create_candidate(
         MemoryCandidateCreateRequest(
             candidate_type="plan",
-            payload={"title": "Launch Clarity"},
+            payload={
+                "title": "Launch Clarity",
+                "description": "Launch Clarity as the first confirmed app release.",
+            },
             risk_level="high",
         )
     )
@@ -142,10 +187,11 @@ async def test_approve_candidate_marks_approved_without_durable_write():
         MemoryCandidateApproveRequest(approved_by="pedro", reason="Looks right."),
     )
 
-    assert approved["status"] == "approved"
+    assert approved["status"] == "applied"
     assert approved["approved_by"] == "pedro"
-    assert approved["decision"]["durable_apply_enabled"] is False
-    assert repo.durable_writes == []
+    assert approved["decision"]["durable_apply_enabled"] is True
+    assert approved["verification"]["passed"] is True
+    assert repo.durable_writes[0][0] == "plans"
 
 
 @pytest.mark.asyncio
@@ -177,7 +223,11 @@ async def test_bulk_approve_skips_high_risk_by_default():
     low = await service.create_candidate(
         MemoryCandidateCreateRequest(
             candidate_type="commitment",
-            payload={"title": "Prepare release build"},
+            payload={
+                "commitment_type": "task",
+                "title": "Prepare release build",
+                "commitment_text": "Prepare the release build.",
+            },
             risk_level="low",
             source_conversation_id="conversation-1",
         )
@@ -197,7 +247,7 @@ async def test_bulk_approve_skips_high_risk_by_default():
 
     assert [candidate["id"] for candidate in result["approved"]] == [low["id"]]
     assert [candidate["id"] for candidate in result["skipped"]] == [high["id"]]
-    assert repo.candidates[0]["status"] == "approved"
+    assert repo.candidates[0]["status"] == "applied"
     assert repo.candidates[1]["status"] == "pending"
 
 

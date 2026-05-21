@@ -10,6 +10,9 @@ from app.models.memory_candidate import (
     MemoryCandidateRejectRequest,
     MemoryCandidateUpdateRequest,
 )
+from app.models.memory_discipline import MemoryCandidateKind, MemoryDisciplineCandidate
+from app.models.memory_discipline import MemoryDisciplineAction
+from app.services.memory_discipline_service import MemoryDisciplineService
 from app.services.memory_service import MemoryServiceError, SupabaseMemoryService
 
 
@@ -21,8 +24,15 @@ class MemoryCandidateServiceError(Exception):
 
 
 class MemoryCandidateService:
-    def __init__(self, memory_service: SupabaseMemoryService) -> None:
+    def __init__(
+        self,
+        memory_service: SupabaseMemoryService,
+        memory_discipline_service: MemoryDisciplineService | None = None,
+    ) -> None:
         self.memory_service = memory_service
+        self.memory_discipline_service = (
+            memory_discipline_service or MemoryDisciplineService(memory_service)
+        )
 
     async def create_candidate(
         self, request: MemoryCandidateCreateRequest
@@ -91,17 +101,74 @@ class MemoryCandidateService:
         decision = {
             **(row.get("decision") or {}),
             **(request.decision or {}),
-            "phase": "1a",
-            "durable_apply_enabled": False,
+            "phase": "1b",
+            "durable_apply_enabled": True,
         }
-        updates = {
-            "status": "approved",
-            "approved_by": _clean_optional(request.approved_by) or "user",
-            "approved_at": _now_iso(),
-            "reason": _clean_optional(request.reason) or row.get("reason"),
-            "decision": decision,
-        }
-        updated = await self._update_candidate(candidate_id, updates)
+        approved_at = _now_iso()
+        try:
+            apply_result = await self._apply_candidate(row)
+        except Exception as error:
+            failed = await self._update_candidate(
+                candidate_id,
+                {
+                    "status": "failed",
+                    "approved_by": _clean_optional(request.approved_by) or "user",
+                    "approved_at": approved_at,
+                    "reason": _clean_optional(request.reason) or row.get("reason"),
+                    "decision": {
+                        **decision,
+                        "error": str(error),
+                    },
+                    "verification": {
+                        "passed": False,
+                        "message": "Candidate approval failed before durable write completed.",
+                    },
+                },
+            )
+            return _with_preview(failed)
+
+        if not apply_result.get("applied"):
+            failed = await self._update_candidate(
+                candidate_id,
+                {
+                    "status": "failed",
+                    "approved_by": _clean_optional(request.approved_by) or "user",
+                    "approved_at": approved_at,
+                    "reason": _clean_optional(request.reason) or row.get("reason"),
+                    "decision": {
+                        **decision,
+                        "apply_result": apply_result,
+                    },
+                    "verification": {
+                        "passed": False,
+                        "message": apply_result.get("reason")
+                        or "Candidate could not be applied.",
+                    },
+                },
+            )
+            return _with_preview(failed)
+
+        record = apply_result.get("record") or {}
+        updated = await self._update_candidate(
+            candidate_id,
+            {
+                "status": "applied",
+                "approved_by": _clean_optional(request.approved_by) or "user",
+                "approved_at": approved_at,
+                "applied_at": _now_iso(),
+                "reason": _clean_optional(request.reason) or row.get("reason"),
+                "decision": {
+                    **decision,
+                    "apply_result": {
+                        "action": apply_result.get("action"),
+                        "applied": True,
+                    },
+                },
+                "applied_record_table": apply_result.get("table"),
+                "applied_record_id": record.get("id"),
+                "verification": self._verification_for_applied(apply_result),
+            },
+        )
         return _with_preview(updated)
 
     async def reject_candidate(
@@ -211,6 +278,121 @@ class MemoryCandidateService:
             raise MemoryCandidateServiceError("Memory candidate not found.", 404)
         return row
 
+    async def _apply_candidate(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        candidate_type = str(candidate.get("candidate_type") or "")
+        payload = dict(candidate.get("payload") or {})
+        discipline_hint = payload.pop("memory_discipline", None)
+        if isinstance(discipline_hint, dict):
+            payload["metadata"] = {
+                **(payload.get("metadata") or {}),
+                "memory_discipline": discipline_hint,
+            }
+        source_conversation_id = candidate.get("source_conversation_id")
+        source_message_id = candidate.get("source_message_id")
+
+        if candidate_type == "long_term_memory":
+            memory_type = str(payload.get("memory_type") or "").strip()
+            content = _clean_optional(payload.get("content"))
+            if not memory_type or not content:
+                return {
+                    "applied": False,
+                    "reason": "Long-term memory candidate is missing type or content.",
+                }
+            record = await self.memory_service.save_long_term_memory(
+                memory_type=memory_type,
+                content=content,
+                source_conversation_id=source_conversation_id,
+                source_message_id=source_message_id,
+                importance=int(payload.get("importance") or 3),
+                confidence=float(payload.get("confidence") or 0.75),
+                metadata=payload.get("metadata") or {},
+            )
+            return {
+                "action": "create_long_term_memory",
+                "applied": True,
+                "table": "long_term_memory",
+                "record": record,
+            }
+
+        if candidate_type == "entity_event":
+            record = await self.memory_service.create_entity_event(payload)
+            return {
+                "action": "create_entity_event",
+                "applied": True,
+                "table": "entity_events",
+                "record": record,
+            }
+
+        kind = _candidate_kind(candidate_type)
+        if kind is None:
+            return {
+                "applied": False,
+                "reason": f"Candidate type {candidate_type} is not applyable in Phase 1b.",
+            }
+        if candidate_type == "plan" and not _clean_optional(payload.get("description")):
+            return {
+                "applied": False,
+                "reason": (
+                    "Top-level plan candidates need a clear description before "
+                    "they can be approved."
+                ),
+            }
+
+        discipline_candidate = MemoryDisciplineCandidate(
+            kind=kind,
+            payload=payload,
+            source_conversation_id=source_conversation_id,
+            source_message_id=source_message_id,
+            source_memory_id=payload.get("source_memory_id"),
+        )
+        decision = await self.memory_discipline_service.decide(discipline_candidate)
+        if decision.action == MemoryDisciplineAction.ASK_CONFIRMATION:
+            create_action = _create_action_for_kind(kind)
+            if create_action is None:
+                return {
+                    "applied": False,
+                    "reason": decision.reason,
+                    "requires_confirmation": True,
+                }
+            decision = decision.model_copy(
+                update={
+                    "action": create_action,
+                    "requires_confirmation": False,
+                    "reason": (
+                        "User explicitly approved the pending memory candidate."
+                    ),
+                }
+            )
+        applied = await self.memory_discipline_service.apply_decision(decision)
+        if not applied.get("applied"):
+            return {
+                **applied,
+                "table": _table_for_candidate_type(candidate_type),
+            }
+        return {
+            **applied,
+            "table": _table_for_candidate_type(candidate_type),
+        }
+
+    def _verification_for_applied(self, apply_result: dict[str, Any]) -> dict[str, Any]:
+        record = apply_result.get("record") or {}
+        table = apply_result.get("table")
+        passed = bool(table and record.get("id"))
+        return {
+            "passed": passed,
+            "checked_tables": [table] if table else [],
+            "remaining_conflicts": [],
+            "applied_record": {
+                "table": table,
+                "id": record.get("id"),
+            },
+            "message": (
+                "Candidate applied and returned a durable record."
+                if passed
+                else "Candidate apply did not return a durable record id."
+            ),
+        }
+
 
 def _clean_payload(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
@@ -265,3 +447,35 @@ def _first_text(payload: dict[str, Any], *keys: str) -> str | None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _candidate_kind(candidate_type: str) -> MemoryCandidateKind | None:
+    return {
+        "entity": MemoryCandidateKind.ENTITY,
+        "personal_rule": MemoryCandidateKind.PERSONAL_RULE,
+        "plan": MemoryCandidateKind.PLAN,
+        "plan_milestone": MemoryCandidateKind.PLAN_MILESTONE,
+        "commitment": MemoryCandidateKind.COMMITMENT,
+    }.get(candidate_type)
+
+
+def _create_action_for_kind(kind: MemoryCandidateKind) -> MemoryDisciplineAction | None:
+    return {
+        MemoryCandidateKind.ENTITY: MemoryDisciplineAction.CREATE_ENTITY,
+        MemoryCandidateKind.PERSONAL_RULE: MemoryDisciplineAction.CREATE_RULE,
+        MemoryCandidateKind.PLAN: MemoryDisciplineAction.CREATE_PLAN,
+        MemoryCandidateKind.PLAN_MILESTONE: MemoryDisciplineAction.CREATE_MILESTONE,
+        MemoryCandidateKind.COMMITMENT: MemoryDisciplineAction.CREATE_COMMITMENT,
+    }.get(kind)
+
+
+def _table_for_candidate_type(candidate_type: str) -> str | None:
+    return {
+        "long_term_memory": "long_term_memory",
+        "entity": "entities",
+        "entity_event": "entity_events",
+        "personal_rule": "personal_rules",
+        "plan": "plans",
+        "plan_milestone": "plan_milestones",
+        "commitment": "commitments",
+    }.get(candidate_type)

@@ -94,31 +94,45 @@ class FakeMemoryCandidateRepository:
 
     async def create_plan(self, payload):
         self.durable_writes.append(("plans", payload))
-        return {"id": "plan-1", **payload}
+        row = {"id": "plan-1", "active": True, **payload}
+        self.plans.append(row)
+        return row
 
     async def create_commitment(self, payload):
         self.durable_writes.append(("commitments", payload))
-        return {"id": "commitment-1", **payload}
+        row = {"id": "commitment-1", "active": True, **payload}
+        self.commitments.append(row)
+        return row
 
     async def create_plan_milestone(self, payload):
         self.durable_writes.append(("plan_milestones", payload))
-        return {"id": "milestone-1", **payload}
+        row = {"id": "milestone-1", "active": True, **payload}
+        self.milestones.append(row)
+        return row
 
     async def create_entity(self, payload):
         self.durable_writes.append(("entities", payload))
-        return {"id": "entity-1", **payload}
+        row = {"id": "entity-1", "active": True, **payload}
+        self.entities.append(row)
+        return row
 
     async def create_personal_rule(self, payload):
         self.durable_writes.append(("personal_rules", payload))
-        return {"id": "rule-1", **payload}
+        row = {"id": "rule-1", "active": True, **payload}
+        self.rules.append(row)
+        return row
 
     async def save_long_term_memory(self, **payload):
         self.durable_writes.append(("long_term_memory", payload))
-        return {"id": "memory-1", **payload}
+        row = {"id": "memory-1", "active": True, **payload}
+        self.memories.append(row)
+        return row
 
     async def create_entity_event(self, payload):
         self.durable_writes.append(("entity_events", payload))
-        return {"id": "event-1", **payload}
+        row = {"id": "event-1", "active": True, **payload}
+        self.entity_events.append(row)
+        return row
 
     async def list_long_term_memory(self, **kwargs):
         return _filter_active(self.memories, kwargs.get("active"))

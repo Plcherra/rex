@@ -6,6 +6,7 @@ from backend.scripts.cleanup_rex_brain_v2_current_data import (
     RELOCATION_PLAN_TITLE,
     build_cleanup_operations,
     cleanup_rex_brain_v2_current_data,
+    verify_cleanup_state,
 )
 
 
@@ -49,6 +50,14 @@ class FakeCleanupMemoryService:
 
     async def update_entity(self, entity_id, **updates):
         return _update(self.entities, entity_id, updates)
+
+
+class FailingMilestoneCleanupMemoryService(FakeCleanupMemoryService):
+    async def create_plan_milestone(self, payload):
+        raise RuntimeError("milestone write rejected")
+
+    async def update_plan_milestone(self, milestone_id, **updates):
+        raise RuntimeError("milestone write rejected")
 
 
 def test_build_cleanup_operations_targets_current_mess_without_writes():
@@ -137,7 +146,8 @@ async def test_cleanup_apply_updates_canonical_records_and_verifies():
     )
     assert any(
         milestone["title"] == "Clarity launched"
-        and milestone["milestone_type"] == "achievement"
+        and milestone["milestone_type"] == "checkpoint"
+        and milestone["metadata"]["achievement_milestone"] is True
         for milestone in memory.milestones
     )
     duplicate_savings = [
@@ -191,6 +201,51 @@ async def test_cleanup_recreates_app_plan_when_only_app_milestones_remain():
 
     assert report.verification["passed"] is True
     assert any(plan["title"] == APP_PLAN_TITLE for plan in memory.plans)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_verification_fails_when_canonical_milestone_writes_fail():
+    memory = FailingMilestoneCleanupMemoryService()
+    seed = _messy_memory()
+    memory.plans = seed.plans
+    memory.milestones = seed.milestones
+    memory.commitments = seed.commitments
+    memory.entities = seed.entities
+
+    report = await cleanup_rex_brain_v2_current_data(memory, apply=True)
+
+    assert report.verification["passed"] is False
+    assert "cleanup_operations_failed" in report.verification["failures"]
+    assert "canonical_relocation_milestones_missing" in report.verification["failures"]
+    assert "canonical_app_milestones_missing" in report.verification["failures"]
+    failed = report.verification["remaining_noisy_record_ids"]["failed_operations"]
+    assert any(item["record_type"] == "milestone" for item in failed)
+
+
+def test_verify_cleanup_state_requires_canonical_milestones():
+    memory = _messy_memory()
+    memory.plans[0]["title"] = RELOCATION_PLAN_TITLE
+    memory.plans[0]["description"] = "Italy first, Portugal backup."
+    memory.plans[1]["title"] = APP_PLAN_TITLE
+    memory.plans[2]["title"] = MELISSA_PLAN_TITLE
+    memory.milestones = []
+
+    verification = verify_cleanup_state(
+        plans=memory.plans[:3],
+        milestones=memory.milestones,
+        commitments=[],
+        entities=[
+            _entity(
+                "entity-stephanie",
+                "Stephanie",
+                "Lara's friend who lives with her; quit about a month ago.",
+            )
+        ],
+    )
+
+    assert verification["passed"] is False
+    assert "canonical_relocation_milestones_missing" in verification["failures"]
+    assert "canonical_app_milestones_missing" in verification["failures"]
 
 
 def _messy_memory():

@@ -160,12 +160,30 @@ async def cleanup_rex_brain_v2_current_data(
             memory_service.list_commitments(active=True, limit=limit),
             memory_service.list_entities(active=True, limit=limit),
         )
+        follow_up_operations = build_cleanup_operations(
+            plans=plans,
+            milestones=milestones,
+            commitments=commitments,
+            entities=entities,
+        )
+        if follow_up_operations:
+            report.operations.extend(follow_up_operations)
+            report.applied.extend(
+                await _apply_operations(memory_service, follow_up_operations)
+            )
+            plans, milestones, commitments, entities = await asyncio.gather(
+                memory_service.list_plans(active=True, limit=limit),
+                memory_service.list_plan_milestones(active=True, limit=limit),
+                memory_service.list_commitments(active=True, limit=limit),
+                memory_service.list_entities(active=True, limit=limit),
+            )
 
     report.verification = verify_cleanup_state(
         plans=plans,
         milestones=milestones,
         commitments=commitments,
         entities=entities,
+        applied=report.applied,
     )
     return report
 
@@ -286,6 +304,7 @@ def verify_cleanup_state(
     milestones: list[dict[str, Any]],
     commitments: list[dict[str, Any]],
     entities: list[dict[str, Any]],
+    applied: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     active_plans = [plan for plan in plans if _active(plan)]
     open_milestones = [
@@ -323,6 +342,7 @@ def verify_cleanup_state(
         if any(name in _record_text(milestone) for name in ("ecodesk", "flow force"))
     ]
     failures = []
+    failed_operations = [item for item in applied or [] if not item.get("success")]
     active_plan_ids = {str(plan.get("id") or "") for plan in active_plans}
     orphan_milestones = [
         milestone
@@ -334,6 +354,23 @@ def verify_cleanup_state(
         for plan in active_plans
         if _normalize(plan.get("title")) == _normalize(APP_PLAN_TITLE)
     ]
+    relocation_plans = [
+        plan
+        for plan in active_plans
+        if _normalize(plan.get("title")) == _normalize(RELOCATION_PLAN_TITLE)
+    ]
+    missing_relocation_milestones = _missing_canonical_milestones(
+        milestones,
+        relocation_plans[0] if relocation_plans else None,
+        RELOCATION_MILESTONES,
+    )
+    missing_app_milestones = _missing_canonical_milestones(
+        milestones,
+        app_plans[0] if app_plans else None,
+        APP_MILESTONES,
+    )
+    if failed_operations:
+        failures.append("cleanup_operations_failed")
     if stephanie_bad:
         failures.append("active_stephanie_record_still_says_fired")
     if greece_primary:
@@ -342,6 +379,12 @@ def verify_cleanup_state(
         failures.append("active_orphan_milestones_remain")
     if not app_plans:
         failures.append("active_app_plan_missing")
+    if not relocation_plans:
+        failures.append("active_relocation_plan_missing")
+    if missing_relocation_milestones:
+        failures.append("canonical_relocation_milestones_missing")
+    if missing_app_milestones:
+        failures.append("canonical_app_milestones_missing")
     if noisy_melissa:
         failures.append("active_melissa_milestones_remain")
     if noisy_first_million:
@@ -377,6 +420,18 @@ def verify_cleanup_state(
                 commitment.get("id")
                 for group in duplicate_commitments.values()
                 for commitment in group
+            ],
+            "missing_relocation_milestones": missing_relocation_milestones,
+            "missing_app_milestones": missing_app_milestones,
+            "failed_operations": [
+                {
+                    "action": item.get("action"),
+                    "record_type": item.get("record_type"),
+                    "record_id": item.get("record_id"),
+                    "title": item.get("title"),
+                    "error": item.get("error"),
+                }
+                for item in failed_operations
             ],
         },
     }
@@ -530,7 +585,7 @@ def _canonical_milestone_operations(
             "plan_id": plan_id,
             "title": title,
             "description": description,
-            "milestone_type": "achievement",
+            "milestone_type": "checkpoint",
             "priority": 5,
             "status": "open",
             "active": True,
@@ -1003,6 +1058,28 @@ def _semantic_milestone_key(title: str) -> str:
     if tokens & {"revenue", "subscription", "client"}:
         return "first_revenue"
     return text
+
+
+def _missing_canonical_milestones(
+    milestones: list[dict[str, Any]],
+    plan: dict[str, Any] | None,
+    canonical: list[tuple[str, str]],
+) -> list[str]:
+    if not plan:
+        return [title for title, _ in canonical]
+    plan_id = str(plan.get("id") or "")
+    active_titles = {
+        _normalize(str(milestone.get("title") or ""))
+        for milestone in milestones
+        if _active(milestone)
+        and str(milestone.get("status") or "open") in {"open", "in_progress"}
+        and str(milestone.get("plan_id") or "") == plan_id
+    }
+    return [
+        title
+        for title, _ in canonical
+        if _normalize(title) not in active_titles
+    ]
 
 
 def _dedupe_operations(operations: list[CleanupOperation]) -> list[CleanupOperation]:

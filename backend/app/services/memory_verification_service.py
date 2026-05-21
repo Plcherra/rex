@@ -71,19 +71,50 @@ class MemoryVerificationService:
         table: str | None,
         record_id: str | None,
     ) -> dict[str, Any]:
-        passed = bool(table and record_id)
+        if not table or not record_id:
+            return {
+                "passed": False,
+                "checked_tables": [table] if table else [],
+                "remaining_conflicts": [],
+                "applied_record": {
+                    "table": table,
+                    "id": record_id,
+                },
+                "message": "Candidate apply did not return a durable record id.",
+            }
+
+        spec = next((item for item in VERIFICATION_TABLES if item.table == table), None)
+        if spec is None:
+            return {
+                "passed": False,
+                "checked_tables": [table],
+                "remaining_conflicts": [],
+                "applied_record": {
+                    "table": table,
+                    "id": record_id,
+                },
+                "message": "Candidate apply returned an unsupported table for verification.",
+            }
+
+        records = await self._safe_list(spec)
+        found = next(
+            (record for record in records if str(record.get("id") or "") == str(record_id)),
+            None,
+        )
+        passed = found is not None
         return {
             "passed": passed,
-            "checked_tables": [table] if table else [],
+            "checked_tables": [table],
             "remaining_conflicts": [],
             "applied_record": {
                 "table": table,
                 "id": record_id,
+                "title": _record_title(found or {}),
             },
             "message": (
-                "Candidate applied and returned a durable record."
+                "Candidate verified. Durable active record is readable."
                 if passed
-                else "Candidate apply did not return a durable record id."
+                else "Candidate apply returned a record id, but the active record was not readable."
             ),
         }
 

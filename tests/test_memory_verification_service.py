@@ -76,6 +76,48 @@ def _active(rows, active):
 
 
 @pytest.mark.asyncio
+async def test_verify_applied_record_passes_when_active_record_is_readable():
+    repo = FakeVerificationRepository()
+    repo.plans.append(
+        {
+            "id": "plan-1",
+            "title": "Move out of the country next year",
+            "active": True,
+        }
+    )
+
+    result = await MemoryVerificationService(repo).verify_applied_record(
+        table="plans",
+        record_id="plan-1",
+    )
+
+    assert result["passed"] is True
+    assert result["applied_record"]["title"] == "Move out of the country next year"
+
+
+@pytest.mark.asyncio
+async def test_verify_applied_record_fails_when_record_is_not_readable():
+    repo = FakeVerificationRepository()
+    repo.plans.append(
+        {
+            "id": "plan-1",
+            "title": "Archived plan",
+            "active": False,
+        }
+    )
+
+    result = await MemoryVerificationService(repo).verify_applied_record(
+        table="plans",
+        record_id="plan-1",
+    )
+
+    assert result["passed"] is False
+    assert result["message"] == (
+        "Candidate apply returned a record id, but the active record was not readable."
+    )
+
+
+@pytest.mark.asyncio
 async def test_verify_correction_passes_when_no_active_stale_terms_remain():
     repo = FakeVerificationRepository()
     repo.plans.append(

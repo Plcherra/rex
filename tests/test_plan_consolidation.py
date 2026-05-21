@@ -131,6 +131,43 @@ def test_build_plan_clusters_ignores_capitalized_non_name_words():
     assert clusters[0].archive[0]["id"] in {"plan-1", "plan-2"}
 
 
+def test_build_plan_clusters_groups_immigration_variants_under_europe_root():
+    clusters = build_plan_clusters(
+        [
+            _plan(
+                "plan-europe",
+                "Relocate to Europe next year",
+                "personal",
+                description="Leave the USA next year to live in Europe.",
+                priority=5,
+            ),
+            _plan(
+                "plan-estonia",
+                "Estonia e-residency application",
+                "immigration",
+                description="Apply for Estonia e-residency to establish EU business presence.",
+                priority=5,
+            ),
+            _plan(
+                "plan-italy",
+                "European relocation via Italian citizenship",
+                "immigration",
+                description="Pursue Italian citizenship while preparing the physical move to Europe.",
+                priority=5,
+            ),
+        ]
+    )
+
+    income_cluster = next(
+        cluster for cluster in clusters if cluster.name == "life_freedom_income"
+    )
+    assert income_cluster.keep["id"] == "plan-europe"
+    assert {plan["id"] for plan in income_cluster.archive} == {
+        "plan-estonia",
+        "plan-italy",
+    }
+
+
 @pytest.mark.asyncio
 async def test_consolidate_plans_dry_run_does_not_write():
     memory = FakeConsolidationMemoryService()

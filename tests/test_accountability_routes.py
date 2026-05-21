@@ -322,6 +322,39 @@ def test_overview_reports_duplicate_plan_and_rule_warnings(client):
     }
 
 
+def test_overview_reports_semantic_duplicate_plan_warnings(client):
+    memory_service = FakeMemoryService()
+    memory_service.plans = [
+        _plan_row(
+            id="plan-1",
+            title="Relocate to Europe next year",
+            description="Leave the USA next year to live in Europe.",
+        ),
+        _plan_row(
+            id="plan-2",
+            title="Estonia e-residency application",
+            description="Apply for Estonia e-residency to establish EU business presence.",
+        ),
+        _plan_row(
+            id="plan-3",
+            title="European relocation via Italian citizenship",
+            description="Pursue Italian citizenship while preparing the physical Europe move.",
+        ),
+    ]
+    app.dependency_overrides[get_memory_service] = lambda: memory_service
+    app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
+
+    response = client.get("/accountability/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    plan_warnings = [
+        item for item in payload["duplicate_warnings"] if item["record_type"] == "plan"
+    ]
+    assert len(plan_warnings) == 1
+    assert set(plan_warnings[0]["record_ids"]) == {"plan-1", "plan-2", "plan-3"}
+
+
 def test_invalid_filters_return_validation_errors(client):
     app.dependency_overrides[get_memory_service] = lambda: FakeMemoryService()
     app.dependency_overrides[get_accountability_service] = lambda: FakeAccountabilityService()
@@ -413,11 +446,12 @@ def _commitment_row(
     }
 
 
-def _plan_row(id="plan-1", title="Ship Rex") -> dict:
+def _plan_row(id="plan-1", title="Ship Rex", description="") -> dict:
     return {
         "id": id,
         "plan_type": "career",
         "title": title,
+        "description": description,
         "status": "active",
         "active": True,
     }

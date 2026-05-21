@@ -215,7 +215,13 @@ def _select_best_plan(
 
 
 def _is_income_or_relocation_plan(plan: dict[str, Any]) -> bool:
-    if plan.get("plan_type") not in {"finance", "career", "personal"}:
+    if plan.get("plan_type") not in {
+        "career",
+        "finance",
+        "housing",
+        "immigration",
+        "personal",
+    }:
         return False
     text = _plan_text(plan)
     if any(
@@ -223,7 +229,25 @@ def _is_income_or_relocation_plan(plan: dict[str, Any]) -> bool:
         for term in ("income", "5k", "5000", "3k", "3000", "saving", "savings")
     ):
         return True
-    return any(term in text for term in ("relocate", "europe", "location independent"))
+    return any(
+        term in text
+        for term in (
+            "abroad",
+            "citizenship",
+            "digital nomad",
+            "estonia",
+            "europe",
+            "immigration",
+            "italian",
+            "italy",
+            "location independent",
+            "relocate",
+            "relocating",
+            "relocation",
+            "residency",
+            "visa",
+        )
+    )
 
 
 def _is_app_development_plan(plan: dict[str, Any]) -> bool:

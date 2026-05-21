@@ -10,9 +10,10 @@ from app.models.memory_discipline import MemoryDisciplineAction
 
 
 PLAN_INTELLIGENCE_VERSION = 1
-PARENT_PLAN_THRESHOLD = 0.34
+PARENT_PLAN_THRESHOLD = 0.28
 RELATED_MILESTONE_THRESHOLD = 0.78
 TOP_LEVEL_MINIMUM_SPECIFICITY = 0.42
+MAX_AUTO_TOP_LEVEL_PLANS = 5
 
 
 class PlanIntelligenceDecision(BaseModel):
@@ -176,6 +177,8 @@ class PlanIntelligenceService:
             return False
         if not active_plans and _has_standalone_anchor(candidate):
             return _specificity_score(candidate, small_step_penalty=False) >= 0.38
+        if len(active_plans) >= MAX_AUTO_TOP_LEVEL_PLANS:
+            return False
         if _is_small_step(candidate):
             return False
         return _specificity_score(candidate) >= TOP_LEVEL_MINIMUM_SPECIFICITY
@@ -263,6 +266,11 @@ def _parent_plan_score(candidate: dict[str, Any], plan: dict[str, Any]) -> float
     plan_type = str(plan.get("plan_type") or "").lower()
     if candidate_type and candidate_type == plan_type:
         score += 0.08
+    elif candidate_type and plan_type and not _compatible_plan_types(
+        candidate_type,
+        plan_type,
+    ):
+        score -= 0.18
     if candidate.get("primary_entity_id") and candidate.get("primary_entity_id") == plan.get(
         "primary_entity_id"
     ):
@@ -271,16 +279,98 @@ def _parent_plan_score(candidate: dict[str, Any], plan: dict[str, Any]) -> float
     return min(score, 1.0)
 
 
+def _compatible_plan_types(candidate_type: str, plan_type: str) -> bool:
+    compatible_groups = [
+        {"career", "creative", "finance", "other"},
+        {"finance", "immigration", "personal"},
+        {"immigration", "housing", "personal"},
+    ]
+    return any({candidate_type, plan_type} <= group for group in compatible_groups)
+
+
 def _domain_bridge_score(candidate_text: str, plan_text: str) -> float:
     candidate_tokens = _tokens(candidate_text)
     plan_tokens = _tokens(plan_text)
     boost = 0.0
-    if candidate_tokens & {"income", "revenue", "savings", "client", "clients", "freelance", "paycheck"}:
-        if plan_tokens & {"europe", "relocate", "freedom", "income", "location", "independent"}:
+    if candidate_tokens & {
+        "income",
+        "revenue",
+        "savings",
+        "client",
+        "clients",
+        "freelance",
+        "paycheck",
+    }:
+        if plan_tokens & {
+            "europe",
+            "relocate",
+            "relocation",
+            "move",
+            "freedom",
+            "income",
+            "location",
+            "independent",
+        }:
             boost += 0.25
-    if candidate_tokens & {"app", "apps", "ship", "launch", "mvp", "rex", "echodesk", "flowforce", "clarity"}:
-        if plan_tokens & {"app", "apps", "development", "roadmap", "ship", "launch", "rex", "project"}:
-            boost += 0.25
+    if candidate_tokens & {
+        "abroad",
+        "citizenship",
+        "digital",
+        "estonia",
+        "europe",
+        "greece",
+        "immigration",
+        "italian",
+        "italy",
+        "nomad",
+        "portugal",
+        "relocate",
+        "relocation",
+        "residency",
+        "usa",
+        "visa",
+    }:
+        if plan_tokens & {
+            "abroad",
+            "citizenship",
+            "europe",
+            "greece",
+            "immigration",
+            "italy",
+            "move",
+            "relocate",
+            "relocation",
+            "usa",
+        }:
+            boost += 0.42
+    if candidate_tokens & {
+        "app",
+        "apps",
+        "build",
+        "clarity",
+        "development",
+        "echodesk",
+        "flowforce",
+        "launch",
+        "mvp",
+        "rex",
+        "ship",
+    }:
+        if plan_tokens & {
+            "app",
+            "apps",
+            "build",
+            "development",
+            "echodesk",
+            "flowforce",
+            "launch",
+            "mvp",
+            "project",
+            "rex",
+            "roadmap",
+            "ship",
+        }:
+            boost += 0.34
     if candidate_tokens & {"date", "dinner", "restaurant", "monday", "text", "melissa"}:
         if plan_tokens & {"date", "dating", "dinner", "relationship", "melissa"}:
             boost += 0.25

@@ -417,6 +417,9 @@ def _duplicate_warning_group(
 def _duplicate_key(record: dict, fields: tuple[str, ...]) -> str:
     parts = [str(record.get(field) or "") for field in fields]
     text = " ".join(parts).casefold()
+    semantic_key = _semantic_duplicate_key(text)
+    if semantic_key:
+        return semantic_key
     tokens = [
         token
         for token in re.findall(r"[a-z0-9$]+", text)
@@ -435,3 +438,47 @@ def _duplicate_key(record: dict, fields: tuple[str, ...]) -> str:
         }
     ]
     return " ".join(tokens[:8])
+
+
+def _semantic_duplicate_key(text: str) -> str:
+    tokens = set(re.findall(r"[a-z0-9$]+", text.casefold()))
+    if tokens & {
+        "abroad",
+        "citizenship",
+        "digital",
+        "estonia",
+        "europe",
+        "greece",
+        "immigration",
+        "italian",
+        "italy",
+        "nomad",
+        "portugal",
+        "relocate",
+        "relocating",
+        "relocation",
+        "residency",
+        "usa",
+        "visa",
+    }:
+        return "semantic:life_freedom_relocation"
+    if tokens & {
+        "app",
+        "apps",
+        "clarity",
+        "development",
+        "echodesk",
+        "flowforce",
+        "launch",
+        "mvp",
+        "rex",
+        "ship",
+    }:
+        return "semantic:app_development_roadmap"
+    if tokens & {"date", "dating", "dinner", "melissa", "restaurant"}:
+        return "semantic:dating_melissa"
+    if tokens & {"doordash", "uber", "delivery"}:
+        return "semantic:avoid_delivery_transport"
+    if tokens & {"paycheck", "saving", "savings", "transfer"}:
+        return "semantic:paycheck_savings"
+    return ""

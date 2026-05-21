@@ -52,7 +52,7 @@ Use these values in the tables below:
 | App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | pending | Current controller has resume recovery. |
 | App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | fail -> fixed in code | 2026-05-21: iPhone captured the background speech but returned stuck on `Thinking` for 2-5 minutes. Added a thinking watchdog that resets the stale voice stream and returns to listening. Retest on release build. |
 | App switch during TTS playback | Audio either continues or fails clearly; returning to app is recoverable. | pending | Playback is still Flutter-owned. |
-| Screen lock while listening | Rex continues hearing a second utterance while locked. | fail | Known limitation with Flutter-owned capture. Native iOS session required. |
+| Screen lock while listening | Rex continues hearing a second utterance while locked. | fail -> partial fix in code | 2026-05-21: iPhone can buffer/capture locked-screen speech, but silence endpointing can pause until unlock. Resume now submits a buffered transcript immediately instead of restarting the stream. Retest required. Native iOS session still required for true locked-screen behavior. |
 | Screen off after Rex speaks | Rex hears the next user utterance without reopening the app. | fail | Known limitation until native iOS capture/WebSocket exists. |
 | Long response TTS playback | Long assistant answer plays without cutting off or corrupting state. | pending | Include at least 60 seconds of TTS. |
 | AirPods or Bluetooth connected before call | Mic route and speaker route are correct. | pending | Note exact headset model. |
@@ -136,3 +136,28 @@ Retest required:
 - Repeat the same iPhone background/app-switch scenario on a release build.
 - Confirm Rex no longer stays stuck indefinitely.
 - Confirm it either responds normally or resets to `Listening` with the visible recovery message.
+
+### 2026-05-21 - iPhone locked-screen utterance waits until unlock
+
+Result: `fail -> partial fix in code`
+
+Observed behavior:
+
+- Rex continued capturing the user's words while the screen was locked.
+- The transcript appeared after unlocking.
+- Rex stayed in `Listening` while locked instead of moving into `Thinking`.
+- After unlock, Rex could still fall into the stuck-thinking recovery path.
+
+Likely cause:
+
+- Audio/transcript data can be buffered while locked, but Dart-side silence detection and lifecycle work can be delayed until iOS resumes the app.
+- The previous resume handler treated a `listening` state as a reason to cancel/restart the stream, even if a transcript had already been captured.
+
+Fix:
+
+- On app resume, if streaming voice is active, Rex is still `Listening`, and there is a buffered transcript, the controller now cancels capture and sends `utterance.end` to the active stream.
+- This makes Rex submit the locked-screen utterance immediately after unlock instead of waiting for a silence timer that was paused.
+
+Remaining limitation:
+
+- This is still a foreground-resume recovery. It does not make Rex process the utterance while the screen remains locked. Native iOS voice ownership is still required for that.

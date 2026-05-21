@@ -481,6 +481,10 @@ class VoiceCallController extends Notifier<VoiceCallState>
         return;
       }
 
+      if (_finishPendingStreamingUtteranceOnResume()) {
+        return;
+      }
+
       final generation = ++_callGeneration;
       await _captureService.cancel();
       await _streamingCaptureService.cancel();
@@ -500,6 +504,21 @@ class VoiceCallController extends Notifier<VoiceCallState>
     } finally {
       _isHandlingLifecycleResume = false;
     }
+  }
+
+  bool _finishPendingStreamingUtteranceOnResume() {
+    if (!ref.read(streamingVoiceEnabledProvider)) {
+      return false;
+    }
+    final streamingSession = _activeStreamingSession;
+    if (streamingSession == null || state.currentTranscript.trim().isEmpty) {
+      return false;
+    }
+
+    unawaited(_streamingCaptureService.cancel());
+    endpointUtterance();
+    streamingSession.endUtterance();
+    return true;
   }
 
   Future<void> _streamNextUtterance(int generation) async {

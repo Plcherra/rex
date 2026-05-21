@@ -34,6 +34,8 @@ The active call controller now restarts the listening stream on app resume so ap
 
 Real iPhone testing also found a separate state-machine bug: if Rex entered `thinking` while the app was backgrounded, it could capture the user's background speech but never receive or process the assistant response events, leaving the UI stuck on `Thinking` for several minutes after reopening. The controller now has a thinking watchdog that interrupts the stale stream and returns to `Listening` with a recoverable error message. This prevents indefinite hangs, but it still does not replace native locked-screen voice ownership.
 
+Follow-up iPhone testing showed a related locked-screen behavior: Rex can buffer the user's words while the screen is locked, but Dart-side silence detection may not transition to `thinking` until the phone is unlocked. On resume, Rex now submits any buffered transcript by ending the active streaming utterance instead of canceling and restarting the stream. This improves unlock recovery, but true processing while still locked remains native work.
+
 The physical-device validation checklist is tracked in `docs/testing/background_voice_checklist.md`.
 
 ## iOS Constraints

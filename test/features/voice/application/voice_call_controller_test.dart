@@ -655,6 +655,50 @@ void main() {
   );
 
   test(
+    'VoiceCallController submits buffered locked-screen transcript on resume',
+    () async {
+      final streamingCaptureService = FakePendingStreamingAudioCaptureService();
+      final streamingSession = FakeStreamingVoiceSession(autoRespond: false);
+      final streamingApi = FakeStreamingVoiceApi(session: streamingSession);
+      final container = voiceCallTestContainer(
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+        overrides: [
+          voiceCallThinkingTimeoutProvider.overrideWithValue(
+            const Duration(hours: 1),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+
+      streamingSession.emitTranscriptPartial('Locked-screen speech');
+      await pumpEventQueue();
+      expect(
+        container.read(voiceCallProvider).currentTranscript,
+        'Locked-screen speech',
+      );
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.paused);
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(container.read(voiceCallProvider).phase, VoiceCallPhase.thinking);
+      expect(streamingSession.utteranceEndCount, 1);
+      expect(streamingSession.interruptCount, 0);
+      expect(streamingCaptureService.cancelCount, greaterThanOrEqualTo(1));
+      expect(streamingCaptureService.captureCount, 1);
+    },
+  );
+
+  test(
     'VoiceCallController recovers when streaming response stays stuck thinking',
     () async {
       final streamingCaptureService =
@@ -1232,6 +1276,15 @@ class FakeStreamingVoiceSession extends StreamingVoiceSession {
     _controller.add(
       const VoiceStreamEvent('assistant.started', {
         'event': 'assistant.started',
+      }),
+    );
+  }
+
+  void emitTranscriptPartial(String transcript) {
+    _controller.add(
+      VoiceStreamEvent('transcript.partial', {
+        'event': 'transcript.partial',
+        'transcript': transcript,
       }),
     );
   }

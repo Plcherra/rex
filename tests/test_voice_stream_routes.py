@@ -309,6 +309,48 @@ async def test_voice_stream_live_transcript_idle_starts_turn(monkeypatch):
     assert any(event["event"] == "assistant.done" for event in websocket.events)
 
 
+@pytest.mark.asyncio
+async def test_voice_stream_native_ios_waits_for_explicit_utterance_end(monkeypatch):
+    async def instant_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(voice_stream_session_module.asyncio, "sleep", instant_sleep)
+    websocket = FakeWebSocket()
+    chat = FakeChatService()
+    session = VoiceStreamSession(
+        websocket=websocket,
+        deepgram_streaming_service=FakeLiveDeepgramStreamingService(),
+        chat_service=chat,
+        google_tts_service=FakeGoogleTTSService(),
+    )
+    session.client = "ios_native"
+    session.conversation_id = "conversation-existing"
+    session._live_transcription = FakeLiveTranscription()
+
+    await session._handle_live_transcript_event(
+        {
+            "event": "transcript.final",
+            "transcript": "what if we change the whole app actually",
+            "confidence": 0.9,
+            "speech_final": True,
+            "metadata": {"vendor": "deepgram"},
+        }
+    )
+    assert session._active_turn_task is None
+
+    session._last_live_transcript_at = 10.0
+    await session._process_live_utterance_after_transcript_idle(10.0)
+    assert session._active_turn_task is None
+    assert chat.stream_calls == []
+
+    await session._receive_text_event('{"event":"utterance.end"}')
+    assert session._active_turn_task is not None
+    await session._active_turn_task
+
+    assert chat.stream_calls[0]["message"] == "Hey Rex"
+    assert any(event["event"] == "assistant.done" for event in websocket.events)
+
+
 def test_voice_stream_creates_conversation_when_missing_id(client):
     chat = FakeChatService()
     override_services(chat_service=chat)

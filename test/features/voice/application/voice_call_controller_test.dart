@@ -919,6 +919,28 @@ void main() {
     expect(container.read(voiceCallProvider).phase, VoiceCallPhase.idle);
   });
 
+  test('VoiceCallController keeps native call listening on transcript final', () async {
+    final nativeSession = FakeNativeVoiceSessionService();
+    final container = voiceCallTestContainer(
+      nativeVoiceSessionService: nativeSession,
+      nativeIosVoiceEnabled: true,
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(voiceCallProvider.notifier);
+    expect(await controller.startCall(), true);
+    await pumpEventQueue();
+
+    nativeSession
+      ..emit('speech.started')
+      ..emit('transcript.final', transcript: 'what if we change the app');
+    await pumpEventQueue();
+
+    final state = container.read(voiceCallProvider);
+    expect(state.phase, VoiceCallPhase.listening);
+    expect(state.currentTranscript, 'what if we change the app');
+  });
+
   test(
     'VoiceEndpointDetector detects speech, silence, and no-speech timeout',
     () {

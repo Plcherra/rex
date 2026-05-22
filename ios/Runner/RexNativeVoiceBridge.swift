@@ -242,7 +242,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
 
   private func handleTransportEvent(_ payload: [String: Any]) {
     let event = payload["event"] as? String
-    if event == "assistant.started" || event == "transcript.final" {
+    if event == "assistant.started" {
       audioCapture.stop()
     }
     if event == "assistant.audio_chunk" {

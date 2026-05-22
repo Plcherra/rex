@@ -609,7 +609,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
       case 'transcript.partial':
         updateTranscript(event.transcript ?? state.currentTranscript);
       case 'transcript.final':
-        startThinking(finalTranscript: event.transcript);
+        updateTranscript(event.transcript ?? state.currentTranscript);
       case 'conversation.updated':
         state = state.copyWith(
           conversationId: event.conversationId,

@@ -29,6 +29,7 @@ class VoiceStreamSession:
         self.conversation_id: Optional[str] = None
         self.input_mime_type = "audio/linear16"
         self.sample_rate = 16000
+        self.client = ""
         self._session_id = f"voice-{time.time_ns()}"
         self._audio_chunks: list[bytes] = []
         self._audio_started_at: Optional[float] = None
@@ -96,6 +97,7 @@ class VoiceStreamSession:
         if event == "session.start":
             self.conversation_id = payload.get("conversation_id") or self.conversation_id
             self.input_mime_type = payload.get("input_mime_type") or self.input_mime_type
+            self.client = str(payload.get("client") or self.client or "")
             sample_rate = payload.get("sample_rate")
             if isinstance(sample_rate, int) and sample_rate > 0:
                 self.sample_rate = sample_rate
@@ -433,11 +435,12 @@ class VoiceStreamSession:
     async def _handle_live_transcript_event(self, event: dict[str, Any]) -> None:
         await self._send_transcript_event(event)
         transcript = str(event.get("transcript") or "").strip()
-        if transcript:
+        if transcript and not self._requires_explicit_utterance_end():
             self._schedule_live_endpoint_check()
         if (
             event.get("event") == "transcript.final"
             and event.get("speech_final")
+            and not self._requires_explicit_utterance_end()
             and (
                 self._active_turn_task is None
                 or self._active_turn_task.done()
@@ -469,6 +472,8 @@ class VoiceStreamSession:
         self,
         transcript_timestamp: float,
     ) -> None:
+        if self._requires_explicit_utterance_end():
+            return
         settings = getattr(self.deepgram_streaming_service, "settings", None)
         endpointing_ms = getattr(settings, "deepgram_endpointing_ms", 3000)
         endpointing_seconds = endpointing_ms / 1000
@@ -480,6 +485,9 @@ class VoiceStreamSession:
         if self._active_turn_task is not None and not self._active_turn_task.done():
             return
         self._active_turn_task = asyncio.create_task(self._process_live_utterance())
+
+    def _requires_explicit_utterance_end(self) -> bool:
+        return self.client == "ios_native"
 
     async def _cancel_live_endpoint_check(self) -> None:
         task = self._live_endpoint_task

@@ -310,9 +310,27 @@ Fix:
 - Native speech/silence thresholds are more tolerant of quieter words.
 - Native no-speech timeout now emits a non-fatal idle status event and keeps listening instead of sending `utterance.end`.
 
+Follow-up adjustment:
+
+- Native max utterance duration is now 180 seconds, counted from speech start.
+- Native silence-after-speech tolerance is now 10 seconds.
+- Native speech/silence thresholds were loosened again to avoid endpointing during breaths or softer second phrases.
+
 Retest required:
 
 - Start a release call with native iOS voice enabled.
 - Wait at least 45 seconds before speaking; Rex should still listen.
-- Speak a long message with 3-4 second pauses; Rex should not cut the turn early.
-- Speak for close to 90 seconds; Rex should still eventually endpoint instead of recording forever.
+- Speak a long message with 6-8 second pauses; Rex should not cut the turn early.
+- Speak for close to 180 seconds; Rex should still eventually endpoint instead of recording forever.
+
+Follow-up root cause:
+
+- Real-device testing still showed mid-phrase cutoffs after native thresholds were loosened.
+- Backend live Deepgram events could still auto-start a turn on `speech_final` or transcript idle.
+- The iOS bridge also stopped capture on any `transcript.final` event.
+
+Additional fix:
+
+- Native iOS sessions now require explicit `utterance.end` from the phone before the backend starts Rex's response.
+- Backend live transcript idle and Deepgram `speech_final` auto-processing are disabled for `client: ios_native`.
+- Native `transcript.final` updates visible transcript only; it no longer stops microphone capture or moves the call to `Thinking`.

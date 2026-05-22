@@ -20,13 +20,14 @@ final class RexNativeAudioCapture {
   private var hasSpeech = false
   private var speechStartedEmitted = false
   private var speechEndedEmitted = false
+  private var noSpeechTimeoutEmitted = false
 
-  private let speechStartThresholdDb = -46.0
-  private let silenceThresholdDb = -52.0
-  private let minimumSpeechDuration: TimeInterval = 0.50
-  private let silenceAfterSpeech: TimeInterval = 3.00
-  private let noSpeechTimeout: TimeInterval = 8.00
-  private let maxUtteranceDuration: TimeInterval = 20.00
+  private let speechStartThresholdDb = -48.0
+  private let silenceThresholdDb = -58.0
+  private let minimumSpeechDuration: TimeInterval = 0.35
+  private let silenceAfterSpeech: TimeInterval = 5.00
+  private let noSpeechStatusInterval: TimeInterval = 30.00
+  private let maxUtteranceDuration: TimeInterval = 90.00
 
   func start() throws {
     stop()
@@ -123,12 +124,19 @@ final class RexNativeAudioCapture {
     }
 
     let elapsed = now.timeIntervalSince(captureStartedAt)
-    if !hasSpeech, elapsed >= noSpeechTimeout {
-      emitSpeechEnded(reason: "no_speech_timeout")
-      return
+    if !hasSpeech, elapsed >= noSpeechStatusInterval, !noSpeechTimeoutEmitted {
+      noSpeechTimeoutEmitted = true
+      emit([
+        "event": "capture.idle_timeout",
+        "native": true,
+        "detail": "Native microphone is still listening, but no speech has been detected yet."
+      ])
     }
 
-    if elapsed >= maxUtteranceDuration, !speechEndedEmitted {
+    if hasSpeech,
+       let speechStartedAt,
+       now.timeIntervalSince(speechStartedAt) >= maxUtteranceDuration,
+       !speechEndedEmitted {
       emitSpeechEnded(reason: "max_duration")
       return
     }
@@ -137,6 +145,7 @@ final class RexNativeAudioCapture {
       if speechStartedAt == nil {
         speechStartedAt = now
       }
+      noSpeechTimeoutEmitted = false
       lastSpeechAt = now
       if let speechStartedAt,
          now.timeIntervalSince(speechStartedAt) >= minimumSpeechDuration,
@@ -186,6 +195,7 @@ final class RexNativeAudioCapture {
     hasSpeech = false
     speechStartedEmitted = false
     speechEndedEmitted = false
+    noSpeechTimeoutEmitted = false
   }
 
   private func pcm16Decibels(_ data: Data) -> Double {

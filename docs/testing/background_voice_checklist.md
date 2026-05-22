@@ -287,3 +287,32 @@ Retest required:
 - Speak a follow-up while Rex is still minimized.
 - Reopen Rex and confirm it is not in the fatal `Issue` screen.
 - VPS logs should show a clean close/open cycle between turns, with no backend traceback.
+
+### 2026-05-22 - Native iOS endpointing cut pauses and long context
+
+Result: `fail -> fixed in code`
+
+Observed behavior:
+
+- If the user waited around 30 seconds before speaking, Rex could stop the native listening turn.
+- Native iOS also ended the user turn too quickly during natural pauses, cutting off longer context.
+
+Likely cause:
+
+- Native endpointing was stricter than the older Flutter streaming path.
+- The native max utterance window was only 20 seconds and started when listening began, not when speech began.
+- The native no-speech timeout emitted `utterance.end`, creating an empty turn instead of continuing to listen.
+
+Fix:
+
+- Native max utterance duration is now 90 seconds, counted from speech start.
+- Native silence-after-speech tolerance is now 5 seconds.
+- Native speech/silence thresholds are more tolerant of quieter words.
+- Native no-speech timeout now emits a non-fatal idle status event and keeps listening instead of sending `utterance.end`.
+
+Retest required:
+
+- Start a release call with native iOS voice enabled.
+- Wait at least 45 seconds before speaking; Rex should still listen.
+- Speak a long message with 3-4 second pauses; Rex should not cut the turn early.
+- Speak for close to 90 seconds; Rex should still eventually endpoint instead of recording forever.

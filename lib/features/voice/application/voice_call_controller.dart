@@ -580,6 +580,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
     switch (event.name) {
       case 'session.started':
       case 'capture.started':
+      case 'capture.idle_timeout':
       case 'audio.chunk':
       case 'audio.captured':
       case 'playback.queued':

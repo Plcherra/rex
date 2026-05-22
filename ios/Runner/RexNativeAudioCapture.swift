@@ -23,9 +23,9 @@ final class RexNativeAudioCapture {
   private var noSpeechTimeoutEmitted = false
 
   private let speechStartThresholdDb = -52.0
-  private let silenceThresholdDb = -68.0
+  private let silenceThresholdDb = -60.0
   private let minimumSpeechDuration: TimeInterval = 0.20
-  private let silenceAfterSpeech: TimeInterval = 10.00
+  private let silenceAfterSpeech: TimeInterval = 5.50
   private let noSpeechStatusInterval: TimeInterval = 30.00
   private let maxUtteranceDuration: TimeInterval = 180.00
 

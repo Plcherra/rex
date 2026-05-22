@@ -334,3 +334,8 @@ Additional fix:
 - Native iOS sessions now require explicit `utterance.end` from the phone before the backend starts Rex's response.
 - Backend live transcript idle and Deepgram `speech_final` auto-processing are disabled for `client: ios_native`.
 - Native `transcript.final` updates visible transcript only; it no longer stops microphone capture or moves the call to `Thinking`.
+
+Follow-up tuning:
+
+- Native transcript final chunks are appended into one normalized visible utterance instead of replacing the previous line.
+- Native endpointing uses a 5.5 second silence window with a stricter -60 dB silence threshold so quiet room noise does not keep Rex stuck in Listening forever.

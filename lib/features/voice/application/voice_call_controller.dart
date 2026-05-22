@@ -609,7 +609,10 @@ class VoiceCallController extends Notifier<VoiceCallState>
       case 'transcript.partial':
         updateTranscript(event.transcript ?? state.currentTranscript);
       case 'transcript.final':
-        updateTranscript(event.transcript ?? state.currentTranscript);
+        updateTranscript(
+          event.transcript ?? state.currentTranscript,
+          isFinal: true,
+        );
       case 'conversation.updated':
         state = state.copyWith(
           conversationId: event.conversationId,
@@ -1222,12 +1225,12 @@ class VoiceCallController extends Notifier<VoiceCallState>
   }
 
   void _appendFinalTranscript(String? transcript) {
-    final next = transcript?.trim() ?? '';
+    final next = _normalizeTranscript(transcript);
     if (next.isEmpty) {
       return;
     }
 
-    final previousPartial = _partialTranscriptBuffer.trim();
+    final previousPartial = _normalizeTranscript(_partialTranscriptBuffer);
     _partialTranscriptBuffer = '';
     if (previousPartial.isNotEmpty && !next.contains(previousPartial)) {
       _appendTranscriptSegment(previousPartial);
@@ -1236,6 +1239,10 @@ class VoiceCallController extends Notifier<VoiceCallState>
   }
 
   void _appendTranscriptSegment(String next) {
+    next = _normalizeTranscript(next);
+    if (next.isEmpty) {
+      return;
+    }
     if (_finalTranscriptBuffer.isEmpty) {
       _finalTranscriptBuffer = next;
       return;
@@ -1252,8 +1259,8 @@ class VoiceCallController extends Notifier<VoiceCallState>
   }
 
   String _visibleTranscript() {
-    final finalText = _finalTranscriptBuffer.trim();
-    final partialText = _partialTranscriptBuffer.trim();
+    final finalText = _normalizeTranscript(_finalTranscriptBuffer);
+    final partialText = _normalizeTranscript(_partialTranscriptBuffer);
     if (finalText.isEmpty) {
       return partialText;
     }
@@ -1266,6 +1273,10 @@ class VoiceCallController extends Notifier<VoiceCallState>
       return partialText;
     }
     return '$finalText $partialText';
+  }
+
+  String _normalizeTranscript(String? transcript) {
+    return (transcript ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   String _permissionMessage(MicrophonePermissionDecision decision) {

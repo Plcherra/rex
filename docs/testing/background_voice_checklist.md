@@ -257,3 +257,33 @@ Fix:
 Remaining limitation:
 
 - This is still a foreground-resume recovery. It does not make Rex process the utterance while the screen remains locked. Native iOS voice ownership is still required for that.
+
+### 2026-05-21 - Native iOS turn completed, then stream closed
+
+Result: `fail -> fixed in code`
+
+Observed behavior:
+
+- Native iOS voice captured and completed one background turn.
+- The VPS logs showed `/voice/stream` opening and then closing without a backend crash.
+- Rex returned to the app in an `Issue` state with `Native voice stream closed unexpectedly.`
+
+Likely cause:
+
+- The backend can close the WebSocket at the end of a completed assistant turn.
+- The native iOS transport treated that normal turn-boundary close as a fatal error.
+- The bridge restarted microphone capture for the next turn without guaranteeing a fresh WebSocket was ready.
+
+Fix:
+
+- The native WebSocket now marks closes after `assistant.done` or `session.ended` as `transport.closed` with `reason: turn_complete`, not as an error.
+- The native bridge stores the current voice config and reconnects the transport before restarting capture or sending the next audio chunk.
+- Stale WebSocket callbacks are ignored when a new task has already replaced the old one.
+
+Retest required:
+
+- Start a release call with native iOS voice enabled.
+- Speak in Rex, minimize the app while Rex answers, and wait until the answer finishes.
+- Speak a follow-up while Rex is still minimized.
+- Reopen Rex and confirm it is not in the fatal `Issue` screen.
+- VPS logs should show a clean close/open cycle between turns, with no backend traceback.

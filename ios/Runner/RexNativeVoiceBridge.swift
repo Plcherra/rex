@@ -16,6 +16,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
   private var isMuted = false
   private var isForeground = true
   private var assistantDonePendingRestart = false
+  private var currentConfig: RexNativeVoiceWebSocketConfig?
 
   init(messenger: FlutterBinaryMessenger) {
     audioSession = RexNativeAudioSession()
@@ -38,12 +39,25 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       self?.handleCaptureEvent(payload)
     }
     audioCapture.onAudioChunk = { [weak self] data in
-      self?.voiceWebSocket.sendAudioChunk(data)
-      self?.emit([
-        "event": "audio.chunk",
-        "native": true,
-        "byte_count": data.count
-      ])
+      guard let self else {
+        return
+      }
+      do {
+        try self.ensureTransportConnected()
+        self.voiceWebSocket.sendAudioChunk(data)
+        self.emit([
+          "event": "audio.chunk",
+          "native": true,
+          "byte_count": data.count
+        ])
+      } catch {
+        self.emit([
+          "event": "error",
+          "native": true,
+          "detail": "Could not reopen native voice stream for microphone audio.",
+          "native_error": error.localizedDescription
+        ])
+      }
     }
     audioPlayback.onEvent = { [weak self] payload in
       self?.emit(payload)
@@ -124,6 +138,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       sampleRate: payload["sampleRate"] as? Int ?? 16000,
       inputMimeType: payload["inputMimeType"] as? String ?? "audio/linear16"
     )
+    currentConfig = config
     assistantDonePendingRestart = false
     try audioSession.activate()
     do {
@@ -132,6 +147,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     } catch {
       voiceWebSocket.stop(sendSessionEnd: false)
       audioSession.deactivate()
+      currentConfig = nil
       throw error
     }
     isSessionActive = true
@@ -145,6 +161,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       audioCapture.stop()
       voiceWebSocket.stop()
       audioSession.deactivate()
+      currentConfig = nil
       emit(["event": "session.ended", "native": true])
       return
     }
@@ -154,6 +171,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     audioCapture.stop()
     voiceWebSocket.stop()
     audioSession.deactivate()
+    currentConfig = nil
     emit(["event": "session.ended", "native": true])
   }
 
@@ -207,7 +225,17 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     let event = payload["event"] as? String
     if event == "utterance.end" {
       audioCapture.stop()
-      voiceWebSocket.endUtterance()
+      do {
+        try ensureTransportConnected()
+        voiceWebSocket.endUtterance()
+      } catch {
+        emit([
+          "event": "error",
+          "native": true,
+          "detail": "Could not send native voice turn to Rex.",
+          "native_error": error.localizedDescription
+        ])
+      }
     }
     emit(payload)
   }
@@ -223,6 +251,11 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     if event == "assistant.done" {
       assistantDonePendingRestart = true
       restartCaptureAfterPlaybackIfReady()
+    }
+    if event == "transport.closed",
+       payload["reason"] as? String == "turn_complete",
+       isSessionActive {
+      reconnectTransportForNextTurn()
     }
     if event == "error" {
       assistantDonePendingRestart = false
@@ -259,6 +292,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     }
     assistantDonePendingRestart = false
     do {
+      try ensureTransportConnected()
       try audioCapture.start()
       emit(["event": "listening", "native": true])
     } catch {
@@ -276,6 +310,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       return
     }
     do {
+      try ensureTransportConnected()
       try audioCapture.start()
       emit(["event": "listening", "native": true])
     } catch {
@@ -283,6 +318,32 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
         "event": "error",
         "native": true,
         "detail": "Could not restart native microphone capture after interruption.",
+        "native_error": error.localizedDescription
+      ])
+    }
+  }
+
+  private func ensureTransportConnected() throws {
+    guard !voiceWebSocket.isConnected else {
+      return
+    }
+    guard let currentConfig else {
+      return
+    }
+    try voiceWebSocket.start(config: currentConfig)
+  }
+
+  private func reconnectTransportForNextTurn() {
+    guard isSessionActive else {
+      return
+    }
+    do {
+      try ensureTransportConnected()
+    } catch {
+      emit([
+        "event": "error",
+        "native": true,
+        "detail": "Could not prepare native voice stream for the next turn.",
         "native_error": error.localizedDescription
       ])
     }

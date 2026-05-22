@@ -16,32 +16,38 @@ final class RexNativeVoiceWebSocket {
   typealias EventEmitter = ([String: Any]) -> Void
 
   var onEvent: EventEmitter?
+  var isConnected: Bool {
+    if DispatchQueue.getSpecific(key: Self.queueKey) == true {
+      return isActive && task != nil
+    }
+    return queue.sync {
+      isActive && task != nil
+    }
+  }
 
+  private static let queueKey = DispatchSpecificKey<Bool>()
   private let queue = DispatchQueue(label: "rex.native.voice.websocket")
   private let urlSession = URLSession(configuration: .default)
   private var task: URLSessionWebSocketTask?
   private var isActive = false
+  private var assistantTurnCompleted = false
+  private var normalCloseExpected = false
   private var connectTimeout: DispatchWorkItem?
   private var assistantTimeout: DispatchWorkItem?
 
+  init() {
+    queue.setSpecific(key: Self.queueKey, value: true)
+  }
+
   func start(config: RexNativeVoiceWebSocketConfig) throws {
     let streamURL = try makeStreamURL(from: config.backendBaseURL)
-    let task = urlSession.webSocketTask(with: streamURL)
-    queue.sync {
-      stopOnQueue(sendSessionEnd: false, emitClosed: false)
-      self.task = task
-      isActive = true
-
-      emit([
-        "event": "transport.connecting",
-        "native": true,
-        "url": streamURL.absoluteString
-      ])
-
-      task.resume()
-      armConnectTimeout()
-      receiveNext()
-      sendSessionStart(config)
+    let webSocketTask = urlSession.webSocketTask(with: streamURL)
+    if DispatchQueue.getSpecific(key: Self.queueKey) == true {
+      startOnQueue(task: webSocketTask, streamURL: streamURL, config: config)
+    } else {
+      queue.sync {
+        startOnQueue(task: webSocketTask, streamURL: streamURL, config: config)
+      }
     }
   }
 
@@ -88,16 +94,41 @@ final class RexNativeVoiceWebSocket {
   private func stopOnQueue(sendSessionEnd: Bool, emitClosed: Bool) {
     cancelConnectTimeout()
     cancelAssistantTimeout()
+    normalCloseExpected = true
     if sendSessionEnd, isActive {
       sendJSONOnQueue(["event": "session.end"])
     }
     let hadTask = task != nil || isActive
     isActive = false
+    assistantTurnCompleted = false
     task?.cancel(with: .normalClosure, reason: nil)
     task = nil
     if emitClosed, hadTask {
       emit(["event": "transport.closed", "native": true])
     }
+  }
+
+  private func startOnQueue(
+    task webSocketTask: URLSessionWebSocketTask,
+    streamURL: URL,
+    config: RexNativeVoiceWebSocketConfig
+  ) {
+    stopOnQueue(sendSessionEnd: false, emitClosed: false)
+    task = webSocketTask
+    isActive = true
+    assistantTurnCompleted = false
+    normalCloseExpected = false
+
+    emit([
+      "event": "transport.connecting",
+      "native": true,
+      "url": streamURL.absoluteString
+    ])
+
+    webSocketTask.resume()
+    armConnectTimeout()
+    receiveNext()
+    sendSessionStart(config)
   }
 
   private func sendSessionStart(_ config: RexNativeVoiceWebSocketConfig) {
@@ -156,7 +187,7 @@ final class RexNativeVoiceWebSocket {
           return
         }
         self.queue.async {
-          guard self.isActive else {
+          guard self.isActive, self.task === task else {
             return
           }
 
@@ -165,7 +196,9 @@ final class RexNativeVoiceWebSocket {
             self.handle(message)
             self.receiveNext()
           case let .failure(error):
-            if self.isActive {
+            if self.assistantTurnCompleted || self.normalCloseExpected {
+              self.handleGracefulClose(reason: self.assistantTurnCompleted ? "turn_complete" : "client_stop")
+            } else if self.isActive {
               self.emitError(
                 "Native voice stream closed unexpectedly.",
                 code: "native_stream_closed",
@@ -222,6 +255,9 @@ final class RexNativeVoiceWebSocket {
       }
       if event == "assistant.done" || event == "session.ended" || event == "error" {
         cancelAssistantTimeout()
+      }
+      if event == "assistant.done" || event == "session.ended" {
+        assistantTurnCompleted = true
       }
 
       emit(payload)
@@ -293,6 +329,20 @@ final class RexNativeVoiceWebSocket {
   private func cancelAssistantTimeout() {
     assistantTimeout?.cancel()
     assistantTimeout = nil
+  }
+
+  private func handleGracefulClose(reason: String) {
+    cancelConnectTimeout()
+    cancelAssistantTimeout()
+    isActive = false
+    task = nil
+    assistantTurnCompleted = false
+    normalCloseExpected = false
+    emit([
+      "event": "transport.closed",
+      "native": true,
+      "reason": reason
+    ])
   }
 
   private func emit(_ payload: [String: Any]) {

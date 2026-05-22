@@ -10,6 +10,10 @@ final class RexNativeAudioSession {
   private var observersRegistered = false
   private var isActive = false
 
+  var isAudioSessionActive: Bool {
+    isActive
+  }
+
   func activate() throws {
     registerObserversIfNeeded()
 

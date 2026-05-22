@@ -22,6 +22,10 @@ final class RexNativeAudioPlayback: NSObject, AVAudioPlayerDelegate {
     isPlaying || !queue.isEmpty
   }
 
+  var isAudioPlaying: Bool {
+    isPlaying
+  }
+
   func enqueue(_ chunk: RexNativeAudioPlaybackChunk) {
     guard !chunk.data.isEmpty else {
       return

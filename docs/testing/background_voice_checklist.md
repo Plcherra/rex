@@ -81,21 +81,51 @@ audio.session.activated
 transport.connecting
 session.started
 capture.started
+native.turn.listening
 speech.started
+native.turn.user_speaking
 audio.chunk / audio.captured
 speech.ended
 utterance.end
+native.turn.waiting_for_assistant
 transport.utterance_end_sent
 transcript.final
 assistant.started
+native.turn.assistant_started
 assistant.token
 assistant.audio_chunk
+native.turn.first_audio_chunk
 playback.queued
 speaking.started
+native.turn.playback_started
 assistant.done
 speaking.ended
+native.turn.capture_restarted
 listening
 ```
+
+Every native event should include the telemetry snapshot fields below:
+
+```text
+native_state
+is_foreground
+is_capturing
+is_playing
+audio_session_active
+websocket_connected
+timestamp_ms
+reason, when applicable
+```
+
+If the iPhone is backgrounded after `utterance.end`, watch for:
+
+```text
+native.turn.background_audio_gap
+```
+
+That event means Rex is waiting for assistant audio while the app is backgrounded and both native capture and native playback are inactive. This is the key evidence Phase 2 will use to decide whether the bridge must keep background audio active through the assistant handoff.
+
+Native iOS turn-boundary events are also written to the device log with the `RexNativeVoice` prefix. Use Xcode Devices, macOS Console, or `idevicesyslog` and filter for `RexNativeVoice` during the minimized or locked-screen test.
 
 Known Phase 6 limitation: the native iOS path is integrated behind a build flag and now needs physical iPhone release validation before it should be treated as complete.
 
@@ -257,6 +287,29 @@ Fix:
 Remaining limitation:
 
 - This is still a foreground-resume recovery. It does not make Rex process the utterance while the screen remains locked. Native iOS voice ownership is still required for that.
+
+### 2026-05-22 - Native iOS Phase 1 telemetry
+
+Result: `implemented, retest required`
+
+Observed behavior:
+
+- The native iOS path can capture a background follow-up utterance, but the assistant handoff can pause until the app returns to foreground.
+- VPS logs usually show WebSocket open/closed transitions, but they do not prove the local native state at the time iOS pauses the app.
+
+Fix:
+
+- Added `native_state` snapshots to every native iOS event.
+- Added foreground/capture/playback/WebSocket/audio-session telemetry fields to every native iOS event.
+- Added timeline events for the turn handoff: `native.turn.waiting_for_assistant`, `native.turn.background_audio_gap`, `native.turn.assistant_started`, `native.turn.first_audio_chunk`, `native.turn.playback_started`, and `native.turn.capture_restarted`.
+- Added concise native device logs with the `RexNativeVoice` prefix for turn-boundary events, errors, foreground changes, assistant start/done, and playback start/end.
+
+Retest required:
+
+- Install a release build with `REX_NATIVE_IOS_VOICE_ENABLED=true`.
+- Start `sudo journalctl -u rex-backend -f -l` on the VPS for backend connection timing.
+- Capture local iPhone logs from Xcode Devices or Console while reproducing the minimized/locked-screen handoff.
+- Confirm whether `native.turn.background_audio_gap` appears between `utterance.end` and `assistant.started`.
 
 ### 2026-05-21 - Native iOS turn completed, then stream closed
 

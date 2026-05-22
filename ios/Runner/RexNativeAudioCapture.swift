@@ -29,6 +29,10 @@ final class RexNativeAudioCapture {
   private let noSpeechStatusInterval: TimeInterval = 30.00
   private let maxUtteranceDuration: TimeInterval = 180.00
 
+  var isActive: Bool {
+    isCapturing || engine != nil
+  }
+
   func start() throws {
     stop()
     resetEndpointState()

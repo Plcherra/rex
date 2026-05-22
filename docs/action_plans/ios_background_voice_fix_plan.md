@@ -138,24 +138,28 @@ capture continues owning audio session
 -> microphone upload is muted/gated
 -> bridge sends utterance.end
 -> native state becomes waitingForAssistant
--> capture stops only when assistant.started or assistant.audio_chunk arrives
+-> capture remains held through assistant playback
+-> capture resumes from hold after assistant.done/playback drain
 ```
 
 ### Steps
 
-- [ ] Add a capture hold mode to `RexNativeAudioCapture`.
-- [ ] Add a flag like `shouldForwardAudioChunks`.
-- [ ] On `utterance.end`:
+- [x] Add a capture hold mode to `RexNativeAudioCapture`.
+- [x] Add a flag like `shouldForwardAudioChunks`.
+- [x] On `utterance.end`:
   - foreground: keep current behavior if safe.
   - background: enter hold mode instead of `audioCapture.stop()`.
-- [ ] In hold mode:
+- [x] In hold mode:
   - keep `AVAudioEngine` alive.
   - stop forwarding audio chunks to `RexNativeVoiceWebSocket`.
   - emit telemetry that capture is holding background audio ownership.
-- [ ] On `assistant.started` or first `assistant.audio_chunk`:
-  - stop capture hold.
-  - let native playback own the audio session.
-- [ ] On error/session end:
+- [x] Through `assistant.started` / `assistant.audio_chunk`:
+  - keep capture in hold while assistant audio plays.
+  - prevent microphone upload and endpointing during playback.
+- [x] After `assistant.done` and playback drain:
+  - resume capture from hold when possible.
+  - defer restart until foreground if iOS rejects background capture start.
+- [x] On error/session end:
   - fully stop capture.
 
 ### Acceptance Criteria

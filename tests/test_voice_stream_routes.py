@@ -94,12 +94,21 @@ class FakeChatService:
         self.stream_calls = []
         self.metadata_calls = []
 
-    async def stream_message(self, message, conversation_id=None, file=None):
+    async def stream_message(
+        self,
+        message,
+        conversation_id=None,
+        file=None,
+        response_instructions=None,
+        max_response_tokens=None,
+    ):
         self.stream_calls.append(
             {
                 "message": message,
                 "conversation_id": conversation_id,
                 "file": file,
+                "response_instructions": response_instructions,
+                "max_response_tokens": max_response_tokens,
             }
         )
         resolved_conversation_id = conversation_id or "conversation-stream"
@@ -272,6 +281,13 @@ def test_voice_stream_completes_streaming_turn(client):
             "message": "Hey Rex",
             "conversation_id": "conversation-existing",
             "file": None,
+            "response_instructions": (
+                "Voice call response style: answer in 2-4 short spoken sentences. "
+                "Be direct and conversational. Do not produce long checklists, long plans, "
+                "or multi-section explanations unless the user explicitly asks for detail. "
+                "If more depth is useful, offer one concrete next step instead of explaining everything."
+            ),
+            "max_response_tokens": 180,
         }
     ]
     assert tts.calls == ["Rex streaming response."]

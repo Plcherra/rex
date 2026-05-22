@@ -12,6 +12,7 @@ final class RexNativeAudioCapture {
   private let converter = RexPCMConverter()
   private var engine: AVAudioEngine?
   private var isCapturing = false
+  private var isHoldingAudio = false
   private var isMuted = false
 
   private var captureStartedAt: Date?
@@ -25,7 +26,7 @@ final class RexNativeAudioCapture {
   private let speechStartThresholdDb = -52.0
   private let silenceThresholdDb = -60.0
   private let minimumSpeechDuration: TimeInterval = 0.20
-  private let silenceAfterSpeech: TimeInterval = 5.50
+  private let silenceAfterSpeech: TimeInterval = 1.00
   private let noSpeechStatusInterval: TimeInterval = 30.00
   private let maxUtteranceDuration: TimeInterval = 180.00
 
@@ -33,9 +34,14 @@ final class RexNativeAudioCapture {
     isCapturing || engine != nil
   }
 
+  var isHoldingAudioOwnership: Bool {
+    isHoldingAudio
+  }
+
   func start() throws {
     stop()
     resetEndpointState()
+    isHoldingAudio = false
 
     let engine = AVAudioEngine()
     let inputNode = engine.inputNode
@@ -71,8 +77,35 @@ final class RexNativeAudioCapture {
     engine?.stop()
     engine = nil
     isCapturing = false
+    isHoldingAudio = false
     emit(["event": "capture.stopped", "native": true])
     resetEndpointState()
+  }
+
+  func holdAudioOwnership(reason: String) {
+    guard isCapturing, !isHoldingAudio else {
+      return
+    }
+    isHoldingAudio = true
+    resetEndpointState()
+    emit([
+      "event": "capture.hold.started",
+      "native": true,
+      "reason": reason
+    ])
+  }
+
+  func resumeFromHold(reason: String) {
+    guard isCapturing, isHoldingAudio else {
+      return
+    }
+    isHoldingAudio = false
+    resetEndpointState()
+    emit([
+      "event": "capture.hold.ended",
+      "native": true,
+      "reason": reason
+    ])
   }
 
   func setMuted(_ isMuted: Bool) {
@@ -103,6 +136,10 @@ final class RexNativeAudioCapture {
     }
 
     guard !isMuted else {
+      return
+    }
+
+    guard !isHoldingAudio else {
       return
     }
 

@@ -304,6 +304,8 @@ class ChatService:
         message: str,
         conversation_id: Optional[str] = None,
         file: Optional[UploadFile] = None,
+        response_instructions: Optional[str] = None,
+        max_response_tokens: Optional[int] = None,
     ) -> AsyncIterator[dict]:
         conversation_id = await self._existing_conversation_id(conversation_id)
         file_text = await self.file_service.read_text_file(file) if file else None
@@ -380,8 +382,18 @@ class ChatService:
             ai_messages.append(self._memory_correction_prompt(memory_correction))
             yield {"event": "memory_correction", "memory_correction": memory_correction}
 
+        if response_instructions:
+            ai_messages.append({"role": "system", "content": response_instructions})
+
         response_parts = []
-        async for token in self.ai_service.stream_response(ai_messages):
+        if max_response_tokens is None:
+            token_stream = self.ai_service.stream_response(ai_messages)
+        else:
+            token_stream = self.ai_service.stream_response(
+                ai_messages,
+                max_tokens=max_response_tokens,
+            )
+        async for token in token_stream:
             response_parts.append(token)
             yield {"event": "token", "token": token}
 

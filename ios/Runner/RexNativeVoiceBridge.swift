@@ -28,6 +28,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
   private var assistantDonePendingRestart = false
   private var nativeState = RexNativeVoiceState.idle
   private var firstAssistantAudioChunkSeen = false
+  private var deferredCaptureRestart = false
   private var currentConfig: RexNativeVoiceWebSocketConfig?
 
   init(messenger: FlutterBinaryMessenger) {
@@ -153,6 +154,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     currentConfig = config
     assistantDonePendingRestart = false
     firstAssistantAudioChunkSeen = false
+    deferredCaptureRestart = false
     try audioSession.activate()
     do {
       try voiceWebSocket.start(config: config)
@@ -171,6 +173,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
   private func stopSession() {
     guard isSessionActive else {
       assistantDonePendingRestart = false
+      deferredCaptureRestart = false
       audioPlayback.stop()
       audioCapture.stop()
       voiceWebSocket.stop()
@@ -182,6 +185,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     }
     isSessionActive = false
     assistantDonePendingRestart = false
+    deferredCaptureRestart = false
     audioPlayback.stop()
     audioCapture.stop()
     voiceWebSocket.stop()
@@ -196,6 +200,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       return
     }
     assistantDonePendingRestart = false
+    deferredCaptureRestart = false
     audioPlayback.stop()
     audioCapture.stop()
     voiceWebSocket.interrupt()
@@ -220,6 +225,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       "is_foreground": isForeground
     ])
     emitBackgroundAudioGapIfNeeded(reason: "foreground_changed")
+    restartDeferredCaptureIfReady()
   }
 
   private func emit(_ payload: [String: Any]) {
@@ -227,6 +233,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     enriched["native_state"] = nativeState.rawValue
     enriched["is_foreground"] = isForeground
     enriched["is_capturing"] = audioCapture.isActive
+    enriched["is_holding_audio"] = audioCapture.isHoldingAudioOwnership
     enriched["is_playing"] = audioPlayback.isAudioPlaying
     enriched["audio_session_active"] = audioSession.isAudioSessionActive
     enriched["websocket_connected"] = voiceWebSocket.isConnected
@@ -250,6 +257,9 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       "assistant.done",
       "speaking.started",
       "speaking.ended",
+      "capture.hold.started",
+      "capture.hold.ended",
+      "capture.restart.deferred",
       "error",
       "playback.error",
       "capture.error"
@@ -258,11 +268,12 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       return
     }
     NSLog(
-      "RexNativeVoice event=%@ state=%@ foreground=%@ capturing=%@ playing=%@ websocket=%@ audio_session=%@ reason=%@ detail=%@",
+      "RexNativeVoice event=%@ state=%@ foreground=%@ capturing=%@ holding=%@ playing=%@ websocket=%@ audio_session=%@ reason=%@ detail=%@",
       event,
       String(describing: payload["native_state"] ?? ""),
       String(describing: payload["is_foreground"] ?? ""),
       String(describing: payload["is_capturing"] ?? ""),
+      String(describing: payload["is_holding_audio"] ?? ""),
       String(describing: payload["is_playing"] ?? ""),
       String(describing: payload["websocket_connected"] ?? ""),
       String(describing: payload["audio_session_active"] ?? ""),
@@ -327,6 +338,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     if payload["event"] as? String == "audio.interruption",
        payload["phase"] as? String == "began" {
       assistantDonePendingRestart = false
+      deferredCaptureRestart = false
       audioPlayback.stop()
       audioCapture.stop()
       voiceWebSocket.interrupt()
@@ -343,7 +355,17 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       let reason = payload["reason"] as? String ?? "utterance_end"
       firstAssistantAudioChunkSeen = false
       transition(to: .waitingForAssistant, reason: reason)
-      audioCapture.stop()
+      if isForeground {
+        audioCapture.stop()
+      } else {
+        audioCapture.holdAudioOwnership(reason: "background_utterance_end")
+        if audioCapture.isHoldingAudioOwnership {
+          emitTimelineEvent(
+            "native.turn.capture_hold_started",
+            reason: "background_utterance_end"
+          )
+        }
+      }
       emitBackgroundAudioGapIfNeeded(reason: "utterance_end_after_capture_stop")
       do {
         try ensureTransportConnected()
@@ -365,13 +387,14 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     let event = payload["event"] as? String
     if event == "assistant.started" {
       emitTimelineEvent("native.turn.assistant_started", reason: "assistant_started")
-      audioCapture.stop()
+      stopOrHoldCaptureForAssistant(reason: "assistant_started")
     }
     if event == "assistant.audio_chunk" {
       if !firstAssistantAudioChunkSeen {
         firstAssistantAudioChunkSeen = true
         emitTimelineEvent("native.turn.first_audio_chunk", reason: "assistant_audio_chunk")
       }
+      stopOrHoldCaptureForAssistant(reason: "assistant_audio_chunk")
       enqueueAssistantAudio(payload)
     }
     if event == "assistant.done" {
@@ -385,6 +408,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     }
     if event == "error" {
       assistantDonePendingRestart = false
+      deferredCaptureRestart = false
       audioPlayback.stop()
       audioCapture.stop()
       transition(to: .failed, reason: "transport_error")
@@ -402,6 +426,21 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       transition(to: .restartingListening, reason: "speaking_ended")
     }
     emit(payload)
+  }
+
+  private func stopOrHoldCaptureForAssistant(reason: String) {
+    if isForeground {
+      audioCapture.stop()
+      return
+    }
+    guard audioCapture.isActive else {
+      return
+    }
+    guard !audioCapture.isHoldingAudioOwnership else {
+      return
+    }
+    audioCapture.holdAudioOwnership(reason: reason)
+    emitTimelineEvent("native.turn.capture_hold_started", reason: reason)
   }
 
   private func enqueueAssistantAudio(_ payload: [String: Any]) {
@@ -433,12 +472,32 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
     do {
       transition(to: .restartingListening, reason: "assistant_done")
       try ensureTransportConnected()
-      try audioCapture.start()
+      if audioCapture.isHoldingAudioOwnership {
+        audioCapture.resumeFromHold(reason: "assistant_done")
+      } else {
+        try audioCapture.start()
+      }
       firstAssistantAudioChunkSeen = false
+      deferredCaptureRestart = false
       transition(to: .listening, reason: "capture_restarted")
       emitTimelineEvent("native.turn.capture_restarted", reason: "assistant_done")
       emit(["event": "listening", "native": true])
     } catch {
+      if !isForeground {
+        assistantDonePendingRestart = true
+        deferredCaptureRestart = true
+        emit([
+          "event": "capture.restart.deferred",
+          "native": true,
+          "detail": "iOS rejected microphone restart in the background; capture will retry when foreground returns.",
+          "native_error": error.localizedDescription
+        ])
+        emitTimelineEvent(
+          "native.turn.capture_restart_deferred",
+          reason: "background_restart_failed"
+        )
+        return
+      }
       emit([
         "event": "error",
         "native": true,
@@ -447,6 +506,16 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       ])
       transition(to: .failed, reason: "capture_restart_failed")
     }
+  }
+
+  private func restartDeferredCaptureIfReady() {
+    guard isForeground,
+          isSessionActive,
+          deferredCaptureRestart,
+          !audioPlayback.isBusy else {
+      return
+    }
+    restartCaptureAfterPlaybackIfReady()
   }
 
   private func restartCaptureAfterInterrupt() {
@@ -458,6 +527,7 @@ final class RexNativeVoiceBridge: NSObject, FlutterStreamHandler {
       try ensureTransportConnected()
       try audioCapture.start()
       firstAssistantAudioChunkSeen = false
+      deferredCaptureRestart = false
       transition(to: .listening, reason: "interrupt_restarted_capture")
       emitTimelineEvent("native.turn.capture_restarted", reason: "interrupt")
       emit(["event": "listening", "native": true])

@@ -14,6 +14,15 @@ from app.services.google_tts_service import GoogleTTSService, GoogleTTSServiceEr
 from app.services.memory_service import MemoryServiceError
 
 
+VOICE_RESPONSE_INSTRUCTIONS = (
+    "Voice call response style: answer in 2-4 short spoken sentences. "
+    "Be direct and conversational. Do not produce long checklists, long plans, "
+    "or multi-section explanations unless the user explicitly asks for detail. "
+    "If more depth is useful, offer one concrete next step instead of explaining everything."
+)
+VOICE_RESPONSE_MAX_TOKENS = 180
+
+
 class VoiceStreamSession:
     def __init__(
         self,
@@ -284,6 +293,8 @@ class VoiceStreamSession:
         async for event in self.chat_service.stream_message(
             transcript,
             conversation_id=self.conversation_id,
+            response_instructions=VOICE_RESPONSE_INSTRUCTIONS,
+            max_response_tokens=VOICE_RESPONSE_MAX_TOKENS,
         ):
             event_name = event.get("event")
             if event_name == "conversation":

@@ -54,13 +54,19 @@ class AIService:
                 status_code=500,
             ) from error
 
-    async def stream_response(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def stream_response(
+        self,
+        messages: list[dict],
+        max_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
         prompt_messages = self._validated_prompt_messages(messages)
         payload = {
             "model": self.settings.grok_model,
             "messages": prompt_messages,
             "stream": True,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
         try:
             from app.services.http_client import get_http_client

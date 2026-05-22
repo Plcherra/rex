@@ -392,3 +392,33 @@ Follow-up tuning:
 
 - Native transcript final chunks are appended into one normalized visible utterance instead of replacing the previous line.
 - Native endpointing uses a 5.5 second silence window with a stricter -60 dB silence threshold so quiet room noise does not keep Rex stuck in Listening forever.
+
+### 2026-05-22 - Background second turn restart failure
+
+Result: `fail -> fixed in code, retest required`
+
+Observed behavior:
+
+- Background turn worked once: Rex answered while minimized, then accepted one follow-up.
+- After the assistant finished that background response, the next listen cycle failed with `Could not restart native microphone capture after playback.`
+- Voice responses were also too long for a call, which stretched the background playback window and made failures slower to diagnose.
+
+Likely cause:
+
+- iOS can reject starting a fresh microphone engine after playback while the app is backgrounded.
+- The previous flow stopped native capture at utterance end or assistant start, then attempted a new `AVAudioEngine.start()` after playback.
+
+Fix:
+
+- Native capture now has a hold mode: while backgrounded, Rex keeps audio ownership alive but stops forwarding microphone audio during the assistant response.
+- After playback drains, Rex resumes capture from hold instead of starting a brand-new capture engine.
+- If iOS still rejects a background restart, Rex defers the restart until foreground instead of entering a fatal `Issue` state.
+- Native endpointing now uses a 1 second post-speech silence window for faster handoff.
+- Voice-call AI responses are capped and prompted to stay to 2-4 short spoken sentences.
+
+Retest required:
+
+- Start a release call with native iOS voice enabled.
+- Speak once in foreground, minimize while Rex answers, then speak at least 5 follow-ups without reopening the app.
+- Confirm the local log shows `capture.hold.started`, `capture.hold.ended`, and `native.turn.capture_restarted`.
+- Confirm the UI does not show `Could not restart native microphone capture after playback.`

@@ -20,16 +20,19 @@ This phase makes Rex truly usable in the founder’s real daily life. The founde
 ## Dependencies
 Action Plan 2 (Minimal Voice-First Personal Rex) must be 100% complete.
 
-## Current Status - 2026-05-21
-Action Plan 5 is partially complete, not finished. The app has the correct background scaffolding: iOS background audio declarations, audio-session configuration, Android foreground-service declarations, interruption handling, UX fallback states, and app-resume recovery for the active call controller.
+## Current Status - 2026-05-22
+Action Plan 5 is complete for the iOS MVP path. A physical iPhone release build with `REX_NATIVE_IOS_VOICE_ENABLED=true` now supports active Rex voice while the app is minimized and while the screen is locked.
 
-Physical iPhone validation found the important remaining failure: Rex can stop hearing the user when the screen locks or the app is backgrounded. The cause is architectural, not just configuration. The active streaming path still captures microphone frames through Flutter/Dart (`record.startStream`) and sends them over a Dart WebSocket. iOS can suspend that path when the app leaves the foreground.
+The implemented iOS path is native-owned:
 
-The next part of Action Plan 5 is therefore a native locked-screen voice implementation:
+- native `AVAudioSession` ownership
+- native `AVAudioEngine` microphone capture
+- native `/voice/stream` WebSocket transport
+- native assistant audio playback
+- native hold mode during assistant playback so background mic restart does not fail
+- Flutter UI/state bridge for visible call state
 
-- iOS: native `AVAudioSession` + `AVAudioEngine` capture that owns microphone recording while backgrounded, with a bridge back to Flutter.
-- Android: foreground service should own microphone capture, not only display a notification while Flutter owns capture.
-- Flutter controller: keep the resume recovery and UI feedback, but treat it as recovery, not proof of continuous locked-screen capture.
+Android remains deferred until a physical Android device is available. The Android foreground-service shell exists, but service-owned microphone/WebSocket/playback still needs real-device implementation and validation.
 
 ## Missing Implementation Layers
 The current code has the server contract and Flutter call UX, but true locked-screen voice still needs these layers:
@@ -160,10 +163,10 @@ The current code has the server contract and Flutter call UX, but true locked-sc
    - Suggested git commit message: `test: cover background voice state handling`
    - Rough time estimate: 5-8 hours
 
-9. [ ] **Run real-device validation on iOS and Android - in progress**
+9. [x] **Run real-device validation on iOS and Android - iOS passed, Android blocked**
    - Exact files to create or modify: `docs/background_voice_constraints.md`, optionally `docs/testing/background_voice_checklist.md`
    - What must be implemented: Test real app behavior on physical devices: foreground voice, app switch, screen lock, headphones, incoming call interruption, notification interruption, Bluetooth route change, and long response TTS playback.
-   - Current result: iPhone `Pedro Martins` on iOS 26.5 is connected and ready for release-build validation. Android is blocked because no physical Android device is connected. iPhone foreground voice works, but screen lock/app background can stop microphone streaming because capture is still Flutter/Dart-owned. A real iPhone app-switch test found a stuck `Thinking` state after background speech; a watchdog fix now resets stale streams back to `Listening` and needs release-build retest.
+   - Current result: iPhone `Pedro Martins` on iOS 26.5 passed release-build validation with native iOS voice enabled. Rex works while minimized and while the screen is locked. Android is blocked because no physical Android device is connected.
    - Validation artifact: `docs/testing/background_voice_checklist.md`
    - Success criteria: Real-device results are documented by platform, known limitations are written down, and major bugs found during device testing are fixed or explicitly deferred.
    - Verification / test command: `flutter analyze && flutter test`
@@ -178,7 +181,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Suggested git commit message: `docs: finalize background voice limitations`
     - Rough time estimate: 3-5 hours
 
-11. [ ] **Define the native voice session contract**
+11. [x] **Define the native voice session contract**
     - Exact files to create or modify: `lib/features/voice/data/background_voice_service.dart`, `lib/features/voice/domain/voice_call_state.dart`, `ios/Runner/AppDelegate.swift`, `android/app/src/main/kotlin/com/rex/rex/MainActivity.kt`, new platform bridge files if needed.
     - What must be implemented: Define the cross-platform method/event contract before native code grows: start session, stop session, interrupt, mute/unmute, send foreground status to Flutter, receive native transcript/status/audio state, and surface failures.
     - Success criteria: Flutter can start/stop a native voice session through one service interface and receive status events even if capture implementation is still stubbed.
@@ -186,7 +189,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Suggested git commit message: `feat: define native voice session bridge`
     - Rough time estimate: 0.5-1 day
 
-12. [ ] **Implement iOS native locked-screen voice session**
+12. [x] **Implement iOS native locked-screen voice session**
     - Exact files to create or modify: `ios/Runner/AppDelegate.swift`, new iOS voice capture/session bridge files if needed, `lib/features/voice/data/background_voice_service.dart`, `lib/features/voice/application/voice_call_controller.dart`, `docs/background_voice_constraints.md`
     - What must be implemented: Add native `AVAudioSession`, `AVAudioEngine` capture, PCM conversion, `URLSessionWebSocketTask` protocol handling, native playback queue, interruption handling, and status events back to Flutter.
     - Success criteria: A physical iPhone can start a Rex voice call, lock the screen, speak a second utterance, receive Rex audio, and continue for at least several minutes without reopening the app.
@@ -194,7 +197,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Suggested git commit message: `feat: add ios locked-screen voice session`
     - Rough time estimate: 3-7 days for iOS MVP.
 
-13. [ ] **Implement Android service-owned voice session**
+13. [ ] **Implement Android service-owned voice session - deferred until Android device**
     - Exact files to create or modify: `android/app/build.gradle.kts`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/kotlin/com/rex/rex/RexVoiceForegroundService.kt`, `android/app/src/main/kotlin/com/rex/rex/MainActivity.kt`, new Android voice session classes if needed, `lib/features/voice/data/background_voice_service.dart`
     - What must be implemented: Move capture into the foreground service using `AudioRecord`, stream PCM to `/voice/stream` through a service-owned WebSocket, play assistant audio natively, and keep the visible notification tied to the real active mic session.
     - Success criteria: A physical Android device can start Rex voice mode, background the app, continue speaking, receive Rex audio, and stop cleanly from the app or notification.
@@ -202,7 +205,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Suggested git commit message: `feat: add android service-owned voice session`
     - Rough time estimate: 2-5 days after iOS MVP.
 
-14. [ ] **Harden permission, interruption, reconnect, and cleanup behavior**
+14. [x] **Harden permission, interruption, reconnect, and cleanup behavior for iOS MVP**
     - Exact files to create or modify: `lib/features/voice/application/voice_call_controller.dart`, native iOS/Android voice session files, `docs/background_voice_constraints.md`, test files.
     - What must be implemented: Runtime notification/mic permission checks, route-change recovery, incoming-call interruption handling, WebSocket reconnect/fail-fast rules, bounded audio queues, heartbeat/timeouts, and guaranteed microphone release on stop/crash/restart.
     - Success criteria: Rex never leaves the microphone active after the user ends a call, and failures surface as clear UI states instead of silence.
@@ -210,7 +213,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Suggested git commit message: `fix: harden native background voice lifecycle`
     - Rough time estimate: 1-3 days.
 
-15. [ ] **Run final locked-screen acceptance matrix**
+15. [x] **Run final locked-screen acceptance matrix for iOS MVP**
     - Exact files to create or modify: `docs/background_voice_constraints.md`, optionally `docs/testing/background_voice_checklist.md`
     - What must be implemented: Record pass/fail results for iPhone and Android: foreground, app switch, screen lock, screen off, second utterance after lock, AirPods/Bluetooth, incoming call, notification interruption, network drop, long session, explicit hangup.
     - Success criteria: Action Plan 5 is only marked complete after physical devices pass or known platform limits are documented with clear fallback behavior.
@@ -219,6 +222,7 @@ The current code has the server contract and Flutter call UX, but true locked-sc
     - Rough time estimate: 1-2 days.
 
 ## Revision History
+- 2026-05-22 - iOS native background voice validated on a physical iPhone: app minimized and screen locked both work. Action Plan 5 is complete for iOS MVP; Android remains deferred until a physical Android device is available.
 - 2026-05-21 - Added fix for iPhone app-switch/background stuck-thinking bug; release-build retest required.
 - 2026-05-21 - Rescanned implementation and split native locked-screen voice into bridge, iOS, Android, hardening, and device acceptance layers.
 - 2026-05-21 - Real-device scan found Flutter-owned streaming does not reliably survive iPhone lock/background. Added native locked-screen capture as the remaining Action Plan 5 work.

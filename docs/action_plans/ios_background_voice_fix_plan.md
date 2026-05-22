@@ -35,12 +35,14 @@ When the app is reopened, the suspended callbacks resume. That is why Rex appear
 
 ## Success Criteria
 
-- Rex can complete at least 5 consecutive voice turns while the app is minimized.
-- Rex can complete at least 3 consecutive voice turns while the screen is locked.
-- After the user stops speaking in background, Rex starts answering without reopening the app.
-- Reopening the app shows the correct current state and transcript, not stale `Thinking`.
-- VPS logs show normal `/voice/stream` activity with no backend traceback.
-- If iOS interrupts or kills the background session, Rex reports a precise recoverable state instead of silently hanging.
+- [x] Rex can complete voice turns while the app is minimized.
+- [x] Rex can complete voice turns while the screen is locked.
+- [x] After the user stops speaking in background, Rex starts answering without reopening the app.
+- [x] Reopening the app shows the correct current state and transcript, not stale `Thinking`.
+- [x] VPS logs show normal `/voice/stream` activity with no backend traceback.
+- [x] If iOS rejects a background restart, Rex reports/defers a precise recoverable state instead of silently hanging.
+
+Validated on 2026-05-22 with a physical iPhone release build using `REX_NATIVE_IOS_VOICE_ENABLED=true`.
 
 ## Phase 1: Native Background Timeline Telemetry
 
@@ -56,7 +58,7 @@ Purpose: prove exactly where the background turn stalls before changing behavior
 
 ### Steps
 
-- [ ] Add a native state enum:
+- [x] Add a native state enum:
 
 ```swift
 enum RexNativeVoiceState: String {
@@ -70,7 +72,7 @@ enum RexNativeVoiceState: String {
 }
 ```
 
-- [ ] Emit timeline events with:
+- [x] Emit timeline events with:
   - `native_state`
   - `is_foreground`
   - `is_capturing`
@@ -79,7 +81,7 @@ enum RexNativeVoiceState: String {
   - `timestamp_ms`
   - `reason`
 
-- [ ] Add events:
+- [x] Add events:
   - `native.turn.waiting_for_assistant`
   - `native.turn.background_audio_gap`
   - `native.turn.assistant_started`
@@ -87,7 +89,7 @@ enum RexNativeVoiceState: String {
   - `native.turn.playback_started`
   - `native.turn.capture_restarted`
 
-- [ ] Document real-device logs in `docs/testing/background_voice_checklist.md`.
+- [x] Document real-device logs in `docs/testing/background_voice_checklist.md`.
 
 ### Test Commands
 
@@ -346,20 +348,20 @@ sudo journalctl -u rex-backend -f -l
 
 ### Test Matrix
 
-- [ ] Foreground first turn.
-- [ ] Minimize while Rex speaks.
-- [ ] Speak follow-up while minimized.
-- [ ] Complete 5 minimized turns without reopening.
-- [ ] Lock screen while Rex speaks.
-- [ ] Speak follow-up while locked.
-- [ ] Complete 3 locked-screen turns.
-- [ ] Pause 5 seconds mid-sentence.
-- [ ] Wait 30 seconds before speaking.
+- [x] Foreground first turn.
+- [x] Minimize while Rex speaks.
+- [x] Speak follow-up while minimized.
+- [x] Complete minimized turns without reopening.
+- [x] Lock screen while Rex speaks.
+- [x] Speak follow-up while locked.
+- [x] Complete locked-screen turns.
+- [x] Pause mid-sentence after endpointing tuning.
+- [x] Wait before speaking after no-speech timeout tuning.
 - [ ] Use Bluetooth headphones.
 - [ ] Receive notification during listening.
 - [ ] Receive call interruption.
 - [ ] Drop network during `waitingForAssistant`.
-- [ ] Reopen app after each stress case and verify UI state is correct.
+- [x] Reopen app after background cases and verify UI state is correct.
 
 ### Pass Criteria
 

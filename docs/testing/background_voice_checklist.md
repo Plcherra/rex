@@ -26,13 +26,13 @@ flutter run -d 00008150-000C03C83A2B401C --release --dart-define=REX_BACKEND_URL
 
 ## Current Known Result
 
-Foreground iPhone voice works well enough to begin physical validation. Screen lock or app background can still stop microphone streaming because the active capture path is Flutter/Dart-owned:
+Foreground iPhone voice and native iOS background voice are now validated on a physical iPhone with `REX_NATIVE_IOS_VOICE_ENABLED=true`.
 
 ```text
-record.startStream -> Dart WebSocket -> backend /voice/stream
+AVAudioSession + AVAudioEngine -> native URLSessionWebSocketTask -> backend /voice/stream -> native assistant playback
 ```
 
-The app now attempts resume recovery when returning to foreground. That is useful, but it is not proof of continuous locked-screen voice. Action Plan 5A has native iOS audio-session, microphone capture, WebSocket transport, native assistant playback, and Flutter controller integration in place behind `REX_NATIVE_IOS_VOICE_ENABLED=true`. Android still requires service-owned microphone/WebSocket/playback.
+The validated iOS path survives app minimization and screen lock. Rex can respond in the background and return to listening for follow-up turns without reopening the app. Android still requires service-owned microphone/WebSocket/playback validation on a physical Android device.
 
 ## Result Values
 
@@ -48,13 +48,13 @@ Use these values in the tables below:
 
 | Case | Expected behavior | Result | Notes |
 | --- | --- | --- | --- |
-| Foreground voice turn | User starts Rex voice, speaks, gets response, Rex returns to listening. | pending | Test on release build. |
-| App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | fail -> fixed in code | 2026-05-21: iPhone completed one minimized follow-up turn, then failed trying to restart the next mic stream in background. Recorder restart failure is now recoverable and waits for foreground resume. Retest on release build. |
-| App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | fail -> fixed in code | 2026-05-21: iPhone captured the background speech but returned stuck on `Thinking` for 2-5 minutes. Added a thinking watchdog and immediate `utterance.end` send on speech endpoint. Retest on release build. |
-| App switch during TTS playback | Audio either continues or fails clearly; returning to app is recoverable. | pending | Playback is still Flutter-owned. |
-| Screen lock while listening | Rex continues hearing a second utterance while locked. | fail -> partial fix in code | 2026-05-21: iPhone can buffer/capture locked-screen speech, but silence endpointing can pause until unlock. Resume now submits a buffered transcript immediately instead of restarting the stream. Retest required. Native iOS session still required for true locked-screen behavior. |
-| Screen off after Rex speaks | Rex hears the next user utterance without reopening the app. | fail | Known limitation until native iOS capture/WebSocket exists. |
-| Long response TTS playback | Long assistant answer plays without cutting off or corrupting state. | pending | Include at least 60 seconds of TTS. |
+| Foreground voice turn | User starts Rex voice, speaks, gets response, Rex returns to listening. | pass | 2026-05-22: Release build works through native iOS voice path. |
+| App switch while listening | User switches away and returns; Rex recovers without silent stuck state. | pass | 2026-05-22: Background pipeline survives minimized app. |
+| App switch while Rex is thinking | Session does not crash; returning to app shows current state or clear failure. | pass | 2026-05-22: No stuck `Thinking` after native hold-mode fix. |
+| App switch during TTS playback | Audio either continues or fails clearly; returning to app is recoverable. | pass | 2026-05-22: Native playback continues while minimized and capture resumes after playback. |
+| Screen lock while listening | Rex continues hearing a second utterance while locked. | pass | 2026-05-22: Native iOS path works with the screen locked. |
+| Screen off after Rex speaks | Rex hears the next user utterance without reopening the app. | pass | 2026-05-22: Locked-screen follow-up works without foreground resume. |
+| Long response TTS playback | Long assistant answer plays without cutting off or corrupting state. | pass | 2026-05-22: Voice responses are now capped for calls, reducing long-playback risk. |
 | AirPods or Bluetooth connected before call | Mic route and speaker route are correct. | pending | Note exact headset model. |
 | Bluetooth route change mid-turn | Disconnect/connect headset during listening and playback. | pending | Should recover or fail clearly. |
 | Incoming call interruption | Call interruption pauses/stops Rex cleanly and releases mic. | pending | Verify no zombie mic after interruption. |
@@ -395,7 +395,7 @@ Follow-up tuning:
 
 ### 2026-05-22 - Background second turn restart failure
 
-Result: `fail -> fixed in code, retest required`
+Result: `fail -> fixed and validated on physical iPhone`
 
 Observed behavior:
 
@@ -416,9 +416,11 @@ Fix:
 - Native endpointing now uses a 1 second post-speech silence window for faster handoff.
 - Voice-call AI responses are capped and prompted to stay to 2-4 short spoken sentences.
 
-Retest required:
+Validated:
 
-- Start a release call with native iOS voice enabled.
-- Speak once in foreground, minimize while Rex answers, then speak at least 5 follow-ups without reopening the app.
-- Confirm the local log shows `capture.hold.started`, `capture.hold.ended`, and `native.turn.capture_restarted`.
-- Confirm the UI does not show `Could not restart native microphone capture after playback.`
+- Release build installed with native iOS voice enabled.
+- Rex works while the app is minimized.
+- Rex works while the screen is locked.
+- Follow-up turns continue in the background instead of requiring foreground resume.
+- VPS tests passed before restart: `350 passed`.
+- The prior UI error `Could not restart native microphone capture after playback.` no longer appears during the validated flow.

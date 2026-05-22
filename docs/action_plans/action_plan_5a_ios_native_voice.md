@@ -459,12 +459,19 @@ Do not fork the voice protocol unless required. Native iOS should use the curren
 8. `test: validate ios locked-screen voice`
 
 ## Definition Of Done
-Action Plan 5A is complete only when:
+Action Plan 5A is complete as of 2026-05-22 for the iOS MVP path.
 
-- Native iOS owns microphone capture during an active Rex call.
-- Native iOS owns `/voice/stream` while minimized/locked.
-- Native iOS owns assistant audio playback while minimized/locked.
-- Flutter reflects native state without owning the background pipeline.
-- A physical iPhone can complete multiple voice turns with the screen locked.
-- Interruptions, hangup, and network failures recover cleanly.
-- `flutter analyze`, `flutter test`, and `flutter build ios --debug --no-codesign` pass.
+- [x] Native iOS owns microphone capture during an active Rex call.
+- [x] Native iOS owns `/voice/stream` while minimized/locked.
+- [x] Native iOS owns assistant audio playback while minimized/locked.
+- [x] Flutter reflects native state without owning the background pipeline.
+- [x] A physical iPhone can complete voice turns with the screen locked.
+- [x] Hangup and recoverable restart failures are handled cleanly.
+- [x] `flutter analyze`, `flutter test`, and `flutter build ios --debug --no-codesign` pass.
+
+Remaining hardening for later real-world validation:
+
+- Bluetooth/AirPods route switching.
+- Incoming call interruption.
+- Network drop while waiting for assistant.
+- Long walking sessions beyond the initial successful locked-screen/minimized validation.

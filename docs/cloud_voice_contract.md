@@ -7,7 +7,7 @@ Define the Rex voice contracts for both the final streaming call architecture an
 
 ```text
 iPhone microphone
--> Flutter streams audio frames continuously
+-> Flutter or native iOS streams audio frames continuously
 -> FastAPI WebSocket voice session
 -> Deepgram live streaming transcription
 -> FastAPI emits partial/final transcript events
@@ -43,8 +43,8 @@ WebSocket /voice/stream
 Client-to-server events:
 
 - `session.start`: starts a voice session with optional `conversation_id`, audio format, and client metadata.
-- `audio.chunk`: sends a small base64 or binary microphone frame.
-- `audio.end_utterance`: optional manual endpoint marker when Flutter detects end of speech.
+- Binary audio frame: sends a small PCM16 microphone frame.
+- `utterance.end`: manual endpoint marker when the client detects end of speech.
 - `user.interrupt`: cancels the current assistant response and queued TTS work.
 - `session.end`: ends the call and closes the backend session cleanly.
 
@@ -60,7 +60,7 @@ Server-to-client events:
 
 Streaming audio requirements:
 
-- Flutter sends short microphone frames continuously while listening.
+- Flutter or native iOS sends short microphone frames continuously while listening.
 - FastAPI forwards frames to Deepgram live STT without exposing the Deepgram key.
 - Backend chunks Grok text into speakable phrases/sentences for Google TTS.
 - Flutter queues and plays returned audio chunks in order.

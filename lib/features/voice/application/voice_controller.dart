@@ -13,6 +13,7 @@ import 'package:rex/features/voice/data/audio_recording_service.dart';
 import 'package:rex/features/voice/data/audio_session_service.dart';
 import 'package:rex/features/voice/data/background_voice_service.dart';
 import 'package:rex/features/voice/data/cloud_voice_api.dart';
+import 'package:rex/features/voice/data/native_voice_session_service.dart';
 import 'package:rex/features/voice/data/speech_to_text_service.dart';
 import 'package:rex/features/voice/data/text_to_speech_service.dart';
 import 'package:rex/features/voice/domain/voice_state.dart';
@@ -43,6 +44,10 @@ final voiceAudioSessionServiceProvider = Provider<VoiceAudioSessionService>(
 
 final backgroundVoiceServiceProvider = Provider<BackgroundVoiceService>(
   (ref) => MethodChannelBackgroundVoiceService(),
+);
+
+final nativeVoiceSessionServiceProvider = Provider<NativeVoiceSessionService>(
+  (ref) => MethodChannelNativeVoiceSessionService(),
 );
 
 final cloudVoiceApiProvider = Provider<CloudVoiceApi>((ref) => CloudVoiceApi());

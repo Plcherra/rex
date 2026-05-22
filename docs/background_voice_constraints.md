@@ -19,6 +19,8 @@ iPhone microphone
 
 The upload-per-turn route remains a fallback. The Phase 5 implementation prepares the app for streaming by configuring mobile audio sessions, Android foreground-service declarations, and interruption handling. Physical-device testing is still required.
 
+Action Plan 5A now adds a separate native iOS bridge. The bridge owns `AVAudioSession`, native `AVAudioEngine` capture, `/voice/stream` transport, assistant audio playback, and return-to-listening behavior. Flutter `VoiceCallController` can route calls to this path when `REX_NATIVE_IOS_VOICE_ENABLED=true`.
+
 ## 2026-05-21 Device Scan Result
 `flutter devices` found one physical iPhone available for validation:
 
@@ -29,6 +31,8 @@ Pedro Martins (mobile) - iOS 26.5 23F77 - 00008150-000C03C83A2B401C
 No physical Android device was connected during this scan, so Android background voice validation is blocked until one is available.
 
 Physical iPhone testing showed that the current streaming call can stop hearing the user when the screen is locked or the app is backgrounded. This is not a missing `Info.plist` permission: the app already declares microphone access and `UIBackgroundModes/audio`. The remaining gap is that the active microphone capture and WebSocket streaming path still run through Flutter/Dart (`record.startStream` -> WebSocket). iOS can suspend that Dart path when the app leaves the foreground.
+
+`UIBackgroundModes/processing` has been removed because Rex does not currently use a `BGProcessingTask`. Background audio is the justified mode for the voice-call flow.
 
 The active call controller now restarts the listening stream on app resume so app switching does not leave Rex silently stuck. That is a recovery fix, not a full locked-screen native voice implementation.
 
@@ -93,7 +97,7 @@ Not guaranteed until physical-device validation:
 
 Requires deeper native work:
 
-- iOS locked-screen voice needs a native `AVAudioEngine`/`AVAudioSession` capture path that owns recording while the app is backgrounded, then bridges audio/transcript events back to Flutter.
+- iOS locked-screen voice now has native `AVAudioEngine` capture, native `/voice/stream` transport, native assistant playback, and Flutter controller integration behind `REX_NATIVE_IOS_VOICE_ENABLED=true`. It still needs physical iPhone release validation.
 - Android locked-screen voice should move microphone ownership into the foreground service, not just show a notification while Flutter owns capture.
 - Flutter/Dart lifecycle handling can recover after resume, but it should not be treated as proof of continuous background capture.
 
@@ -112,6 +116,10 @@ Requires deeper native work:
 - Android: microphone foreground services require the microphone foreground-service type, and microphone access is constrained by while-in-use permission rules.
 
 ## Revision History
+- 2026-05-21 - Wired Flutter `VoiceCallController` to the native iOS voice session behind `REX_NATIVE_IOS_VOICE_ENABLED`.
+- 2026-05-21 - Added native iOS assistant audio playback and return-to-listening bridge behavior for Action Plan 5A Phase 5.
+- 2026-05-21 - Added native iOS `AVAudioEngine` microphone capture foundation and PCM16 conversion telemetry for Action Plan 5A Phase 3.
+- 2026-05-21 - Added native iOS `AVAudioSession` ownership for the Action Plan 5A bridge and removed unused background processing mode.
 - 2026-05-21 - Kept background recorder restart failures recoverable instead of ending the voice call.
 - 2026-05-21 - Fixed app-switch pipeline bug by sending `utterance.end` immediately when speech endpointing fires; retest required on iPhone release build.
 - 2026-05-21 - Documented and fixed iPhone background thinking deadlock with a controller watchdog; retest required on release build.

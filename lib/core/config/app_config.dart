@@ -13,4 +13,9 @@ abstract final class AppConfig {
     'REX_STREAMING_VOICE_ENABLED',
     defaultValue: true,
   );
+
+  static const bool nativeIosVoiceEnabled = bool.fromEnvironment(
+    'REX_NATIVE_IOS_VOICE_ENABLED',
+    defaultValue: false,
+  );
 }

@@ -16,6 +16,7 @@ import 'package:rex/features/voice/data/audio_recording_service.dart';
 import 'package:rex/features/voice/data/audio_session_service.dart';
 import 'package:rex/features/voice/data/background_voice_service.dart';
 import 'package:rex/features/voice/data/cloud_voice_api.dart';
+import 'package:rex/features/voice/data/native_voice_session_service.dart';
 import 'package:rex/features/voice/data/streaming_audio_capture_service.dart';
 import 'package:rex/features/voice/data/streaming_voice_api.dart';
 import 'package:rex/features/voice/domain/voice_call_state.dart';
@@ -822,6 +823,103 @@ void main() {
   );
 
   test(
+    'VoiceCallController can use native iOS voice session when enabled',
+    () async {
+      final nativeSession = FakeNativeVoiceSessionService();
+      final streamingCaptureService = FakeStreamingAudioCaptureService();
+      final streamingApi = FakeStreamingVoiceApi();
+      final container = voiceCallTestContainer(
+        nativeVoiceSessionService: nativeSession,
+        streamingAudioCaptureService: streamingCaptureService,
+        streamingVoiceApi: streamingApi,
+        streamingVoiceEnabled: true,
+        nativeIosVoiceEnabled: true,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(voiceCallProvider.notifier);
+      expect(
+        await controller.startCall(conversationId: 'conversation-1'),
+        true,
+      );
+      await pumpEventQueue();
+
+      expect(nativeSession.startCount, 1);
+      expect(nativeSession.startedConfig?.conversationId, 'conversation-1');
+      expect(streamingApi.connectCount, 0);
+      expect(streamingCaptureService.captureCount, 0);
+
+      nativeSession
+        ..emit('session.started')
+        ..emit('speech.started')
+        ..emit('transcript.partial', transcript: 'Hey')
+        ..emit('utterance.end')
+        ..emit('transcript.final', transcript: 'Hey Rex')
+        ..emit('assistant.started')
+        ..emit('assistant.token', token: 'Native ')
+        ..emit('assistant.token', token: 'answer.')
+        ..emit(
+          'messages.updated',
+          conversationId: 'conversation-2',
+          messages: [
+            {
+              'id': 'message-1',
+              'conversation_id': 'conversation-2',
+              'role': 'assistant',
+              'content': 'Native answer.',
+              'timestamp': '2026-05-17T00:00:00Z',
+            },
+          ],
+        )
+        ..emit('speaking.started')
+        ..emit(
+          'assistant.done',
+          conversationId: 'conversation-2',
+          responseText: 'Native answer.',
+        );
+      await pumpEventQueue();
+
+      var state = container.read(voiceCallProvider);
+      expect(state.phase, VoiceCallPhase.speaking);
+      expect(state.currentTranscript, 'Hey Rex');
+      expect(state.lastAssistantResponse, 'Native answer.');
+      expect(state.conversationId, 'conversation-2');
+      expect(container.read(chatProvider).conversationId, 'conversation-2');
+
+      nativeSession.emit('listening');
+      await pumpEventQueue();
+
+      state = container.read(voiceCallProvider);
+      expect(state.phase, VoiceCallPhase.listening);
+      expect(state.currentTranscript, isEmpty);
+      expect(streamingApi.connectCount, 0);
+    },
+  );
+
+  test('VoiceCallController routes native mute and hangup commands', () async {
+    final nativeSession = FakeNativeVoiceSessionService();
+    final container = voiceCallTestContainer(
+      nativeVoiceSessionService: nativeSession,
+      nativeIosVoiceEnabled: true,
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(voiceCallProvider.notifier);
+    expect(await controller.startCall(), true);
+    await pumpEventQueue();
+
+    controller.setMuted(true);
+    expect(nativeSession.muteValues, [true]);
+
+    controller.interruptAndListen();
+    expect(nativeSession.interruptCount, 1);
+
+    controller.endCall();
+    expect(nativeSession.stopCount, 1);
+    expect(container.read(voiceCallProvider).phase, VoiceCallPhase.idle);
+  });
+
+  test(
     'VoiceEndpointDetector detects speech, silence, and no-speech timeout',
     () {
       final config = VoiceCaptureConfig(
@@ -900,7 +998,9 @@ ProviderContainer voiceCallTestContainer({
   FakeBargeInDetectionService? bargeInDetectionService,
   FakeCloudVoiceApi? cloudVoiceApi,
   FakeStreamingVoiceApi? streamingVoiceApi,
+  FakeNativeVoiceSessionService? nativeVoiceSessionService,
   bool streamingVoiceEnabled = false,
+  bool nativeIosVoiceEnabled = false,
   List<Override> overrides = const [],
 }) {
   return ProviderContainer(
@@ -912,7 +1012,9 @@ ProviderContainer voiceCallTestContainer({
         bargeInDetectionService: bargeInDetectionService,
         cloudVoiceApi: cloudVoiceApi,
         streamingVoiceApi: streamingVoiceApi,
+        nativeVoiceSessionService: nativeVoiceSessionService,
         streamingVoiceEnabled: streamingVoiceEnabled,
+        nativeIosVoiceEnabled: nativeIosVoiceEnabled,
       ),
       ...overrides,
     ],
@@ -926,7 +1028,9 @@ List<Override> voiceCallTestOverrides({
   FakeBargeInDetectionService? bargeInDetectionService,
   FakeCloudVoiceApi? cloudVoiceApi,
   FakeStreamingVoiceApi? streamingVoiceApi,
+  FakeNativeVoiceSessionService? nativeVoiceSessionService,
   bool streamingVoiceEnabled = false,
+  bool nativeIosVoiceEnabled = false,
 }) {
   return [
     microphonePermissionProvider.overrideWithValue(
@@ -957,6 +1061,11 @@ List<Override> voiceCallTestOverrides({
       streamingVoiceApi ?? FakeStreamingVoiceApi(),
     ),
     streamingVoiceEnabledProvider.overrideWithValue(streamingVoiceEnabled),
+    nativeVoiceSessionServiceProvider.overrideWithValue(
+      nativeVoiceSessionService ?? FakeNativeVoiceSessionService(),
+    ),
+    nativeIosVoiceEnabledProvider.overrideWithValue(nativeIosVoiceEnabled),
+    voiceCallPlatformProvider.overrideWithValue(TargetPlatform.iOS),
   ];
 }
 
@@ -1307,6 +1416,72 @@ class FakeCloudVoiceApi extends CloudVoiceApi {
         languageCode: 'en-US',
       ),
     );
+  }
+}
+
+class FakeNativeVoiceSessionService implements NativeVoiceSessionService {
+  final _eventsController = StreamController<NativeVoiceEvent>.broadcast();
+  var startCount = 0;
+  var stopCount = 0;
+  var interruptCount = 0;
+  var foregroundValues = <bool>[];
+  var muteValues = <bool>[];
+  NativeVoiceSessionConfig? startedConfig;
+
+  @override
+  Stream<NativeVoiceEvent> get events => _eventsController.stream;
+
+  @override
+  Future<void> startSession(NativeVoiceSessionConfig config) async {
+    startCount++;
+    startedConfig = config;
+  }
+
+  @override
+  Future<void> stopSession() async {
+    stopCount++;
+  }
+
+  @override
+  Future<void> interrupt() async {
+    interruptCount++;
+  }
+
+  @override
+  Future<void> setMuted(bool isMuted) async {
+    muteValues.add(isMuted);
+  }
+
+  @override
+  Future<void> setForegroundState(bool isForeground) async {
+    foregroundValues.add(isForeground);
+  }
+
+  void emit(
+    String name, {
+    String? transcript,
+    String? token,
+    String? conversationId,
+    String? responseText,
+    List<Map<String, dynamic>>? messages,
+  }) {
+    final data = <String, dynamic>{'event': name};
+    if (transcript != null) {
+      data['transcript'] = transcript;
+    }
+    if (token != null) {
+      data['token'] = token;
+    }
+    if (conversationId != null) {
+      data['conversation_id'] = conversationId;
+    }
+    if (responseText != null) {
+      data['response_text'] = responseText;
+    }
+    if (messages != null) {
+      data['messages'] = messages;
+    }
+    _eventsController.add(NativeVoiceEvent(name, data));
   }
 }
 

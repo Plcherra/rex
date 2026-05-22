@@ -13,6 +13,12 @@
 		51F7FFEA29430FBB2EBCC76F /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 748C5C6C21FF2315F9C3A1B6 /* Pods_Runner.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
+		8A4C00152EC6E1F400112233 /* RexPCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4C00142EC6E1F400112233 /* RexPCMConverter.swift */; };
+		8A4C00172EC6E1F500112233 /* RexNativeAudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4C00162EC6E1F500112233 /* RexNativeAudioCapture.swift */; };
+		8A4C001B2EC6E3A000112233 /* RexNativeAudioPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4C001A2EC6E3A000112233 /* RexNativeAudioPlayback.swift */; };
+		8A4C00132EC6E0D200112233 /* RexNativeAudioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4C00122EC6E0D200112233 /* RexNativeAudioSession.swift */; };
+		8A4C00112EC6E00100112233 /* RexNativeVoiceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4C00102EC6E00100112233 /* RexNativeVoiceBridge.swift */; };
+		8A4C00192EC6E2E000112233 /* RexNativeVoiceWebSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4C00182EC6E2E000112233 /* RexNativeVoiceWebSocket.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -54,6 +60,12 @@
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		748C5C6C21FF2315F9C3A1B6 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		8A4C00142EC6E1F400112233 /* RexPCMConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexPCMConverter.swift; sourceTree = "<group>"; };
+		8A4C00162EC6E1F500112233 /* RexNativeAudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexNativeAudioCapture.swift; sourceTree = "<group>"; };
+		8A4C001A2EC6E3A000112233 /* RexNativeAudioPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexNativeAudioPlayback.swift; sourceTree = "<group>"; };
+		8A4C00122EC6E0D200112233 /* RexNativeAudioSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexNativeAudioSession.swift; sourceTree = "<group>"; };
+		8A4C00102EC6E00100112233 /* RexNativeVoiceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexNativeVoiceBridge.swift; sourceTree = "<group>"; };
+		8A4C00182EC6E2E000112233 /* RexNativeVoiceWebSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RexNativeVoiceWebSocket.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
@@ -152,6 +164,12 @@
 				1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */,
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
+				8A4C00162EC6E1F500112233 /* RexNativeAudioCapture.swift */,
+				8A4C001A2EC6E3A000112233 /* RexNativeAudioPlayback.swift */,
+				8A4C00122EC6E0D200112233 /* RexNativeAudioSession.swift */,
+				8A4C00102EC6E00100112233 /* RexNativeVoiceBridge.swift */,
+				8A4C00182EC6E2E000112233 /* RexNativeVoiceWebSocket.swift */,
+				8A4C00142EC6E1F400112233 /* RexPCMConverter.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -398,6 +416,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
+				8A4C00172EC6E1F500112233 /* RexNativeAudioCapture.swift in Sources */,
+				8A4C001B2EC6E3A000112233 /* RexNativeAudioPlayback.swift in Sources */,
+				8A4C00132EC6E0D200112233 /* RexNativeAudioSession.swift in Sources */,
+				8A4C00152EC6E1F400112233 /* RexPCMConverter.swift in Sources */,
+				8A4C00112EC6E00100112233 /* RexNativeVoiceBridge.swift in Sources */,
+				8A4C00192EC6E2E000112233 /* RexNativeVoiceWebSocket.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

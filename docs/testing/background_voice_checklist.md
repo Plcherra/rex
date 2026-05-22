@@ -32,7 +32,7 @@ Foreground iPhone voice works well enough to begin physical validation. Screen l
 record.startStream -> Dart WebSocket -> backend /voice/stream
 ```
 
-The app now attempts resume recovery when returning to foreground. That is useful, but it is not proof of continuous locked-screen voice. True lock-screen voice still requires native iOS microphone/WebSocket/playback ownership and Android service-owned microphone/WebSocket/playback.
+The app now attempts resume recovery when returning to foreground. That is useful, but it is not proof of continuous locked-screen voice. Action Plan 5A has native iOS audio-session, microphone capture, WebSocket transport, native assistant playback, and Flutter controller integration in place behind `REX_NATIVE_IOS_VOICE_ENABLED=true`. Android still requires service-owned microphone/WebSocket/playback.
 
 ## Result Values
 
@@ -62,6 +62,42 @@ Use these values in the tables below:
 | Network drop | Rex surfaces a clear error and can start a new session after network returns. | pending | Toggle Wi-Fi/cellular if safe. |
 | Explicit hangup | Stop button releases mic/playback and backend session. | pending | Verify mic indicator turns off. |
 | 3-5 minute session | Multiple turns continue without memory leak, stale state, or audio queue buildup. | pending | Foreground test first. |
+
+## Native iOS Transport Validation
+
+Use this once the native bridge is enabled from Flutter:
+
+```sh
+sudo journalctl -u rex-backend -f -l
+flutter run -d 00008150-000C03C83A2B401C --release \
+  --dart-define=REX_BACKEND_URL=https://api.rexpilot.com \
+  --dart-define=REX_NATIVE_IOS_VOICE_ENABLED=true
+```
+
+Expected native event sequence for one foreground turn:
+
+```text
+audio.session.activated
+transport.connecting
+session.started
+capture.started
+speech.started
+audio.chunk / audio.captured
+speech.ended
+utterance.end
+transport.utterance_end_sent
+transcript.final
+assistant.started
+assistant.token
+assistant.audio_chunk
+playback.queued
+speaking.started
+assistant.done
+speaking.ended
+listening
+```
+
+Known Phase 6 limitation: the native iOS path is integrated behind a build flag and now needs physical iPhone release validation before it should be treated as complete.
 
 ## Android Validation Matrix
 

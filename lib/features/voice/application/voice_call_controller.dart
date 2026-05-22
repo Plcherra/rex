@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,6 +14,7 @@ import 'package:rex/features/voice/data/audio_recording_service.dart';
 import 'package:rex/features/voice/data/audio_session_service.dart';
 import 'package:rex/features/voice/data/background_voice_service.dart';
 import 'package:rex/features/voice/data/cloud_voice_api.dart';
+import 'package:rex/features/voice/data/native_voice_session_service.dart';
 import 'package:rex/features/voice/data/streaming_audio_capture_service.dart';
 import 'package:rex/features/voice/data/streaming_audio_playback_queue.dart';
 import 'package:rex/features/voice/data/streaming_voice_api.dart';
@@ -45,6 +47,14 @@ final streamingVoiceEnabledProvider = Provider<bool>(
   (ref) => AppConfig.streamingVoiceEnabled,
 );
 
+final nativeIosVoiceEnabledProvider = Provider<bool>(
+  (ref) => AppConfig.nativeIosVoiceEnabled,
+);
+
+final voiceCallPlatformProvider = Provider<TargetPlatform>(
+  (ref) => defaultTargetPlatform,
+);
+
 final voiceCaptureConfigProvider = Provider<VoiceCaptureConfig>(
   (ref) => const VoiceCaptureConfig(),
 );
@@ -72,12 +82,16 @@ class VoiceCallController extends Notifier<VoiceCallState>
   BargeInDetectionService? _activeBargeInDetectionService;
   VoiceAudioSessionService? _activeAudioSessionService;
   BackgroundVoiceService? _activeBackgroundVoiceService;
+  NativeVoiceSessionService? _activeNativeVoiceSessionService;
+  StreamSubscription<NativeVoiceEvent>? _nativeVoiceSubscription;
   var _finalTranscriptBuffer = '';
   var _partialTranscriptBuffer = '';
+  var _nativeAssistantText = '';
   var _isStartingCall = false;
   var _isBargeInMonitoring = false;
   var _isHandlingLifecycleResume = false;
   var _isAppInForeground = true;
+  var _isUsingNativeVoice = false;
   Timer? _thinkingTimeoutTimer;
 
   @override
@@ -94,6 +108,8 @@ class VoiceCallController extends Notifier<VoiceCallState>
       final bargeInDetectionService = _activeBargeInDetectionService;
       final streamingCaptureService = _activeStreamingCaptureService;
       final streamingSession = _activeStreamingSession;
+      final nativeVoiceSubscription = _nativeVoiceSubscription;
+      final nativeVoiceSession = _activeNativeVoiceSessionService;
       final audioSessionService = _activeAudioSessionService;
       final backgroundVoiceService = _activeBackgroundVoiceService;
       if (captureService != null) {
@@ -104,6 +120,12 @@ class VoiceCallController extends Notifier<VoiceCallState>
       }
       if (streamingSession != null) {
         unawaited(streamingSession.endSession());
+      }
+      if (nativeVoiceSubscription != null) {
+        unawaited(nativeVoiceSubscription.cancel());
+      }
+      if (nativeVoiceSession != null) {
+        unawaited(nativeVoiceSession.stopSession());
       }
       if (streamingPlaybackQueue != null) {
         unawaited(streamingPlaybackQueue.cancel());
@@ -140,6 +162,15 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     if (!this.state.isCallActive) {
+      return;
+    }
+
+    if (_isUsingNativeVoice) {
+      unawaited(
+        _nativeVoiceSessionService.setForegroundState(
+          state == AppLifecycleState.resumed,
+        ),
+      );
       return;
     }
 
@@ -184,6 +215,17 @@ class VoiceCallController extends Notifier<VoiceCallState>
       fail(_permissionMessage(permissionDecision));
       _isStartingCall = false;
       return false;
+    }
+
+    if (_shouldUseNativeVoice) {
+      final nativeStarted = await _startNativeVoiceSession(
+        generation: generation,
+        conversationId: activeConversationId,
+      );
+      if (nativeStarted) {
+        _isStartingCall = false;
+        return true;
+      }
     }
 
     try {
@@ -307,6 +349,14 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
     _callGeneration++;
     _cancelThinkingTimeout();
+    if (_isUsingNativeVoice) {
+      unawaited(_nativeVoiceSessionService.interrupt());
+      state = state.copyWith(
+        phase: VoiceCallPhase.listening,
+        errorMessage: reason,
+      );
+      return;
+    }
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -330,6 +380,16 @@ class VoiceCallController extends Notifier<VoiceCallState>
 
     final generation = ++_callGeneration;
     _cancelThinkingTimeout();
+    if (_isUsingNativeVoice) {
+      unawaited(_nativeVoiceSessionService.interrupt());
+      state = state.copyWith(
+        phase: VoiceCallPhase.listening,
+        clearCurrentTranscript: true,
+        clearError: true,
+      );
+      _clearVisibleTranscript();
+      return;
+    }
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -355,6 +415,10 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
 
     state = state.copyWith(isMuted: isMuted);
+    if (_isUsingNativeVoice) {
+      unawaited(_nativeVoiceSessionService.setMuted(isMuted));
+      return;
+    }
     if (isMuted) {
       _callGeneration++;
       _cancelThinkingTimeout();
@@ -387,12 +451,17 @@ class VoiceCallController extends Notifier<VoiceCallState>
     );
     _cancelThinkingTimeout();
     _clearVisibleTranscript();
+    if (_isUsingNativeVoice) {
+      unawaited(_nativeVoiceSessionService.interrupt());
+      return;
+    }
     _startListeningCycle(_callGeneration);
   }
 
   void fail(String message) {
     _callGeneration++;
     _cancelThinkingTimeout();
+    _stopNativeVoiceSession();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -418,6 +487,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
 
     _callGeneration++;
     _cancelThinkingTimeout();
+    _stopNativeVoiceSession();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -440,6 +510,7 @@ class VoiceCallController extends Notifier<VoiceCallState>
   void reset() {
     _callGeneration++;
     _cancelThinkingTimeout();
+    _stopNativeVoiceSession();
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -455,7 +526,177 @@ class VoiceCallController extends Notifier<VoiceCallState>
     state = const VoiceCallState();
   }
 
+  bool get _shouldUseNativeVoice {
+    return ref.read(nativeIosVoiceEnabledProvider) &&
+        ref.read(voiceCallPlatformProvider) == TargetPlatform.iOS;
+  }
+
+  Future<bool> _startNativeVoiceSession({
+    required int generation,
+    required String? conversationId,
+  }) async {
+    final service = _nativeVoiceSessionService;
+    await _nativeVoiceSubscription?.cancel();
+    _nativeAssistantText = '';
+    _nativeVoiceSubscription = service.events.listen(
+      (event) => _handleNativeVoiceEvent(event, generation),
+      onError: (Object _) {
+        if (_isCurrentCall(generation)) {
+          fail('Native iOS voice session failed.');
+        }
+      },
+    );
+
+    try {
+      await service.startSession(
+        NativeVoiceSessionConfig(conversationId: conversationId),
+      );
+    } on Object {
+      await _nativeVoiceSubscription?.cancel();
+      _nativeVoiceSubscription = null;
+      _activeNativeVoiceSessionService = null;
+      return false;
+    }
+
+    if (!_isCurrentCall(generation)) {
+      await service.stopSession();
+      return false;
+    }
+
+    _isUsingNativeVoice = true;
+    state = state.copyWith(
+      phase: VoiceCallPhase.listening,
+      clearError: true,
+      clearCallEndedAt: true,
+    );
+    return true;
+  }
+
+  void _handleNativeVoiceEvent(NativeVoiceEvent event, int generation) {
+    if (!_isCurrentCall(generation) || !state.isCallActive) {
+      return;
+    }
+
+    switch (event.name) {
+      case 'session.started':
+      case 'capture.started':
+      case 'audio.chunk':
+      case 'audio.captured':
+      case 'playback.queued':
+      case 'transport.connecting':
+      case 'transport.utterance_end_sent':
+      case 'transport.closed':
+      case 'foreground.changed':
+      case 'capture.stopped':
+      case 'capture.muted.changed':
+      case 'muted.changed':
+        break;
+      case 'listening':
+        _cancelThinkingTimeout();
+        _stopBargeInMonitoring();
+        _clearVisibleTranscript();
+        state = state.copyWith(
+          phase: VoiceCallPhase.listening,
+          clearCurrentTranscript: true,
+          clearError: true,
+        );
+      case 'speech.started':
+        startCapturingSpeech();
+      case 'speech.ended':
+      case 'utterance.end':
+        endpointUtterance();
+      case 'transcript.partial':
+        updateTranscript(event.transcript ?? state.currentTranscript);
+      case 'transcript.final':
+        startThinking(finalTranscript: event.transcript);
+      case 'conversation.updated':
+        state = state.copyWith(
+          conversationId: event.conversationId,
+          clearError: true,
+        );
+      case 'assistant.started':
+        if (state.phase != VoiceCallPhase.thinking) {
+          startThinking(finalTranscript: state.currentTranscript);
+        }
+        _nativeAssistantText = '';
+        _armThinkingTimeout(generation);
+      case 'assistant.token':
+        _nativeAssistantText += event.token ?? '';
+        _armThinkingTimeout(generation);
+        state = state.copyWith(lastAssistantResponse: _nativeAssistantText);
+      case 'assistant.audio_chunk':
+        _cancelThinkingTimeout();
+      case 'speaking.started':
+        startSpeaking(
+          _nativeAssistantText.isNotEmpty
+              ? _nativeAssistantText
+              : event.data['text'] as String? ?? state.lastAssistantResponse,
+        );
+        _startBargeInMonitoring(generation);
+      case 'speaking.ended':
+        _stopBargeInMonitoring();
+      case 'assistant.done':
+        _cancelThinkingTimeout();
+        final responseText = event.responseText ?? _nativeAssistantText;
+        state = state.copyWith(
+          conversationId: event.conversationId,
+          lastAssistantResponse: responseText,
+          clearError: true,
+        );
+      case 'messages.updated':
+        _applyNativeMessages(event);
+      case 'session.interrupted':
+        state = state.copyWith(phase: VoiceCallPhase.listening);
+      case 'session.ended':
+        break;
+      case 'error':
+      case 'playback.error':
+      case 'capture.error':
+        fail(event.detail ?? 'Native iOS voice session failed.');
+      default:
+        break;
+    }
+  }
+
+  void _applyNativeMessages(NativeVoiceEvent event) {
+    final rawMessages = event.data['messages'];
+    final conversationId = event.conversationId;
+    if (conversationId == null || rawMessages is! List) {
+      return;
+    }
+
+    final messages = rawMessages
+        .whereType<Map<String, dynamic>>()
+        .map(ChatApiMessage.fromJson)
+        .toList(growable: false);
+    ref
+        .read(chatProvider.notifier)
+        .applyBackendMessages(
+          conversationId: conversationId,
+          messages: messages,
+          fallbackAssistantResponse: _nativeAssistantText,
+        );
+  }
+
+  void _stopNativeVoiceSession() {
+    _isUsingNativeVoice = false;
+    _nativeAssistantText = '';
+    final subscription = _nativeVoiceSubscription;
+    _nativeVoiceSubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+    final service = _activeNativeVoiceSessionService;
+    _activeNativeVoiceSessionService = null;
+    if (service != null) {
+      unawaited(service.stopSession());
+    }
+  }
+
   void _startListeningCycle(int generation) {
+    if (_isUsingNativeVoice) {
+      return;
+    }
     if (state.phase == VoiceCallPhase.listening) {
       _cancelThinkingTimeout();
     }
@@ -910,6 +1151,15 @@ class VoiceCallController extends Notifier<VoiceCallState>
 
     final nextGeneration = ++_callGeneration;
     _cancelThinkingTimeout();
+    if (_isUsingNativeVoice) {
+      unawaited(_nativeVoiceSessionService.interrupt());
+      state = state.copyWith(
+        phase: VoiceCallPhase.listening,
+        errorMessage:
+            'Rex got stuck thinking, so I reset the native voice stream. Try again.',
+      );
+      return;
+    }
     unawaited(_captureService.cancel());
     unawaited(_streamingCaptureService.cancel());
     _stopBargeInMonitoring();
@@ -1096,6 +1346,16 @@ class VoiceCallController extends Notifier<VoiceCallState>
     }
     final service = ref.read(backgroundVoiceServiceProvider);
     _activeBackgroundVoiceService = service;
+    return service;
+  }
+
+  NativeVoiceSessionService get _nativeVoiceSessionService {
+    final existingService = _activeNativeVoiceSessionService;
+    if (existingService != null) {
+      return existingService;
+    }
+    final service = ref.read(nativeVoiceSessionServiceProvider);
+    _activeNativeVoiceSessionService = service;
     return service;
   }
 }
